@@ -216,3 +216,19 @@ multipart: `file`(레거시 별칭 `image` 허용) + `playerId`.
 | `502` | 키 무효(401/403) 또는 모델 미제공(404) |
 | `504` | SDK fetch 오류(TypeError) |
 | `500` | 그 외 |
+
+---
+
+## 12. 상태 점검 (Health) — 2026-09-07 추가, 기획서 집계 밖
+
+### `GET /api/health`
+외부 모니터링용. 인증 불요, `Cache-Control: no-store`.
+
+| 상태 | HTTP | 의미 |
+|---|---|---|
+| `healthy` | 200 | DB 응답 정상, 의도한 엔진으로 동작 (DATABASE_URL 없는 개발 기본값의 PGlite 포함) |
+| `degraded` | 200 | DB 응답은 되지만 **PostgreSQL → PGlite 폴백 중** — 지금 쓰는 내용은 PostgreSQL에 반영되지 않는다. 서비스는 되므로 200 |
+| `unhealthy` | 503 | DB 조회 실패 |
+
+응답 `{status, checks: {db, db_primary}, db: {driver, fallback, fallbackAt?}, version, uptime_s, latency_ms}`.
+`checks.*` 는 `'ok' | 'fail'` 만 쓴다 — Pulse 프로브가 항목마다 `check.<이름>` 지표(1/0)로 편입해 룰(`check.db_primary < 1` = 폴백 알림)을 걸 수 있는 규약. 폴백 사유 문자열은 DB 호스트가 섞여 있어 응답에 싣지 않는다(서버 로그).

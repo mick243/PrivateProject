@@ -114,6 +114,12 @@ Restart-Service postgresql-x64-18     # 재시작
 Get-Service postgresql-x64-18         # 상태 확인
 ```
 
+
+**밖에서 폴백을 알아채기 — `GET /api/health`.** 폴백 중에도 화면은 멀쩡해서 로그 말고는 알 길이 없었다.
+이 엔드포인트가 `{status: 'degraded', checks: {db: 'ok', db_primary: 'fail'}, db: {driver: 'pglite', fallback: true}}` 를 돌려주므로
+모니터링 도구가 `check.db_primary` 로 잡을 수 있다 (정상이면 `healthy`, DB 조회 자체가 실패하면 `503 unhealthy`).
+[Pulse](https://github.com/mick243/pulse) 에 PROBE 대상으로 등록하면 응답시간·가동 여부와 함께 이 값이 차트와 알림 룰이 된다.
+
 ### 스키마
 
 [`db/schema.sql`](db/schema.sql) — 오락실 파인더
