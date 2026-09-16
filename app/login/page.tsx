@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import LoginForm from '@/components/LoginForm';
 
 export const metadata = {
-  title: '로그인 — 오락실 파인더',
+  title: '로그인',
   description: '관리자 로그인',
 };
 

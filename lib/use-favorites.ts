@@ -133,7 +133,7 @@ export function useFavorites(): Favorites {
         const res = had
           ? await fetch(`/api/favorites?arcadeId=${arcadeId}`, { method: 'DELETE' })
           : await fetch('/api/favorites', {
-              method: 'POST',
+              method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ arcadeId }),
             });

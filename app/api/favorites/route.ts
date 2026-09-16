@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
+import { sessionPlayerId } from '@/lib/auth';
 import { addFavorite, listFavoriteIds, removeFavorite } from '@/lib/favorites';
 import { isForeignKeyViolation } from '@/lib/pg-errors';
 
@@ -9,15 +9,11 @@ export const dynamic = 'force-dynamic';
 /**
  * 즐겨찾기 — 내가 담아 둔 오락실 id 목록.
  *
- * 누구인지는 **세션에서만** 읽습니다. 이 프로젝트의 옛 쓰기 경로들은 본문의
- * playerId 를 그대로 믿는데(로그인이 없던 시절의 잔재), 그러면 남의 즐겨찾기에
- * 곳을 담을 수 있습니다. 리뷰·제보는 공개되는 값이라 티가 나지만 즐겨찾기는
- * 조용히 어긋납니다.
+ * 누구인지는 **세션에서만** 읽습니다. 쓰기 경로가 전부 그렇게 바뀌기 전까지
+ * 이 라우트만 그랬고(lib/auth.ts requirePlayer 주석), 그 시절의 근거는 이랬습니다
+ * — 본문의 playerId 를 믿으면 남의 즐겨찾기에 곳을 담을 수 있는데, 리뷰·제보는
+ * 공개되는 값이라 티라도 나지만 즐겨찾기는 조용히 어긋납니다.
  */
-
-function playerOf(request: Request): number | null {
-  return getSession(request)?.playerId ?? null;
-}
 
 function parseArcadeId(raw: unknown): number | null {
   const id = Number(raw);
@@ -35,15 +31,21 @@ const NEED_LOGIN = () =>
  * 상태는 오류가 아니라 정상입니다.
  */
 export async function GET(request: Request) {
-  const playerId = playerOf(request);
+  const playerId = await sessionPlayerId(request);
   return NextResponse.json({
     arcadeIds: playerId === null ? [] : await listFavoriteIds(playerId),
   });
 }
 
-/** POST /api/favorites — 담기 `{arcadeId}`. 이미 담아 뒀으면 그대로 성공 */
-export async function POST(request: Request) {
-  const playerId = playerOf(request);
+/**
+ * PUT /api/favorites — 담기 `{arcadeId}`. 이미 담아 뒀으면 그대로 성공.
+ *
+ * 예전에는 `POST` 였습니다. 지침서(GUIDELINES §4-1)가 상태를 바꾸는 요청을
+ * `PUT`(켠다)·`DELETE`(끈다)로 하라고 정해 두었는데 그 모양인 것은 글 추천 하나뿐이라,
+ * 문서를 보고 PUT 을 부르면 405 가 났습니다 (2026-09-13 전체 점검). 코드를 옮겼습니다.
+ */
+export async function PUT(request: Request) {
+  const playerId = await sessionPlayerId(request);
   if (playerId === null) return NEED_LOGIN();
 
   let body: unknown;
@@ -79,7 +81,7 @@ export async function POST(request: Request) {
  * 화면에는 이미 빠져 있는 상태라 사람이 고칠 방법이 없습니다.
  */
 export async function DELETE(request: Request) {
-  const playerId = playerOf(request);
+  const playerId = await sessionPlayerId(request);
   if (playerId === null) return NEED_LOGIN();
 
   const arcadeId = parseArcadeId(new URL(request.url).searchParams.get('arcadeId'));

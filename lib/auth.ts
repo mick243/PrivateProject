@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { NextResponse } from 'next/server';
 import { SESSION_COOKIE, type SessionUser } from './auth-types';
 import { getDb } from './db';
-import { isUniqueViolation } from './pg-errors';
+import { isUniqueViolation, violatedConstraint } from './pg-errors';
 
 /**
  * 인증.
@@ -79,8 +79,14 @@ export async function verifyPassword(
 
 interface TokenPayload {
   pid: number;
-  nick: string;
-  adm: boolean;
+  /**
+   * 발급 당시의 `players.token_epoch` — **세션 회수의 근거**.
+   *
+   * 이름과 관리자 여부는 더 이상 봉하지 않습니다. 쿠키에 박아 두면 7일 동안
+   * 그때의 값이고, 요청마다 DB 를 보는 지금은 더 정확한 답이 옆에 있습니다.
+   * 서명 안에 든 값은 "누구인가"와 "어느 세대인가" 둘뿐입니다.
+   */
+  ep: number;
   /** epoch 초 */
   exp: number;
 }
@@ -142,20 +148,23 @@ export function openPayload<T>(token: string | null | undefined): T | null {
   }
 }
 
-export function createSessionToken(user: SessionUser): string {
-  const payload: Omit<TokenPayload, 'exp'> = {
-    pid: user.playerId,
-    nick: user.nickname,
-    adm: user.isAdmin,
-  };
+export function createSessionToken(playerId: number, epoch: number): string {
+  const payload: Omit<TokenPayload, 'exp'> = { pid: playerId, ep: epoch };
   return sealPayload(payload, SESSION_MAX_AGE_S);
 }
 
-export function readSessionToken(token: string | null | undefined): SessionUser | null {
+/**
+ * 서명과 기한만 본 결과 — **아직 로그인 여부가 아닙니다.**
+ * 이 사람이 지금도 유효한지는 `getSession` 이 DB 의 세대 번호로 판단합니다.
+ */
+export function readSessionToken(
+  token: string | null | undefined,
+): { playerId: number; epoch: number } | null {
   const payload = openPayload<TokenPayload>(token);
   if (!payload) return null;
   if (!Number.isInteger(payload.pid) || payload.pid <= 0) return null;
-  return { playerId: payload.pid, nickname: String(payload.nick), isAdmin: !!payload.adm };
+  if (!Number.isInteger(payload.ep) || payload.ep < 0) return null;
+  return { playerId: payload.pid, epoch: payload.ep };
 }
 
 /**
@@ -181,13 +190,74 @@ export function readCookie(request: Request, name: string): string | null {
   return null;
 }
 
-/** 쿠키만 보고 판단합니다 — 권한이 필요한 곳에서는 requireAdmin 을 쓰세요 */
-export function getSession(request: Request): SessionUser | null {
-  return readSessionToken(readCookie(request, SESSION_COOKIE));
+/**
+ * 세션이 가리키는 사람. 쿠키 한 장과 **players 한 줄**을 함께 봅니다.
+ *
+ * 예전에는 쿠키만 읽었습니다. 서명이 맞고 기한이 남았으면 그걸로 끝이라,
+ * 서버가 세션을 끊을 방법이 없었습니다 — 비밀번호를 바꿔도, 계정을 지워도
+ * 이미 나간 쿠키는 7일을 살았습니다(H12). 이제 요청마다 세대 번호를 맞춰 봅니다.
+ *
+ * 조회 한 번으로 세 가지가 같이 해결됩니다.
+ *   - **회수** : `token_epoch` 이 다르면 무효 (revokeSessions 가 올립니다)
+ *   - **탈퇴** : 줄이 없으면 무효 — 쿠키 만료를 기다리지 않습니다
+ *   - **최신 이름·권한** : 쿠키에 박힌 옛 값 대신 지금 값을 돌려줍니다
+ *
+ * 값을 캐시하지 않습니다. 몇 초짜리 캐시를 두면 그 몇 초 동안은 회수가 회수가
+ * 아니고, 인스턴스가 둘이면 어느 쪽에 걸리느냐에 따라 답이 달라집니다
+ * (PERFORMANCE.md 4부 15절). 비용은 인덱스를 탄 PK 조회 한 번이고, 쿠키가 없는
+ * 요청은 DB 까지 가지도 않습니다 — 둘러보기만 하는 사람은 그대로입니다.
+ */
+export async function getSession(request: Request): Promise<SessionUser | null> {
+  const token = readSessionToken(readCookie(request, SESSION_COOKIE));
+  if (!token) return null;
+
+  const row = await playerRow(token.playerId);
+  if (!row || row.epoch !== token.epoch) return null;
+
+  return { playerId: token.playerId, nickname: row.nickname, isAdmin: row.isAdmin };
 }
 
-export function setSessionCookie(res: NextResponse, user: SessionUser): NextResponse {
-  res.cookies.set(SESSION_COOKIE, createSessionToken(user), {
+/** 세션 판정에 필요한 players 한 줄. 계정이 없으면 null */
+async function playerRow(
+  playerId: number,
+): Promise<{ nickname: string; isAdmin: boolean; epoch: number } | null> {
+  const db = await getDb();
+  const { rows } = await db.query<{
+    nickname: string;
+    is_admin: boolean;
+    token_epoch: number;
+  }>(`SELECT nickname, is_admin, token_epoch FROM players WHERE id = $1`, [playerId]);
+
+  const row = rows[0];
+  if (!row) return null;
+  return { nickname: row.nickname, isAdmin: !!row.is_admin, epoch: Number(row.token_epoch) };
+}
+
+/**
+ * 그 계정의 **지난 세션을 한꺼번에 무효로** 만듭니다.
+ *
+ * 비밀번호를 바꿀 때(setPlayerPassword)와 본인이 "다른 기기에서 로그아웃" 을
+ * 누를 때 부릅니다 (app/api/account/sessions). 부른 쪽은 자기 쿠키를 새 번호로
+ * 다시 발급받아야 합니다 — 안 그러면 방금 누른 사람도 같이 튕깁니다.
+ */
+export async function revokeSessions(playerId: number): Promise<void> {
+  const db = await getDb();
+  await db.query(`UPDATE players SET token_epoch = token_epoch + 1 WHERE id = $1`, [playerId]);
+}
+
+/**
+ * 지금 세대 번호로 쿠키를 발급합니다.
+ *
+ * 번호를 인자로 받지 않고 **여기서 읽습니다** — 호출부가 들고 있던 번호는
+ * 직전에 올라갔을 수 있고(비밀번호 변경), 한 번 어긋나면 방금 로그인한 사람이
+ * 곧바로 로그아웃되는 모양으로 나타납니다. 읽는 자리를 하나로 둡니다.
+ */
+export async function setSessionCookie(
+  res: NextResponse,
+  playerId: number,
+): Promise<NextResponse> {
+  const row = await playerRow(playerId);
+  res.cookies.set(SESSION_COOKIE, createSessionToken(playerId, row?.epoch ?? 0), {
     httpOnly: true,
     sameSite: 'lax',
     secure: process.env.NODE_ENV === 'production',
@@ -210,47 +280,65 @@ export function clearSessionCookie(res: NextResponse): NextResponse {
 
 // ─── 권한 ────────────────────────────────────────────────────
 
-export type AdminGuard =
-  | { ok: true; user: SessionUser }
+/** 세션이 말하는 주인. 없으면 null — 익명을 허용하는 경로가 씁니다(제보) */
+export async function sessionPlayerId(request: Request): Promise<number | null> {
+  return (await getSession(request))?.playerId ?? null;
+}
+
+export type PlayerGuard =
+  | { ok: true; playerId: number }
   | { ok: false; response: NextResponse };
 
 /**
- * 쿠키의 adm 만 믿지 않고 DB 를 한 번 더 봅니다 — 권한을 뗀 계정의 쿠키가
- * 만료까지 남은 기간 동안 계속 통하면 "권한 회수"가 회수가 아닙니다.
+ * 로그인이 필요한 라우트의 첫 줄.
+ *
+ *   const guard = await requirePlayer(request);
+ *   if (!guard.ok) return guard.response;
+ *
+ * 예전에는 동기 함수였습니다 — "이 세션의 주인이 누구인가" 는 서명 안에 들어
+ * 있으니 DB 를 볼 이유가 없다는 판단이었고, 그 말은 **세션을 끊을 수도 없다**는
+ * 뜻이었습니다. 이제 getSession 이 세대 번호를 맞춰 보므로 여기도 async 입니다.
  */
-async function adminRow(playerId: number): Promise<{ nickname: string } | null> {
-  const db = await getDb();
-  const { rows } = await db.query<{ is_admin: boolean; nickname: string }>(
-    `SELECT is_admin, nickname FROM players WHERE id = $1`,
-    [playerId],
-  );
-  return rows[0]?.is_admin ? { nickname: rows[0].nickname } : null;
+export async function requirePlayer(request: Request): Promise<PlayerGuard> {
+  const playerId = await sessionPlayerId(request);
+  if (playerId === null) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }),
+    };
+  }
+  return { ok: true, playerId };
 }
+
+export type AdminGuard =
+  | { ok: true; user: SessionUser }
+  | { ok: false; response: NextResponse };
 
 /**
  * 관리자 전용 라우트의 첫 줄.
  *
  *   const guard = await requireAdmin(request);
  *   if (!guard.ok) return guard.response;
+ *
+ * 쿠키의 값을 믿지 않는다는 성질은 그대로입니다 — 다만 이제 **모든 세션**이
+ * DB 를 보므로(getSession) 여기만 따로 확인하지 않습니다. 권한을 뗀 계정의
+ * 쿠키가 만료까지 통하는 일은 없습니다.
  */
 export async function requireAdmin(request: Request): Promise<AdminGuard> {
-  const user = getSession(request);
+  const user = await getSession(request);
   if (!user) {
     return {
       ok: false,
       response: NextResponse.json({ error: '관리자 로그인이 필요합니다' }, { status: 401 }),
     };
   }
-
-  const row = await adminRow(user.playerId);
-  if (!row) {
+  if (!user.isAdmin) {
     return {
       ok: false,
       response: NextResponse.json({ error: '관리자 권한이 없습니다' }, { status: 403 }),
     };
   }
-
-  return { ok: true, user: { ...user, nickname: row.nickname, isAdmin: true } };
+  return { ok: true, user };
 }
 
 /**
@@ -260,8 +348,7 @@ export async function requireAdmin(request: Request): Promise<AdminGuard> {
  * 돌려주면 자기 글을 지우려던 일반 사용자까지 막힙니다.
  */
 export async function isAdminRequest(request: Request): Promise<boolean> {
-  const user = getSession(request);
-  return user !== null && (await adminRow(user.playerId)) !== null;
+  return (await getSession(request))?.isAdmin === true;
 }
 
 // ─── 관리자 계정 ─────────────────────────────────────────────
@@ -320,10 +407,13 @@ export async function ensureAdminAccount(): Promise<{ id: number; nickname: stri
 
   const id = Number(existing.id);
   if (!existing.is_admin || !(await verifyPassword(password, existing.password_hash))) {
-    await db.query(`UPDATE players SET is_admin = TRUE, password_hash = $2 WHERE id = $1`, [
-      id,
-      await hashPassword(password),
-    ]);
+    // 비밀번호가 바뀐 것이라면 지난 관리자 세션도 끊습니다 — setPlayerPassword 와 같은 규칙.
+    await db.query(
+      `UPDATE players
+          SET is_admin = TRUE, password_hash = $2, token_epoch = token_epoch + 1
+        WHERE id = $1`,
+      [id, await hashPassword(password)],
+    );
   }
   return { id, nickname };
 }
@@ -354,7 +444,7 @@ export async function authenticate(
 
 export type SignupResult =
   | { ok: true; user: SessionUser }
-  | { ok: false; reason: 'taken' | 'reserved' };
+  | { ok: false; reason: 'taken' | 'reserved' | 'email-taken' };
 
 /**
  * 아이디/비밀번호로 계정을 만듭니다.
@@ -371,25 +461,49 @@ export type SignupResult =
 export async function createAccount(
   nickname: string,
   password: string,
+  email: string,
 ): Promise<SignupResult> {
   const name = nickname.trim();
   if (isReservedNickname(name)) return { ok: false, reason: 'reserved' };
 
   const db = await getDb();
-  // 대소문자만 다른 이름도 같은 이름으로 봅니다 (migrate-027 의 lower() 인덱스와
-  // 같은 기준 — 여기만 바이트 일치로 보면 안내 없이 23505 로 떨어집니다).
-  const { rows: dup } = await db.query(
-    `SELECT 1 FROM players WHERE lower(nickname) = lower($1)`,
-    [name],
+  /*
+    이름과 이메일 중복을 **한 번에** 봅니다. 두 번 나눠 물으면 "이름은 되는데
+    이메일이 안 된다" 를 두 번의 왕복으로 알게 됩니다.
+
+    이메일은 `email_verified_at IS NOT NULL` 인 줄만 셉니다 — 확인하지 않은 주소로
+    자리를 맡아 두면, 남의 이메일을 적어 그 사람의 가입을 막을 수 있습니다.
+    이름은 대소문자만 다른 것도 같은 이름으로 봅니다 (migrate-027 의 lower() 인덱스와
+    같은 기준 — 여기만 바이트 일치로 보면 안내 없이 23505 로 떨어집니다).
+  */
+  const { rows: dup } = await db.query<{ nickname_taken: boolean; email_taken: boolean }>(
+    `SELECT bool_or(lower(nickname) = lower($1)) AS nickname_taken,
+            bool_or(lower(email) = lower($2) AND email_verified_at IS NOT NULL) AS email_taken
+       FROM players
+      WHERE lower(nickname) = lower($1) OR lower(email) = lower($2)`,
+    [name, email],
   );
-  if (dup[0]) return { ok: false, reason: 'taken' };
+  if (dup[0]?.nickname_taken) return { ok: false, reason: 'taken' };
+  if (dup[0]?.email_taken) return { ok: false, reason: 'email-taken' };
 
   const { rows } = await db.query<{ id: number }>(
-    `INSERT INTO players (nickname, password_hash) VALUES ($1, $2) RETURNING id`,
-    [name, await hashPassword(password)],
+    `INSERT INTO players (nickname, password_hash, email) VALUES ($1, $2, $3) RETURNING id`,
+    [name, await hashPassword(password), email],
   );
   // 가입으로 관리자가 되지는 않습니다. is_admin 은 DB 기본값 FALSE 그대로 둡니다.
   return { ok: true, user: { playerId: Number(rows[0].id), nickname: name, isAdmin: false } };
+}
+
+/**
+ * 23505 를 받았을 때 무엇이 겹쳤는지 — createAccount 의 선검사와 INSERT 사이에
+ * 남이 먼저 들어온 경우입니다.
+ *
+ * 제약 이름을 하나하나 맞춰 보는 대신 'email' 이 들어 있는지만 봅니다. 이름은
+ * 마이그레이션마다 달라질 수 있지만 어느 쪽을 가리키는지는 그 낱말로 충분하고,
+ * 틀려도 '이미 쓰는 아이디입니다' 로 떨어질 뿐 안전한 쪽입니다.
+ */
+export function signupConflictReason(err: unknown): 'taken' | 'email-taken' {
+  return violatedConstraint(err)?.includes('email') ? 'email-taken' : 'taken';
 }
 
 // ─── 소셜 계정 연결 ──────────────────────────────────────────
@@ -591,13 +705,44 @@ export async function verifyPlayerPassword(
   return verifyPassword(password, rows[0].password_hash);
 }
 
-/** 비밀번호를 설정/변경합니다. 이후 아이디/비밀번호 로그인(authenticate)도 열립니다 */
+/**
+ * 탈퇴 — players 행을 지웁니다.
+ *
+ * 나머지는 FK 가 정합니다 (db/schema-*.sql): 글·댓글·추천·리뷰·채보 평가·투표·클리어·
+ * 즐겨찾기·소셜 연결·첨부 행은 CASCADE 로 함께 지워지고, **오락실 제보만 SET NULL**
+ * 로 남아 익명이 됩니다 — 지도의 근거라 사람이 떠나도 정보는 남겨야 합니다.
+ * 개인정보처리방침 2항이 바로 이 규칙을 적은 것이라, 여기를 바꾸면 그 문서도 바꿔야 합니다.
+ *
+ * 첨부 **파일**은 디스크에 남습니다 (post_images 행만 사라짐). 고아 파일 정리는
+ * 배치의 몫입니다 (docs/QA-LAUNCH-READINESS.md M2).
+ *
+ * 지운 계정의 쿠키는 **다음 요청부터 통하지 않습니다** — getSession 이 players 를
+ * 보고 줄이 없으면 세션도 없는 것으로 봅니다. 서명은 7일간 유효한 채로 남지만
+ * 가리키는 곳이 사라졌습니다. 쿠키 자체는 라우트가 지웁니다.
+ */
+export async function deleteAccount(playerId: number): Promise<boolean> {
+  const db = await getDb();
+  const { rows } = await db.query<{ id: number }>(
+    `DELETE FROM players WHERE id = $1 AND is_admin = FALSE RETURNING id`,
+    [playerId],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * 비밀번호를 설정/변경합니다. 이후 아이디/비밀번호 로그인(authenticate)도 열립니다.
+ *
+ * **지난 세션을 함께 끊습니다**(token_epoch + 1). 비밀번호를 바꾸는 이유의 절반은
+ * "누가 내 계정을 보고 있는 것 같다" 인데, 그때 남의 기기에 열려 있는 창이
+ * 그대로 살아 있으면 바꾼 의미가 없습니다. 바꾼 본인의 쿠키는 호출부가
+ * setSessionCookie 로 새 번호를 받아 갑니다 (app/api/account PUT).
+ */
 export async function setPlayerPassword(playerId: number, password: string): Promise<void> {
   const db = await getDb();
-  await db.query(`UPDATE players SET password_hash = $2 WHERE id = $1`, [
-    playerId,
-    await hashPassword(password),
-  ]);
+  await db.query(
+    `UPDATE players SET password_hash = $2, token_epoch = token_epoch + 1 WHERE id = $1`,
+    [playerId, await hashPassword(password)],
+  );
 }
 
 /**
@@ -657,38 +802,136 @@ export async function nicknameStatus(
 
 // ─── 로그인 시도 제한 ────────────────────────────────────────
 /**
- * 프로세스 메모리에만 남는 최소한의 제동장치입니다. 서버가 여러 대면 대수만큼
- * 여유가 생기고 재시작하면 풀립니다 — 그래도 "비밀번호 하나짜리 관리자 계정"에
- * 아무 제한이 없는 것보다는 낫습니다. 제대로 하려면 Redis 등으로 옮기세요.
+ * 실패 횟수를 **DB 에** 셉니다 (db/migrate-052-login-failures.sql).
+ *
+ * 예전에는 이 파일의 `Map` 한 개, 즉 그 프로세스의 메모리였습니다. 그 시절 주석이
+ * 한계를 이미 적어 뒀습니다 — "서버가 여러 대면 대수만큼 여유가 생기고 재시작하면
+ * 풀립니다". 그 '여러 대' 가 이제 현실입니다: 권고 구성이 인스턴스 2개라
+ * (PERFORMANCE.md 4부 15절) 카운터도 2개가 되어 **8회 제한이 실질 16회**가 됩니다.
+ * 프로세스를 늘리는 것이 곧 방어를 느슨하게 만드는 셈이라, 저장소를 프로세스
+ * 밖으로 빼는 것이 다중 프로세스의 전제입니다. 재시작해도 풀리지 않는 것은 덤입니다.
+ *
+ * **Redis 가 아니라 Postgres 인 이유** — 이미 있는 것이기 때문입니다. 비용은 실패한
+ * 시도 1회당 쿼리 1회이고, 이 경로는 초당 수천 번 오는 곳이 아닙니다.
+ *
+ * 무엇을 키로 세는지는 아래 `clientKey` · `accountKey` 를 보세요 — 그쪽이 이
+ * 방어의 **실효**를 결정합니다. 저장소를 옮겨도 키를 공격자가 고를 수 있으면
+ * 제한이 없는 것과 같습니다.
  */
 const MAX_FAILURES = 8;
-const LOCK_MS = 10 * 60 * 1000;
+const LOCK_MINUTES = 10;
 
-const failures = new Map<string, { count: number; until: number }>();
-
-export function loginLockRemainingMs(key: string): number {
-  const hit = failures.get(key);
-  if (!hit || hit.count < MAX_FAILURES) return 0;
-  const left = hit.until - Date.now();
-  if (left <= 0) {
-    failures.delete(key);
-    return 0;
-  }
-  return left;
+/**
+ * 남은 잠금 시간(ms). 0 이면 통과입니다.
+ *
+ * 기한이 지난 줄은 여기서 지우지 않습니다 — 읽기 경로에 쓰기를 섞으면 잠금
+ * 확인마다 DB 에 쓰게 됩니다. 조건에서 `until > now()` 로 걸러 내고, 실제 청소는
+ * 다음 실패를 기록할 때 함께 합니다 (noteLoginFailure).
+ */
+export async function loginLockRemainingMs(key: string): Promise<number> {
+  const db = await getDb();
+  const { rows } = await db.query<{ remaining_ms: string }>(
+    `SELECT EXTRACT(EPOCH FROM (until - now())) * 1000 AS remaining_ms
+       FROM login_failures
+      WHERE key = $1 AND count >= $2 AND until > now()`,
+    [key, MAX_FAILURES],
+  );
+  const left = Number(rows[0]?.remaining_ms ?? 0);
+  return left > 0 ? Math.ceil(left) : 0;
 }
 
-export function noteLoginFailure(key: string): void {
-  const hit = failures.get(key);
-  const count = hit && hit.until > Date.now() ? hit.count + 1 : 1;
-  failures.set(key, { count, until: Date.now() + LOCK_MS });
+/**
+ * 실패 한 번을 기록합니다.
+ *
+ * 한 문장으로 세는 이유는 **원자성** 입니다. 읽고-더하고-쓰기로 나누면 같은 순간에
+ * 들어온 두 시도가 서로의 증가를 덮어씁니다. Map 이던 시절에는 노드가 단일 스레드라
+ * 우연히 안전했지만, 이제는 프로세스가 여럿이라 그 우연이 사라졌습니다.
+ */
+export async function noteLoginFailure(key: string): Promise<void> {
+  const db = await getDb();
+  await db.query(
+    `INSERT INTO login_failures (key, count, until)
+     VALUES ($1, 1, now() + make_interval(mins => $2::int))
+     ON CONFLICT (key) DO UPDATE
+        SET count = CASE WHEN login_failures.until > now()
+                         THEN login_failures.count + 1
+                         ELSE 1 END,
+            until = now() + make_interval(mins => $2::int),
+            updated_at = now()`,
+    [key, LOCK_MINUTES],
+  );
+
+  // 낡은 줄은 쓰는 김에 치웁니다 (lib/reports.ts purgeExpiredQueueReports 와 같은
+  // 방식). 넉넉히 하루를 지난 것만 — 아슬아슬한 줄을 건드리지 않습니다.
+  await db.query(`DELETE FROM login_failures WHERE until < now() - interval '1 day'`);
 }
 
-export function clearLoginFailures(key: string): void {
-  failures.delete(key);
+/** 성공했으니 카운터를 비웁니다 */
+export async function clearLoginFailures(key: string): Promise<void> {
+  const db = await getDb();
+  await db.query(`DELETE FROM login_failures WHERE key = $1`, [key]);
 }
 
-/** 시도 제한의 키. 프록시 뒤라면 X-Forwarded-For 의 첫 홉이 클라이언트입니다 */
-export function clientKey(request: Request): string {
-  const forwarded = request.headers.get('x-forwarded-for');
-  return forwarded?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'local';
+/**
+ * 앞에 둔 **신뢰하는** 프록시 홉 수. 기본 0 — 프록시가 없다는 뜻입니다.
+ *
+ * 값을 정하는 법: 클라이언트와 앱 사이에 내가 운영하는 프록시가 몇 대인가.
+ * `npm run start:cluster` 는 프록시를 한 대 두므로 1 입니다(그 스크립트가
+ * 자식에게 자동으로 넣어 줍니다). nginx 를 그 앞에 또 두면 2 입니다.
+ */
+function trustedProxyHops(): number {
+  const raw = Number(process.env.TRUSTED_PROXY_HOPS);
+  return Number.isInteger(raw) && raw > 0 ? raw : 0;
+}
+
+/**
+ * 시도 제한에 쓸 클라이언트 주소. **모르면 `null` 입니다.**
+ *
+ * ─── 왜 첫 홉을 쓰면 안 되는가 ───
+ * `X-Forwarded-For` 는 클라이언트가 마음대로 보낼 수 있는 헤더입니다. 첫 값을
+ * 키로 쓰면 **공격자가 잠금 키를 고르는 셈**이라, 헤더만 바꿔가며 무한히
+ * 시도할 수 있습니다. 예전 구현이 그랬습니다.
+ *
+ * 믿을 수 있는 것은 **내가 운영하는 프록시가 오른쪽에 덧붙인 값**뿐입니다.
+ * 프록시는 받은 헤더에 실제 소켓 주소를 뒤에 붙이므로, 신뢰 홉 수 N 을 알면
+ * 오른쪽에서 N 번째가 진짜 클라이언트입니다.
+ *
+ *   보낸 값: `X-Forwarded-For: 1.2.3.4`   (위조)
+ *   프록시 뒤: `1.2.3.4, 203.0.113.9`      (203.0.113.9 = 실제)
+ *   N=1 → 오른쪽에서 1번째 → 203.0.113.9  ✓ 위조값은 무시됨
+ *
+ * ─── 프록시가 없으면(N=0) null 입니다 ───
+ * 라우트 핸들러는 소켓 주소를 볼 수 없습니다(표준 `Request` 에 없습니다).
+ * 그러면 클라이언트를 식별할 방법이 아예 없으므로, **틀린 키로 세는 대신
+ * 안 셉니다.** 대신 로그인은 계정 단위로 셉니다 (accountKey) — 그쪽이
+ * 위조가 불가능하고, 막으려는 것(한 계정 비밀번호 대입)에 정확히 걸립니다.
+ */
+export function clientKey(request: Request): string | null {
+  const hops = trustedProxyHops();
+  if (hops === 0) return null;
+
+  const chain = (request.headers.get('x-forwarded-for') ?? '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  if (chain.length >= hops) return chain[chain.length - hops] ?? null;
+
+  // 프록시가 있다고 했는데 체인이 짧습니다 — 설정이 틀렸거나 프록시를 우회해
+  // 직접 들어온 요청입니다. 둘 다 신뢰할 수 없으므로 세지 않습니다.
+  return request.headers.get('x-real-ip')?.trim() || null;
+}
+
+/**
+ * 계정 단위 시도 제한 키.
+ *
+ * IP 는 위조되고 바뀌지만 **표적 계정은 안 바뀝니다.** 비밀번호 대입을 막는
+ * 자리에서는 이쪽이 근거로 더 낫습니다.
+ *
+ * 대소문자를 접는 이유: DB 의 닉네임 중복 차단이 `lower()` 기준이라(migrate-027)
+ * 'Admin' 과 'admin' 이 같은 계정입니다. 접지 않으면 **대소문자만 바꿔가며
+ * 카운터를 초기화**할 수 있습니다.
+ */
+export function accountKey(nickname: string): string {
+  return `account:${nickname.normalize('NFC').trim().toLowerCase()}`;
 }

@@ -53,6 +53,11 @@ export interface Arcade {
   is24h: boolean;
   phone: string | null;
   note: string | null;
+  /**
+   * 업체가 등록한 홈페이지·SNS 주소 (수집 시 함께 오는 값).
+   * 예전에는 `note` 에 이어 붙어 화면에 원본 주소가 그대로 찍혔다 — migrate-055.
+   */
+  homepage: string | null;
   machines: ArcadeMachine[];
   /** 좌표 기준 검색일 때만 채워짐 */
   distanceKm: number | null;
@@ -78,4 +83,18 @@ export interface ArcadeInput {
    * 배열 순서가 그대로 1호기·2호기가 됩니다.
    */
   machines: { machineId: number; cabinets: { condition: number | null }[] }[];
+}
+
+/**
+ * AI 가 찾아낸 보유 기종 **추정** (migrate-061 · scripts/guess-arcade-machines.mjs).
+ *
+ * 확정(ArcadeMachine)과 다른 타입으로 둡니다 — 같은 모양으로 두면 화면에서 섞어
+ * 쓰기 쉬워지고, 그 순간 기종 필터와 개수가 조용히 거짓이 됩니다.
+ */
+export interface MachineGuess {
+  machineId: number;
+  name: string;
+  shortName: string | null;
+  /** 그렇게 본 근거 — 출처 주소나 인용 */
+  evidence: string;
 }

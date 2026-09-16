@@ -22,6 +22,7 @@ const arcade = (id: number, name: string): Arcade => ({
   is24h: false,
   phone: null,
   note: null,
+  homepage: null,
   machines: [],
   distanceKm: null,
   ratingAvg: null,

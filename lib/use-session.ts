@@ -57,6 +57,7 @@ export async function refreshSession(): Promise<void> {
       current = null;
     } finally {
       loaded = true;
+      checkedAt = Date.now();
       inflight = null;
       emit();
     }
@@ -64,11 +65,46 @@ export async function refreshSession(): Promise<void> {
   return inflight;
 }
 
+/**
+ * 마지막으로 서버에 물어본 시각. 탭을 다시 볼 때마다 묻지 않기 위한 간격입니다.
+ * 세션은 7일짜리라 1분 간격이면 충분히 촘촘합니다.
+ */
+let checkedAt = 0;
+const RECHECK_MS = 60_000;
+
+/**
+ * 탭으로 돌아왔을 때 세션이 아직 살아 있는지 확인합니다.
+ *
+ * 고치는 문제: 세션은 7일이면 끝나는데 화면은 **처음 마운트할 때 한 번만** 물었습니다.
+ * 그래서 탭을 열어 둔 채 만료되면 상단에 닉네임이 그대로 남고 글쓰기 버튼도 살아
+ * 있는데, 누르는 것마다 401 로 떨어졌습니다 (2026-09-13 UX 점검). 다른 기기에서
+ * 로그아웃했거나 관리자 권한이 회수된 경우도 같습니다.
+ *
+ * 모든 fetch 를 감싸 401 을 가로채는 방법도 있지만, 호출부가 마흔 곳이 넘고 그중
+ * 상당수는 401 을 이미 자기 방식으로 다룹니다. 돌아온 순간에 한 번 묻는 쪽이
+ * 작고, 사람이 실제로 겪는 경우(오래 열어 둔 탭)를 그대로 덮습니다.
+ */
+function recheckIfStale(): void {
+  if (document.visibilityState !== 'visible') return;
+  if (Date.now() - checkedAt < RECHECK_MS) return;
+  checkedAt = Date.now();
+  void refreshSession();
+}
+
 export function useSession(): SessionUser | null {
   const user = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   // 여러 컴포넌트가 동시에 불러도 요청은 한 번뿐입니다 (inflight 공유).
   useEffect(() => {
-    if (!loaded) void refreshSession();
+    if (!loaded) {
+      checkedAt = Date.now();
+      void refreshSession();
+    }
+    document.addEventListener('visibilitychange', recheckIfStale);
+    window.addEventListener('focus', recheckIfStale);
+    return () => {
+      document.removeEventListener('visibilitychange', recheckIfStale);
+      window.removeEventListener('focus', recheckIfStale);
+    };
   }, []);
   return user;
 }

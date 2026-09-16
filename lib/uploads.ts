@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import path from 'node:path';
 
 /**
@@ -166,4 +168,32 @@ export async function read(storageKey: string): Promise<Buffer | null> {
   } catch {
     return null;
   }
+}
+
+/** 파일 크기만. 내용을 읽지 않으므로 28MB 동영상에도 비용이 없다 */
+export async function size(storageKey: string): Promise<number | null> {
+  try {
+    const stat = await fs.stat(resolveKey(storageKey));
+    return stat.isFile() ? stat.size : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 파일의 일부(또는 전부)를 **스트림으로** 돌려줍니다.
+ *
+ * 예전에는 `read()` 로 파일 전체를 버퍼에 올린 뒤 `subarray` 로 잘라 보냈습니다.
+ * 동영상은 재생 막대를 끌 때마다 구간 요청이 오는데, 그때마다 28MB 를 통째로
+ * 메모리에 올리고 있었습니다 (2026-09-13 QA). 동시에 몇 명만 봐도 인스턴스 메모리가
+ * 먼저 무너집니다 — 요청은 초당 몇 건이 아니라 **바이트**가 문제인 경로입니다.
+ *
+ * 반환값은 웹 표준 ReadableStream 이라 `new Response(stream)` 에 그대로 들어갑니다.
+ */
+export function readRange(
+  storageKey: string,
+  range?: { start: number; end: number },
+): ReadableStream<Uint8Array> {
+  const nodeStream = createReadStream(resolveKey(storageKey), range);
+  return Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
 }

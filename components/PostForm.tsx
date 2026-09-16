@@ -82,7 +82,6 @@ export default function PostForm({
           // 판단을 다시 하지만, 화면이 보내는 값과 화면에 보이는 값이 같아야 한다.
           machineId: noticeSelected || machineId === '' ? null : machineId,
           category,
-          playerId,
           title,
           body,
           bodyDoc,

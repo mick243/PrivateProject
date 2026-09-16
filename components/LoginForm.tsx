@@ -124,7 +124,7 @@ export default function LoginForm() {
             type="text"
             value={nickname}
             maxLength={100}
-            placeholder="관리자"
+            placeholder="아이디"
             autoComplete="username"
             onChange={(e) => setNickname(e.target.value)}
           />

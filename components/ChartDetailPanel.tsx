@@ -87,15 +87,21 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
     setError(null);
   }, [chart.id, chart.myVote]);
 
-  const post = async (url: string, body: unknown) => {
+  /**
+   * 상태를 바꾸는 요청 하나. **켜는 것은 PUT, 끄는 것은 DELETE** 입니다
+   * (GUIDELINES §4-1 — 토글은 재시도·낡은 상태에 깨집니다).
+   * DELETE 에는 본문을 싣지 않습니다 — 중간 장비가 버리는 경우가 있습니다.
+   */
+  const send = async (url: string, method: 'PUT' | 'DELETE', body?: unknown) => {
     if (!playerId) return;
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        method,
+        ...(body === undefined
+          ? {}
+          : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -119,10 +125,13 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
         <div>
           <h2>{chart.title}</h2>
           <p className="muted small">
-            {/* modeLabel 이 null 이면 난이도 미표기라 레벨만 붙인다 (migrate-047) */}
+            {/* modeLabel 이 null 이면 난이도 미표기라 레벨만 붙인다 (migrate-047).
+                difficultyLabel 은 난이도 축이 있는 게임에서만 있다 (migrate-059). */}
             {chart.artist ?? '아티스트 미상'} · {chart.machineName}{' '}
             {chart.modeLabel === null ? '' : `${chart.modeLabel} `}
-            {chart.level}
+            {chart.difficultyLabel === null ? '' : `${chart.difficultyLabel} `}
+            {/* 난이도 미상이면 숫자가 없다 (migrate-059) */}
+            Lv.{chart.level ?? '?'}
           </p>
         </div>
         <button type="button" className="btn btn-sm" onClick={onClose}>
@@ -198,10 +207,7 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
                 checked={chart.myClear}
                 disabled={busy}
                 onChange={(e) =>
-                  post(`/api/charts/${chart.id}/clear`, {
-                    playerId,
-                    cleared: e.target.checked,
-                  })
+                  send(`/api/charts/${chart.id}/clear`, e.target.checked ? 'PUT' : 'DELETE')
                 }
               />
               <span>이 채보를 클리어했습니다</span>
@@ -241,7 +247,7 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
                     type="button"
                     className="btn btn-primary btn-sm"
                     disabled={busy || draft === chart.myVote}
-                    onClick={() => post(`/api/charts/${chart.id}/vote`, { playerId, value: draft })}
+                    onClick={() => send(`/api/charts/${chart.id}/vote`, 'PUT', { value: draft })}
                   >
                     {chart.myVote === null ? '투표' : '수정'}
                   </button>
@@ -250,7 +256,7 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
                       type="button"
                       className="btn btn-sm btn-danger"
                       disabled={busy}
-                      onClick={() => post(`/api/charts/${chart.id}/vote`, { playerId, value: null })}
+                      onClick={() => send(`/api/charts/${chart.id}/vote`, 'DELETE')}
                     >
                       투표 취소
                     </button>
@@ -276,10 +282,7 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
                 checked={chart.mySpecial}
                 disabled={busy}
                 onChange={(e) =>
-                  post(`/api/charts/${chart.id}/special`, {
-                    playerId,
-                    special: e.target.checked,
-                  })
+                  send(`/api/charts/${chart.id}/special`, e.target.checked ? 'PUT' : 'DELETE')
                 }
               />
               <span>특수 패턴 채보입니다</span>

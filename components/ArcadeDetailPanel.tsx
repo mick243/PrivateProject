@@ -10,8 +10,9 @@ import {
   type MachineReport,
   type PresenceOutcome,
   type ReportKind,
+  REPORT_COMMENT_MAX,
 } from '@/lib/community-types';
-import type { Arcade, ArcadeCabinet, ArcadeMachine, Machine } from '@/lib/types';
+import type { Arcade, ArcadeCabinet, ArcadeMachine, Machine, MachineGuess } from '@/lib/types';
 import { useFavorites } from '@/lib/use-favorites';
 import { usePlayerId } from '@/lib/use-player';
 import { useIsAdmin } from '@/lib/use-session';
@@ -91,12 +92,42 @@ function ArcadeDetailPanel({
   const [draftWait, setDraftWait] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * AI 가 찾아낸 보유 기종 추정 (migrate-061). 확정이 아니라 "이거 맞나요?" 를
+   * 물을 재료입니다. 상세를 열었을 때만 부릅니다 — 목록 쿼리에 얹으면 상세를
+   * 열지 않는 대다수가 그 값을 치릅니다 (lib/arcades.ts listMachineGuesses).
+   */
+  const [guesses, setGuesses] = useState<MachineGuess[]>([]);
+  /** "AI 로 기종 찾기" 가 도는 중인가 — 검색 두 번에 몇 초가 걸려 단추를 잠가야 합니다 */
+  const [guessing, setGuessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newMachineId, setNewMachineId] = useState<number | ''>('');
 
   const loadReports = useCallback(async () => {
-    const data = await fetch(`/api/arcades/${arcade.id}/reports?limit=20`).then((r) => r.json());
-    setReports((data.reports as MachineReport[]) ?? []);
+    try {
+      const res = await fetch(`/api/arcades/${arcade.id}/reports?limit=20`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? '최근 제보를 불러오지 못했습니다');
+      setReports((data.reports as MachineReport[]) ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '최근 제보를 불러오지 못했습니다');
+    }
+  }, [arcade.id]);
+
+  useEffect(() => {
+    let alive = true;
+    setGuesses([]);
+    fetch(`/api/arcades/${arcade.id}/guesses`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive) setGuesses((d.guesses as MachineGuess[]) ?? []);
+      })
+      // 추정을 못 불러와도 상세는 그대로 보여야 합니다 — 있으면 좋은 것이지
+      // 이 화면이 서는 근거가 아닙니다.
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
   }, [arcade.id]);
 
   useEffect(() => {
@@ -121,8 +152,9 @@ function ArcadeDetailPanel({
       const res = await fetch(`/api/arcades/${arcade.id}/reports`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // playerId 를 싣지 않는다 — 로그인했는지는 세션 쿠키가 말하고, 없으면
+        // 서버가 익명(null)으로 받는다. 제보만은 로그인을 요구하지 않는다.
         body: JSON.stringify({
-          playerId,
           comment: memo.trim() || null,
           cabinetId: null,
           waitCount: null,
@@ -176,6 +208,60 @@ function ArcadeDetailPanel({
     await loadReports();
   };
 
+  /**
+   * 이 한 곳만 검색해 추정을 만든다. 결과는 곧바로 위 추정 상자에 뜬다.
+   * 실패 사유를 나눠 말합니다 — '검색이 안 돌았다'(다시 누르면 될 수 있음)와
+   * '검색은 됐는데 근거가 없다'(다시 눌러도 같을 것)는 다음 행동이 다릅니다.
+   */
+  const runGuess = async () => {
+    setGuessing(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/arcades/${arcade.id}/guesses`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? '검색에 실패했습니다');
+        return;
+      }
+      setGuesses((data.guesses as MachineGuess[]) ?? []);
+      /*
+        found 는 검색이 찾은 수, fresh 는 그중 상자에 실제로 뜨는 수입니다. 이미
+        제보로 확정된 기종은 추정 목록에서 빠지므로(lib/arcades.ts listMachineGuesses)
+        둘이 다를 수 있고, 전부 겹치면 상자가 아예 뜨지 않습니다. 그 경우 "3개를
+        찾았습니다" 라고만 말하면 아무것도 안 나온 화면과 어긋나 검색이 헛돈 것처럼
+        보입니다 — 실은 이미 아는 것과 맞아떨어진, 나쁘지 않은 결과입니다.
+      */
+      const found = Number(data.found ?? 0);
+      const fresh = Number(data.fresh ?? 0);
+      const already = found - fresh;
+      if (data.reused) {
+        // 내가 누르기 전에 이미 돌려 본 곳이다. 검색은 나가지 않았고 한도도 쓰지 않았다.
+        setNotice(
+          fresh > 0
+            ? '이미 만들어 둔 추정이 있어 검색 없이 보여 드립니다.'
+            : '전에 검색해 본 곳입니다. 찾은 기종이 모두 이미 등록돼 있어 새로 뜨는 것은 없습니다.',
+        );
+      } else if (!data.searched) {
+        setNotice('검색이 돌지 않아 추정을 만들지 못했습니다. 잠시 뒤 다시 눌러 보세요.');
+      } else if (found === 0) {
+        setNotice('검색은 됐지만 근거가 있는 기종을 찾지 못했습니다.');
+      } else if (fresh === 0) {
+        setNotice(`검색으로 ${found}개 기종을 찾았지만 모두 이미 등록된 기종이라 새로 뜨는 것은 없습니다.`);
+      } else if (already > 0) {
+        setNotice(
+          `검색으로 ${found}개 기종을 찾았습니다. ${already}개는 이미 등록돼 있어, 새로 뜬 것은 ${fresh}개입니다.`,
+        );
+      } else {
+        setNotice(`검색으로 ${found}개 기종을 추정했습니다. 맞는지 아래 제보로 확인해 주세요.`);
+      }
+    } catch {
+      setError('네트워크 오류');
+    } finally {
+      setGuessing(false);
+    }
+  };
+
   const toggleForm = (next: NonNullable<OpenForm>) => {
     setMemo('');
     setDraftCondition(null);
@@ -205,6 +291,29 @@ function ArcadeDetailPanel({
             </button>
           </div>
           <p className="muted small">{arcade.address}</p>
+          {/*
+            목록은 모르는 영업시간을 아예 말하지 않는다(ArcadeList hours). 대신
+            여기서는 '정보 없음' 까지 알려 준다 — 상세는 그 한 곳을 보러 온 화면이라
+            "안 적혀 있다" 도 답이기 때문이다. 예전에는 상세에 영업시간 칸 자체가
+            없어서, 목록은 미등록이라 하고 상세는 아무 말도 안 하는 상태였다.
+          */}
+          <p className="muted small detail-facts">
+            <span>
+              {arcade.is24h
+                ? '24시간'
+                : arcade.openTime && arcade.closeTime
+                  ? `${arcade.openTime} ~ ${arcade.closeTime}`
+                  : '영업시간 정보 없음'}
+            </span>
+            {arcade.phone && <span className="dot-sep">{arcade.phone}</span>}
+            {arcade.homepage && /^https?:\/\//i.test(arcade.homepage) && (
+              <span className="dot-sep">
+                <a href={arcade.homepage} target="_blank" rel="noopener noreferrer nofollow">
+                  홈페이지 · SNS
+                </a>
+              </span>
+            )}
+          </p>
         </div>
         <div className="detail-head-actions">
           {/*
@@ -235,8 +344,62 @@ function ArcadeDetailPanel({
 
       <div className="section">
         {arcade.machines.length === 0 ? (
-          <p className="muted small">등록된 기종이 없습니다.</p>
-        ) : (
+          // 이 오락실의 기종을 아무도 아직 안 알려 줬다는 뜻이다. 바로 아래가
+          // 제보 칸이므로, 없다는 말 대신 그 칸을 가리킨다.
+          <p className="muted small">
+            아직 등록된 기종이 없습니다. 이곳에서 본 기종을 아래에서 골라 알려 주세요.
+          </p>
+        ) : null}
+
+        {/*
+          AI 추정. **확정 목록 바깥에** 둡니다 — 같은 줄에 섞으면 제보로 확인된
+          기종과 기계가 찾아낸 것이 구분되지 않고, 그 순간 이 화면이 거짓말을
+          시작합니다. 근거를 함께 보여 주는 것이 핵심입니다. 사람이 "이걸 왜
+          그렇게 봤나" 를 읽을 수 있어야 맞다/아니다를 판단할 수 있습니다.
+        */}
+        {/*
+          출시 전 테스트 기간이라 **누구나** 누를 수 있습니다. 한 번에 구글 검색
+          1회가 나가는 유료 동작이라 서버가 하루 한도로 조입니다
+          (app/api/arcades/[id]/guesses POST, GUESS_LIMIT_*).
+
+          이미 추정이 있으면 관리자에게만 보입니다 — 일반 사용자가 눌러도 서버는
+          검색하지 않고 있던 것을 돌려주므로, 보이는 단추가 아무 일도 하지 않는
+          단추가 됩니다. 배치(scripts/guess-arcade-machines.mjs)와 같은 일을
+          **이 한 곳에만** 합니다.
+        */}
+        {(isAdmin || guesses.length === 0) && (
+          <div className="guess-actions">
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={guessing}
+              onClick={runGuess}
+              title="이 오락실의 보유 기종을 검색으로 추정합니다 (구글 검색 1회)"
+            >
+              {guessing ? '검색 중…' : guesses.length > 0 ? 'AI 로 다시 찾기' : 'AI 로 기종 찾기'}
+            </button>
+            <span className="muted small">{isAdmin ? '관리자 · 한도 없음' : '하루 1회'}</span>
+          </div>
+        )}
+
+        {guesses.length > 0 && (
+          <div className="guess-box">
+            <p className="guess-head">
+              <span className="guess-tag">AI 추정</span>
+              검색으로 찾은 것이라 틀릴 수 있습니다. 가 보신 적 있다면 아래에서 알려 주세요.
+            </p>
+            <ul className="guess-list">
+              {guesses.map((g) => (
+                <li key={g.machineId}>
+                  <strong>{g.shortName ?? g.name}</strong>
+                  <span className="muted small">{g.evidence}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {arcade.machines.length === 0 ? null : (
           <ul className="live-list">
             {arcade.machines.map((m) => (
               <li key={m.id}>
@@ -270,9 +433,14 @@ function ArcadeDetailPanel({
               disabled={busy}
             >
               <option value="">기종 선택</option>
+              {/*
+                칩·뱃지는 줄임말(사볼)인데 여기만 정식 명칭(SOUND VOLTEX)이라, 필터에서
+                고른 게임을 이 목록에서 다시 찾아야 했다 (2026-09-13 UX 점검).
+                줄임말을 앞에 두고 정식 명칭을 뒤에 붙여 양쪽 다 찾을 수 있게 한다.
+              */}
               {missing.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name}
+                  {m.shortName === m.name ? m.name : `${m.shortName} · ${m.name}`}
                 </option>
               ))}
             </select>
@@ -424,8 +592,8 @@ function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFor
           <input
             type="text"
             placeholder="한 줄 메모 (선택)"
+            maxLength={REPORT_COMMENT_MAX}
             value={memo}
-            maxLength={200}
             onChange={(e) => onMemo(e.target.value)}
           />
           <div className="form-actions">
@@ -519,8 +687,8 @@ function CabinetCard({
           <input
             type="text"
             placeholder="한 줄 메모 (선택)"
+            maxLength={REPORT_COMMENT_MAX}
             value={memo}
-            maxLength={200}
             onChange={(e) => onMemo(e.target.value)}
           />
           <div className="form-actions">

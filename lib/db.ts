@@ -1,5 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+// 확장자를 붙인다 — scripts/ 의 .ts 도구들이 이 파일을 **번들러 없이** Node 로 바로
+// 실행하는데, ESM 은 확장자 없는 상대 경로를 해석하지 못한다. tsconfig 가
+// allowImportingTsExtensions 라 앱 빌드 쪽은 그대로다.
+// (이게 없어서 npm run arcades:import 가 ERR_MODULE_NOT_FOUND 로 죽고 있었다.)
+import { recordPoolQuery, withTelemetry } from './telemetry.ts';
 
 /**
  * DB 어댑터.
@@ -63,6 +68,8 @@ function setStatus(status: DbStatus): void {
 /** 폴백으로 내려갈 때 소켓을 정리하려고 pg 어댑터만 close 를 더 갖습니다. */
 interface PgDb extends Db {
   close(): Promise<void>;
+  /** 스키마·마이그레이션·뷰 적용 (advisory lock 안에서). 연결이 확인된 뒤 한 번 부릅니다 */
+  applySchema(): Promise<void>;
 }
 
 async function createPgDb(connectionString: string): Promise<PgDb> {
@@ -89,6 +96,55 @@ async function createPgDb(connectionString: string): Promise<PgDb> {
   const pool = new pg.Pool({ connectionString, max });
 
   /**
+   * 스키마·마이그레이션·뷰를 **여기서도** 적용합니다.
+   *
+   * 2026-09-13 까지는 PGlite 경로(createPgliteDb)만 이걸 했고 PostgreSQL 은 풀만
+   * 만들었습니다. 그래서 운영 DB 에 새 마이그레이션을 넣는 유일한 코드 경로가
+   * `db:init`(테이블을 DROP 하는 파괴적 스크립트)이었고, 개발 DB 의 052·053 은
+   * 누군가 psql 로 손수 넣은 것이었습니다. 문서(GUIDELINES §3)는 부팅 시 적용되는
+   * 것처럼 적혀 있어 코드와 어긋났습니다.
+   *
+   * 인스턴스 2개가 같은 순간에 뜨면 둘이 같은 마이그레이션을 동시에 시도합니다.
+   * `pg_advisory_lock` 으로 한 번에 한 프로세스만 들어가게 하고, 잠금을 얻은 쪽은
+   * `schema_migrations` 를 **다시 읽어** 앞사람이 끝낸 것을 건너뜁니다.
+   *
+   * 여기서 난 오류는 폴백 대상이 아닙니다 — "DB 에 못 닿았다" 가 아니라 "SQL 이
+   * 틀렸다" 이고, 그걸 로컬 사본에서 다시 시도하면 버그가 조용히 묻힙니다.
+   * createDbWithFallback 이 probe/createPgDb 를 try 로 감싸므로, 스키마 적용은
+   * 그 밖(applyPgSchema)에서 따로 부릅니다.
+   */
+  const applyPgSchema = async (): Promise<void> => {
+    const client = await pool.connect();
+    const one: Db = {
+      async query(text, params) {
+        const res = await client.query(text, params as never[]);
+        return { rows: res.rows };
+      },
+      async exec(sql) {
+        await client.query(sql);
+      },
+      async transaction(fn) {
+        await client.query('BEGIN');
+        try {
+          const result = await fn(one);
+          await client.query('COMMIT');
+          return result;
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        }
+      },
+    };
+    try {
+      await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
+      await applySchema(one, 'PostgreSQL');
+    } finally {
+      await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => {});
+      client.release();
+    }
+  };
+
+  /**
    * **유휴 커넥션의 에러를 받아 주지 않으면 프로세스가 죽습니다.**
    *
    * node-postgres 의 Pool 은 쉬고 있는 클라이언트가 끊길 때 'error' 를 emit 하는데,
@@ -101,9 +157,27 @@ async function createPgDb(connectionString: string): Promise<PgDb> {
   });
 
   return {
+    /**
+     * pool.query 한 방으로 끝내지 않고 connect → query → release 로 펼쳐 둔 이유는
+     * **시간을 쪼개서 재기 위해서** 다. pool.query 는 슬롯 대기와 실행을 한 덩어리로
+     * 돌려주는데, 그러면 지표에서 "DB 가 느리다" 와 "슬롯이 없다" 를 가를 수 없다.
+     * 동작은 동일하다 — pool.query 자체가 이 셋을 묶어 놓은 것이고, 실패해도
+     * finally 에서 반납한다.
+     *
+     * 계측이 꺼져 있으면 recordPoolQuery 는 즉시 반환하므로 남는 비용은
+     * performance.now() 두 번이다.
+     */
     async query(text, params) {
-      const res = await pool.query(text, params as never[]);
-      return { rows: res.rows };
+      const t0 = performance.now();
+      const client = await pool.connect();
+      const t1 = performance.now();
+      try {
+        const res = await client.query(text, params as never[]);
+        recordPoolQuery(text, t1 - t0, performance.now() - t1);
+        return { rows: res.rows };
+      } finally {
+        client.release();
+      }
     },
     async exec(sql) {
       await pool.query(sql);
@@ -130,7 +204,41 @@ async function createPgDb(connectionString: string): Promise<PgDb> {
     async close() {
       await pool.end();
     },
+    applySchema: applyPgSchema,
   };
+}
+
+/**
+ * 마이그레이션 잠금 키. 같은 DB 를 보는 모든 프로세스가 같은 값을 써야 합니다
+ * (`scripts/migrate.mjs` 도 이 값입니다). 의미 없는 상수 — 겹치지 않을 만한 수.
+ */
+export const MIGRATION_LOCK_KEY = 72_028_531;
+
+/**
+ * 스키마 그룹 → 마이그레이션 → 뷰 순서로 적용합니다. PGlite 와 PostgreSQL 이
+ * 같은 함수를 씁니다 — 둘이 다른 코드를 타면 한쪽에만 빠진 파일이 생깁니다.
+ */
+async function applySchema(db: Db, label: string): Promise<void> {
+  // 필요한 부분만 자동 적용. 기능이 추가되기 전에 만들어진 DB 도
+  // 여기서 따라잡히므로, 스키마가 늘어날 때마다 db:reset 을 강요하지 않는다.
+  const applied: string[] = [];
+  for (const group of SQL_GROUPS) {
+    const { rows } = await db.query<{ exists: string | null }>(
+      `SELECT to_regclass($1)::text AS exists`,
+      [`public.${group.sentinel}`],
+    );
+    if (rows[0]?.exists) continue;
+    for (const file of group.files) await db.exec(readSql(file));
+    applied.push(...group.files);
+  }
+  if (applied.length) console.log(`[db] ${label} 스키마 적용 — ${applied.join(', ')}`);
+
+  await runMigrations(db);
+
+  // 뷰는 sentinel 과 무관하게 항상 다시 만든다. 위 루프는 "없으면 만든다" 라서
+  // 이미 적용된 그룹의 정의가 바뀌어도 따라잡지 못하는데, 뷰는 데이터를 갖지 않아
+  // 매번 DROP → CREATE 해도 안전하다. 집계식을 고치면 서버 재시작으로 반영된다.
+  await db.exec(readSql(DERIVED_SQL_FILE));
 }
 
 async function createPgliteDb(): Promise<Db> {
@@ -158,26 +266,8 @@ async function createPgliteDb(): Promise<Db> {
     },
   };
 
-  // 필요한 부분만 자동 적용. 기능이 추가되기 전에 만들어진 .pglite 도
-  // 여기서 따라잡히므로, 스키마가 늘어날 때마다 db:reset 을 강요하지 않는다.
-  const applied: string[] = [];
-  for (const group of SQL_GROUPS) {
-    const { rows } = await db.query<{ exists: string | null }>(
-      `SELECT to_regclass($1)::text AS exists`,
-      [`public.${group.sentinel}`],
-    );
-    if (rows[0]?.exists) continue;
-    for (const file of group.files) await db.exec(readSql(file));
-    applied.push(...group.files);
-  }
-  if (applied.length) console.log(`[db] PGlite 스키마 적용 — ${applied.join(', ')}`);
-
-  await runMigrations(db);
-
-  // 뷰는 sentinel 과 무관하게 항상 다시 만든다. 위 루프는 "없으면 만든다" 라서
-  // 이미 적용된 그룹의 정의가 바뀌어도 따라잡지 못하는데, 뷰는 데이터를 갖지 않아
-  // 매번 DROP → CREATE 해도 안전하다. 집계식을 고치면 서버 재시작으로 반영된다.
-  await db.exec(readSql(DERIVED_SQL_FILE));
+  // PGlite 는 한 프로세스만 열 수 있어 잠금이 필요 없다.
+  await applySchema(db, 'PGlite');
 
   return db;
 }
@@ -295,6 +385,24 @@ export const MIGRATION_FILES = [
   'migrate-044-tier-chart-basis.sql',
   'migrate-045-mode-is-difficulty.sql',
   'migrate-046-sdvx-chart-tags.sql',
+  'migrate-047-sdvx-17-tier.sql',
+  'migrate-048-drop-sdvx-17-off-sheet.sql',
+  'migrate-049-verse-iv-a-tier.sql',
+  'migrate-050-player-email.sql',
+  'migrate-051-email-verification.sql',
+  'migrate-052-login-failures.sql',
+  'migrate-053-queue-purge-index.sql',
+  'migrate-054-rate-counters.sql',
+  'migrate-055-arcade-homepage.sql',
+  'migrate-056-fk-player-indexes.sql',
+  'migrate-057-token-epoch.sql',
+  'migrate-058-chart-level-notation.sql',
+  'migrate-059-ez2dj-6th-trax-tier.sql',
+  'migrate-060-ez2dj-7th-trax-tier.sql',
+  'migrate-061-machine-guesses.sql',
+  'migrate-062-emoticons.sql',
+  'migrate-063-imported-news.sql',
+  'migrate-064-emoticons-soft-delete.sql',
 ] as const;
 
 export const SQL_FILES = [
@@ -307,8 +415,21 @@ export function readSql(file: string): string {
   return fs.readFileSync(path.join(process.cwd(), 'db', file), 'utf8');
 }
 
-/** 폴백을 끄려면 DB_FALLBACK=off — 연결이 안 되면 그냥 에러를 냅니다. */
-const FALLBACK_ENABLED = process.env.DB_FALLBACK !== 'off';
+/**
+ * 폴백 스위치.
+ *
+ *   DB_FALLBACK=off  → 연결이 안 되면 그냥 에러를 냅니다
+ *   DB_FALLBACK=on   → 연결이 안 되면 .pglite/ 사본으로 내려갑니다
+ *   (비움)           → **개발에서만 on.** 운영(NODE_ENV=production)은 off 입니다
+ *
+ * 운영에서 기본을 off 로 둔 이유: 인스턴스 2개가 각자 다른 사본에 글·제보를 쓰면
+ * 어느 쪽도 정본이 아닌 상태(스플릿 브레인)가 되고, 사본이 없으면 **시드(가상
+ * 오락실 5곳)로 새 DB 를 만들어** 서비스합니다. 노트북에서 Postgres 서비스를
+ * 꺼 둔 채 화면을 보는 편의는 운영에 가져갈 것이 아닙니다.
+ */
+const FALLBACK_ENABLED = process.env.DB_FALLBACK
+  ? process.env.DB_FALLBACK !== 'off'
+  : process.env.NODE_ENV !== 'production';
 
 /**
  * 첫 연결 확인에 쓰는 제한 시간.
@@ -410,6 +531,9 @@ async function createDbWithFallback(connectionString: string): Promise<Db> {
     return createPgliteDb();
   }
 
+  // 연결은 됐다 — 이제부터의 오류는 SQL 의 문제이므로 폴백하지 않고 그대로 던진다.
+  await pgDb.applySchema();
+
   setStatus({ driver: 'postgres' });
   if (!FALLBACK_ENABLED) return pgDb;
 
@@ -471,7 +595,10 @@ export function getDb(): Promise<Db> {
     process.env.DATABASE_URL
       ? createDbWithFallback(process.env.DATABASE_URL)
       : createPgliteDb()
-  ).catch((err: unknown) => {
+  )
+    // 쿼리 계측(lib/telemetry.ts). PULSE_AGENT_KEY 가 없으면 원본을 그대로 돌려준다.
+    .then(withTelemetry)
+    .catch((err: unknown) => {
     // 실패한 약속을 캐시에 남기면 프로세스가 사는 동안 같은 에러만 돌려준다.
     globalForDb.__db = undefined;
     throw err;

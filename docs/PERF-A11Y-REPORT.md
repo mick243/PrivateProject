@@ -110,7 +110,7 @@
 
 **P3. 챗봇 dialog가 모달 계약 미이행** — `role="dialog"`인데 포커스 트랩·Escape 닫기·`aria-modal`·닫을 때 FAB로 포커스 복귀가 없음.
 
-**P4. 토글 상태의 프로그래밍적 표현 누락** — 기종 필터 칩(ArcadeFinder), 종류 세그먼트(LiveFeed), 모드 세그먼트(TierBoardView), 태그 칩(ChartComments), 에디터 서식 버튼(RichTextEditor), 추천 버튼(PostDetailView)이 CSS `is-on`만으로 상태 표시. 같은 코드베이스의 `aria-pressed` 선례(즐겨찾기 별, 인기글 정렬, 컨디션 버튼)를 확장하면 됨.
+**P4. 토글 상태의 프로그래밍적 표현 누락** — 기종 필터 칩(ArcadeFinder), 종류 세그먼트(LiveFeed), 태그 칩(ChartComments), 에디터 서식 버튼(RichTextEditor), 추천 버튼(PostDetailView)이 CSS `is-on`만으로 상태 표시. 같은 코드베이스의 `aria-pressed` 선례(즐겨찾기 별, 인기글 정렬, 컨디션 버튼)를 확장하면 됨. (TierBoardView 의 모드 세그먼트는 `migrate-059`(EZ2DJ) 작업에서 `<select>` 로 바뀌어 이 목록에서 빠졌습니다 — 대신 그 화면의 `<select>` 넷에 `<label>` 이 없는 것은 남아 있습니다.)
 
 **P5. 레이블 없는 컨트롤** — 파인더 검색 인풋, LiveFeed `<select>` 2종, 리뷰/댓글/평가 `<textarea>`, 제보 메모 인풋, 위도/경도 인풋이 placeholder 의존. `aria-label` 부여로 해결 가능.
 

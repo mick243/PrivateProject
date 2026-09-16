@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requirePlayer } from '@/lib/auth';
 import { deleteComment, listComments, upsertComment } from '@/lib/comments';
 import { getChartDetail } from '@/lib/tier';
 import { commentInputSchema, formatIssues } from '@/lib/validation';
@@ -33,6 +34,9 @@ export async function POST(request: Request, ctx: Ctx) {
   const chartId = parseId((await ctx.params).id);
   if (chartId === null) return BAD_ID();
 
+  const guard = await requirePlayer(request);
+  if (!guard.ok) return guard.response;
+
   let body: unknown;
   try {
     body = await request.json();
@@ -53,25 +57,23 @@ export async function POST(request: Request, ctx: Ctx) {
     return NextResponse.json({ error: '채보를 찾을 수 없습니다' }, { status: 404 });
   }
 
-  await upsertComment({ ...parsed.data, chartId });
-  const chart = await getChartDetail(chartId, parsed.data.playerId);
+  await upsertComment({ ...parsed.data, chartId, playerId: guard.playerId });
+  const chart = await getChartDetail(chartId, guard.playerId);
   return NextResponse.json({ chart }, { status: 201 });
 }
 
-/** DELETE /api/charts/:id/comments?playerId=1 — 본인 평가 삭제 */
+/** DELETE /api/charts/:id/comments — 본인 평가 삭제 (누구인지는 세션이 정합니다) */
 export async function DELETE(request: Request, ctx: Ctx) {
   const chartId = parseId((await ctx.params).id);
   if (chartId === null) return BAD_ID();
 
-  const playerId = parseId(new URL(request.url).searchParams.get('playerId') ?? '');
-  if (playerId === null) {
-    return NextResponse.json({ error: 'playerId 가 필요합니다' }, { status: 400 });
-  }
+  const guard = await requirePlayer(request);
+  if (!guard.ok) return guard.response;
 
-  const deleted = await deleteComment(chartId, playerId);
+  const deleted = await deleteComment(chartId, guard.playerId);
   if (!deleted) {
     return NextResponse.json({ error: '삭제할 평가가 없습니다' }, { status: 404 });
   }
 
-  return NextResponse.json({ chart: await getChartDetail(chartId, playerId) });
+  return NextResponse.json({ chart: await getChartDetail(chartId, guard.playerId) });
 }

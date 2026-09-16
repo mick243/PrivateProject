@@ -253,7 +253,17 @@ export async function deleteReport(id: number): Promise<boolean> {
  *
  * 익명 제보(player_id IS NULL)는 세지 않는다 — 한 사람이 새로고침만 해도
  * 임계값을 채울 수 있으면 임계값이 아무 의미가 없다. 제보 자체는 남는다.
+ *
+ * **막 만든 계정도 세지 않는다** (MIN_ACCOUNT_AGE_HOURS). 임계값이 2명이라,
+ * 가입 제한이 없는 배포에서는 일회용 계정 2개로 임의 오락실의 기종을 넣고 뺄 수
+ * 있었다 (2026-09-13 QA B5). 계정을 만든 뒤 하루가 지나야 표가 된다 — 지도의
+ * 근거를 바꾸는 표는 "지나가다 만든 계정" 이 아니라 "쓰고 있는 계정" 의 것이어야
+ * 한다. 제보 자체는 즉시 남고 피드에도 보인다.
  */
+
+/** 가입 후 이 시간이 지난 계정만 있어요/없어졌어요 임계값에 센다 */
+export const MIN_ACCOUNT_AGE_HOURS = 24;
+
 async function applyPresence(
   tx: Queryable,
   arcadeId: number,
@@ -266,13 +276,16 @@ async function applyPresence(
   const { rows } = await tx.query<{ count: unknown }>(
     `SELECT COUNT(DISTINCT r.player_id)::int AS count
      FROM machine_reports r
+     JOIN players p ON p.id = r.player_id
      WHERE r.arcade_id = $1 AND r.machine_id = $2 AND r.kind = $3
        AND r.player_id IS NOT NULL
+       -- 계정 나이 조건 — 제보 시각을 자르는 것이 아니라 표를 낸 계정의 나이를 본다
+       AND p.created_at + ($5::int * interval '1 hour') <= r.created_at
        AND r.created_at > COALESCE((
              SELECT MAX(o.created_at) FROM machine_reports o
              WHERE o.arcade_id = $1 AND o.machine_id = $2 AND o.kind = $4
            ), '-infinity'::timestamptz)`,
-    [arcadeId, machineId, kind, opposite],
+    [arcadeId, machineId, kind, opposite, MIN_ACCOUNT_AGE_HOURS],
   );
   const count = num(rows[0]?.count) ?? 0;
   if (count < threshold) return { count, outcome: null };

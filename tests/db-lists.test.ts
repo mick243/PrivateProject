@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * `lib/db.ts` 와 `scripts/init-db.mjs` 의 SQL 파일 목록이 같은지 봅니다.
+ * `lib/db.ts` 와 `scripts/db-files.mjs`(init-db · migrate 가 공유) 의 SQL 파일 목록이 같은지 봅니다.
  *
  * 두 곳에 같은 목록이 있는 이유는 init 스크립트가 `.ts` 를 import 할 수 없어서
  * 옮겨 적은 것입니다(그 파일 주석에 적혀 있습니다). 사람이 손으로 맞추는 목록은
@@ -27,24 +27,29 @@ function listOf(source: string, name: string): string[] {
 }
 
 const dbTs = read('lib/db.ts');
-const initMjs = read('scripts/init-db.mjs');
+const initMjs = read('scripts/db-files.mjs');
 
 /** lib/db.ts 는 스키마 파일을 SQL_GROUPS 안에 나눠 들고 있다 */
-function schemaFilesFromGroups(source: string): string[] {
-  const groups = /SQL_GROUPS\s*=\s*\[(.*?)\n\] as const/s.exec(source);
-  if (!groups) throw new Error('SQL_GROUPS 를 찾지 못했습니다');
+function schemaFilesFromGroups(source: string, name = 'SQL_GROUPS'): string[] {
+  const groups = new RegExp(`${name}\\s*=\\s*\\[(.*?)\\n\\](?: as const)?;`, 's').exec(source);
+  if (!groups) throw new Error(`${name} 를 찾지 못했습니다`);
   return [...groups[1].matchAll(/files:\s*\[([^\]]+)\]/g)].flatMap((m) =>
     [...m[1].matchAll(/'([^']+)'/g)].map((q) => q[1]),
   );
 }
 
-describe('lib/db.ts ↔ scripts/init-db.mjs 목록', () => {
+describe('lib/db.ts ↔ scripts/db-files.mjs 목록', () => {
   it('마이그레이션 목록이 순서까지 같다', () => {
     expect(listOf(initMjs, 'MIGRATION_FILES')).toEqual(listOf(dbTs, 'MIGRATION_FILES'));
   });
 
   it('스키마·시드 목록이 순서까지 같다 (적용 순서가 FK 순서다)', () => {
-    expect(listOf(initMjs, 'SCHEMA_FILES')).toEqual(schemaFilesFromGroups(dbTs));
+    expect(schemaFilesFromGroups(initMjs, 'SCHEMA_GROUPS')).toEqual(schemaFilesFromGroups(dbTs));
+  });
+
+  it('마이그레이션 잠금 키가 같다 — 다르면 서버와 스크립트가 서로를 기다리지 않는다', () => {
+    const key = (s: string) => /MIGRATION_LOCK_KEY\s*=\s*([\d_]+)/.exec(s)?.[1];
+    expect(key(initMjs)).toBe(key(dbTs));
   });
 
   it('뷰 파일이 같다', () => {

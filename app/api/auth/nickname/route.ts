@@ -26,7 +26,7 @@ export const dynamic = 'force-dynamic';
 
 /** GET — 지금 물어볼 상태인가, 미리 채워 둘 이름은 무엇인가 */
 export async function GET(request: Request) {
-  const session = getSession(request);
+  const session = await getSession(request);
   if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
 
   const status = await nicknameStatus(session.playerId);
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
 
 /** POST — `{nickname, password?}` → 이름 확정 (+ 선택한 경우 비밀번호 설정) + 세션 쿠키 재발급 */
 export async function POST(request: Request) {
-  const session = getSession(request);
+  const session = await getSession(request);
   if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
 
   let body: unknown;
@@ -82,7 +82,8 @@ export async function POST(request: Request) {
     await setPlayerPassword(session.playerId, parsed.data.password);
   }
 
-  // 세션 쿠키에는 닉네임이 **박혀 있습니다**(lib/auth.ts createSessionToken).
-  // 다시 서명해 주지 않으면 상단 네비와 글 작성자에 예전 이름이 남습니다.
-  return setSessionCookie(NextResponse.json({ user: result.user }), result.user);
+  // 쿠키를 **반드시** 다시 발급합니다 — 위에서 비밀번호를 정했다면 그 순간
+  // 계정의 세대 번호가 올라가 지금 들고 있는 쿠키가 무효가 되기 때문입니다
+  // (lib/auth.ts setPlayerPassword). 이름을 정하자마자 로그아웃되면 안 됩니다.
+  return setSessionCookie(NextResponse.json({ user: result.user }), result.user.playerId);
 }

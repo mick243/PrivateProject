@@ -1,7 +1,12 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useEffect, useState } from 'react';
 import { chartTagsFor, timeAgo } from '@/lib/community-types';
+import EmoticonPicker from './EmoticonPicker';
+import EmoticonText from './EmoticonText';
+import ScrollStrip from './ScrollStrip';
 import type { ChartDetail } from '@/lib/tier-types';
 
 interface Props {
@@ -47,6 +52,11 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
           : [...prev, tag],
     );
 
+  /** 고른 이모티콘을 본문 끝에 붙인다. 화면 maxLength 는 타이핑만 막으므로 여기서도 본다 */
+  const addEmoticon = (token: string) => {
+    setBody((v) => (v.length + token.length > 1000 ? v : v + token));
+  };
+
   const save = async () => {
     if (!playerId) return;
     setBusy(true);
@@ -55,7 +65,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
       const res = await fetch(`/api/charts/${chart.id}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerId, body: body.trim(), tags }),
+        body: JSON.stringify({ body: body.trim(), tags }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -75,9 +85,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
     if (!playerId) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/charts/${chart.id}/comments?playerId=${playerId}`, {
-        method: 'DELETE',
-      });
+      const res = await fetch(`/api/charts/${chart.id}/comments`, { method: 'DELETE' });
       const data = await res.json();
       if (res.ok) {
         onChanged(data.chart as ChartDetail);
@@ -98,10 +106,21 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
       </h3>
 
       {!playerId ? (
-        <p className="muted small">로그인하면 평가를 남길 수 있습니다.</p>
+        <p className="muted small">
+          <Link href="/login?next=%2Ftier">로그인</Link>하면 평가를 남길 수 있습니다.
+        </p>
       ) : showForm ? (
         <div className="comment-form">
-          <div className="tag-row">
+          {/*
+            게임마다 태그 수가 달라(펌프 12 · EZ2 12 · 공통 8) 좁은 상세 패널에서
+            두 줄·세 줄로 접히면 그 아래 입력란이 그만큼 오르내립니다. 커뮤니티
+            게임 탭과 같은 부품으로 한 줄에 두고 옆으로 밉니다 (ScrollStrip).
+
+            revealKey 는 **주지 않습니다.** 태그는 여러 개를 켜는 줄이라, 하나 켤
+            때마다 첫 번째 켜진 칩으로 끌려가 방금 누른 자리를 잃습니다
+            (ScrollStrip 머리말의 경고 — 사이드바 기종 필터와 같은 이유).
+          */}
+          <ScrollStrip className="tag-row" remeasureKey={tagOptions.length}>
             {tagOptions.map((t) => (
               <button
                 key={t}
@@ -113,7 +132,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
                 {t}
               </button>
             ))}
-          </div>
+          </ScrollStrip>
           <textarea
             rows={3}
             maxLength={1000}
@@ -130,6 +149,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
             >
               {mine ? '수정' : '등록'}
             </button>
+            <EmoticonPicker disabled={busy} onPick={addEmoticon} />
             {mine && (
               <button
                 type="button"
@@ -182,7 +202,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
                   ))}
                 </div>
               )}
-              <p className="comment-body">{c.body}</p>
+              <p className="comment-body"><EmoticonText text={c.body} /></p>
             </li>
           ))}
         </ul>

@@ -1,0 +1,4 @@
+# cmd.exe 는 줄 끝이 LF 인 배치 파일을 제대로 읽지 못합니다 — 줄을 이어 읽고
+# "')' was unexpected at this time" 으로 죽습니다. 체크아웃 때 CRLF 를 강제합니다.
+*.cmd text eol=crlf
+*.bat text eol=crlf

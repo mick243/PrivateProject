@@ -146,7 +146,6 @@ export default function RichTextEditor({
     for (const file of files.slice(0, room)) {
       const form = new FormData();
       form.append('file', file);
-      form.append('playerId', String(playerId));
       try {
         const res = await fetch('/api/uploads', { method: 'POST', body: form });
         const data = await res.json();

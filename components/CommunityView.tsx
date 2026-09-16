@@ -1,5 +1,8 @@
 'use client';
 
+import dynamic from 'next/dynamic';
+import Link from 'next/link';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   POPULAR_MIN_LIKES,
@@ -10,10 +13,26 @@ import {
   type PostSort,
   type PostSummary,
 } from '@/lib/board-types';
+import { forgetPost, prefetchPost } from '@/lib/post-cache';
 import { usePlayerId } from '@/lib/use-player';
+import GameTabs from './GameTabs';
 import Pagination from './Pagination';
+import ScrollStrip from './ScrollStrip';
 import PostDetailView from './PostDetailView';
-import PostForm from './PostForm';
+/*
+  글쓰기 화면은 **열 때 받습니다.**
+
+  PostForm 은 Tiptap(에디터 본체 + 표 + 정렬 + ProseMirror)을 끌고 옵니다. 정적으로
+  import 하면 글을 읽기만 하는 방문자도 그 번들을 내려받습니다 — 읽기와 쓰기의 비가
+  54:1 인 서비스에서 대부분이 쓰지 않을 코드입니다 (2026-09-13 UX 점검).
+
+  ssr:false 인 이유는 에디터가 브라우저 전용이기 때문입니다 (RichTextEditor 가
+  immediatelyRender:false 로 같은 문제를 이미 다룹니다).
+*/
+const PostForm = dynamic(() => import('./PostForm'), {
+  ssr: false,
+  loading: () => <p className="muted pad">글쓰기 준비 중…</p>,
+});
 import PostList from './PostList';
 
 /**
@@ -30,10 +49,17 @@ import PostList from './PostList';
  */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** 열려 있는 화면. 목록 / 상세 / 작성·수정 */
+/**
+ * 열려 있는 화면. 목록 / 상세 / 작성·수정
+ *
+ * 상세는 목록에서 온 요약을 함께 들고 갑니다 — 상세가 응답을 기다리는 동안
+ * 제목·글쓴이·시간·추천/댓글/조회 수를 먼저 그리는 데 씁니다. 글쓰기에서 저장한
+ * 직후처럼 목록을 거치지 않고 들어오는 길에서는 없습니다(그때는 방금 쓴 내용을
+ * 이미 알고 있으므로 서버 응답이 곧 옵니다).
+ */
 type View =
   | { kind: 'list' }
-  | { kind: 'detail'; postId: number }
+  | { kind: 'detail'; postId: number; summary?: PostSummary }
   | { kind: 'form'; post: PostDetail | null };
 
 export default function CommunityView() {
@@ -57,6 +83,8 @@ export default function CommunityView() {
   const [notices, setNotices] = useState<PostSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  /** 목록을 못 받았을 때의 문구. 500 응답의 undefined 가 PostList 에서 터지던 자리 */
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [view, setView] = useState<View>({ kind: 'list' });
 
@@ -98,6 +126,35 @@ export default function CommunityView() {
     viewsRef.current[idxRef.current] = next;
     setView(next);
   };
+
+  /**
+   * `/community?post=3` 으로 들어오면 그 글을 열어 둔 채로 시작한다 (홈 소식 배너가
+   * 이 주소로 보낸다).
+   *
+   * 칸을 **쌓지 않고 0번 칸을 갈아끼운다**. 딥링크로 들어온 사람의 첫 칸이므로,
+   * 쌓아 두면 뒤로가기 한 번이 빈 목록으로 갔다가 다시 나가야 사이트를 벗어난다 —
+   * 눌린 횟수와 히스토리 깊이가 어긋난다 (ArcadeFinder 의 ?arcade=<id> 와 같은 규칙).
+   *
+   * 열고 나서 주소에서 지운다. 이 화면은 상세 상태를 주소에 계속 반영하지 않으므로
+   * (pushState 의 __idx 로만 관리한다) 남겨 두면 목록으로 돌아간 뒤에도 주소가
+   * `?post=3` 이라고 말하고, 새로고침하면 다시 그 글이 열린다.
+   *
+   * summary 없이 postId 만 넘긴다 — 상세가 알아서 받아 온다. 목록에서 누른 경우와
+   * 달리 미리 들고 있는 요약이 없다.
+   */
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get('post');
+    if (raw === null) return;
+    const postId = Number(raw);
+    if (!Number.isInteger(postId) || postId <= 0) return;
+
+    replaceCurrent({ kind: 'detail', postId });
+    const url = new URL(window.location.href);
+    url.searchParams.delete('post');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
+    // 첫 마운트에서 한 번만 — 그 뒤의 이동은 navigate/goBack 이 맡는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** 인앱 '뒤로가기'/'취소' 버튼도 브라우저 뒤로가기와 같은 한 걸음이어야
    *  history 깊이가 눈에 보이는 이동 횟수와 어긋나지 않는다. */
@@ -196,12 +253,17 @@ export default function CommunityView() {
       });
       if (machineId !== null) params.set('machineId', String(machineId));
       if (category !== null) params.set('category', category);
-      if (playerId) params.set('playerId', String(playerId));
       if (term) params.set('q', term);
 
-      const data = await fetch(`/api/posts?${params}`).then((r) => r.json());
-      const list = data.posts as PostSummary[];
-      const count = data.total as number;
+      const res = await fetch(`/api/posts?${params}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setLoadError(data.error ?? `글 목록을 불러오지 못했습니다 (${res.status})`);
+        return;
+      }
+      setLoadError(null);
+      const list = (data.posts as PostSummary[]) ?? [];
+      const count = (data.total as number) ?? 0;
       // 공지는 total 에 들어 있지 않다 — 페이지 수는 일반 글만으로 센다.
       setNotices((data.notices ?? []) as PostSummary[]);
 
@@ -217,9 +279,14 @@ export default function CommunityView() {
       }
       setPosts(list);
       setTotal(count);
+    } catch {
+      setLoadError('네트워크에 연결하지 못했습니다');
     } finally {
       setLoading(false);
     }
+    // playerId 는 요청에 쓰이지 않지만 의존성에는 남깁니다 — 내 추천 여부를
+    // 서버가 세션에서 읽으므로 로그인한 사람이 바뀌면 응답도 달라집니다
+    // (TierBoardView 의 loadBoard 와 같은 이유).
   }, [machineId, category, sort, page, playerId, term]);
 
   useEffect(() => {
@@ -261,7 +328,17 @@ export default function CommunityView() {
     listTopRef.current?.scrollIntoView({ block: 'start' });
   };
 
-  const openPost = (postId: number) => navigate({ kind: 'detail', postId });
+  /** 목록 → 상세. 요약을 함께 넘겨 상세가 **기다리지 않고** 그리게 한다 */
+  const openPost = (post: PostSummary) =>
+    navigate({ kind: 'detail', postId: post.id, summary: post });
+
+  /**
+   * 마우스 버튼을 누른 순간 — 상세가 어차피 보낼 요청을 여기서 시작한다.
+   * 누르고 떼는 사이(보통 50~150ms)와 React 마운트 시간을 그만큼 번다.
+   * 요청은 키별로 하나만 나가므로 상세가 다시 보내지 않는다 (lib/post-cache.ts).
+   */
+  const prefetchPostDetail = (postId: number) =>
+    prefetchPost({ postId, playerId, commentOffset: 0 });
 
   /** 글이 새로 쓰이거나 지워지면 탭 글 수도 다시 읽는다 */
   const refreshBoards = () => {
@@ -270,22 +347,6 @@ export default function CommunityView() {
       .then((d) => setBoards(d.boards as Board[]))
       .catch(() => undefined);
   };
-
-  if (view.kind === 'detail') {
-    return (
-      <div className="board-page">
-        <PostDetailView
-          postId={view.postId}
-          onBack={goBack}
-          onEdit={(post) => navigate({ kind: 'form', post })}
-          onDeleted={() => {
-            refreshBoards();
-            goBack();
-          }}
-        />
-      </div>
-    );
-  }
 
   if (view.kind === 'form') {
     return (
@@ -298,6 +359,8 @@ export default function CommunityView() {
           onCancel={goBack}
           onSaved={(post) => {
             refreshBoards();
+            // 고친 글의 옛 내용이 담겨 있으면 그것이 다시 보인다
+            forgetPost(post.id);
             // 새 히스토리를 쌓지 않고 폼이 있던 칸을 상세로 바꾼다 — 그래야
             // 나중에 앞으로가기를 눌러도 사라진 글쓰기 폼이 아니라 이 상세가 나온다.
             replaceCurrent({ kind: 'detail', postId: post.id });
@@ -308,6 +371,31 @@ export default function CommunityView() {
   }
 
 
+  /**
+   * 상세일 때는 목록을 반환에서 뺀다 (예전과 같다).
+   *
+   * 감춰 두는 쪽(hidden)도 해 보고 재 봤지만 얻는 것이 없었다 — 목록 데이터는
+   * 이 컴포넌트의 state 라 언마운트되지 않고, 뒤로가기는 이미 9ms 에 스피너 없이
+   * 그려지며(측정), 스크롤 위치도 브라우저가 popstate 에서 복원한다. 상세를 열 때
+   * 보내는 목록 재조회도 양쪽이 똑같이 한 번이다.
+   */
+  if (view.kind === 'detail') {
+    return (
+      <div className="board-page">
+        <PostDetailView
+          postId={view.postId}
+          initial={view.summary ?? null}
+          onBack={goBack}
+          onEdit={(post) => navigate({ kind: 'form', post })}
+          onDeleted={() => {
+            refreshBoards();
+            goBack();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="board-page">
       <header className="board-head">
@@ -317,44 +405,37 @@ export default function CommunityView() {
             리듬게임별 게시판입니다. 오락실 정보 · 공략 · 질문을 게임 단위로 모읍니다.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          disabled={!playerId}
-          title={playerId ? undefined : '로그인이 필요합니다'}
-          onClick={() => navigate({ kind: 'form', post: null })}
-        >
-          글쓰기
-        </button>
+        {/*
+          비로그인에는 **비활성 버튼 대신 로그인 링크**를 둔다. 예전에는 회색으로
+          눌리지 않는 버튼이었고, 이유는 title 툴팁에만 있었다 — 폰에는 툴팁이 없어
+          "눌러도 아무 일이 없는 버튼" 이었다 (2026-09-13 UX 점검).
+          돌아올 곳(next)을 들려 보내 로그인 뒤 이 화면으로 되돌아온다.
+        */}
+        {playerId ? (
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => navigate({ kind: 'form', post: null })}
+          >
+            글쓰기
+          </button>
+        ) : (
+          <Link className="btn btn-primary btn-sm" href="/login?next=%2Fcommunity">
+            로그인하고 글쓰기
+          </Link>
+        )}
       </header>
 
-      {/* ── 게임 탭 ── */}
-      <nav className="game-tabs">
-        <button
-          type="button"
-          className={machineId === null ? 'game-tab is-on' : 'game-tab'}
-          onClick={() => {
-            setMachineId(null);
-            resetPaging();
-          }}
-        >
-          전체
-        </button>
-        {boards.map((b) => (
-          <button
-            key={b.machineId}
-            type="button"
-            className={machineId === b.machineId ? 'game-tab is-on' : 'game-tab'}
-            title={b.name}
-            onClick={() => {
-              setMachineId(b.machineId);
-              resetPaging();
-            }}
-          >
-            {b.shortName}
-          </button>
-        ))}
-      </nav>
+      {/* ── 게임 탭 ──
+          한 줄로 두고 옆으로 스크롤한다 — 넘치면 화살표가 붙는다 (GameTabs.tsx) */}
+      <GameTabs
+        boards={boards}
+        machineId={machineId}
+        onSelect={(id) => {
+          setMachineId(id);
+          resetPaging();
+        }}
+      />
 
       {/* ── 검색 ──
           게임 탭 **아래**에 둔다 — 탭이 검색 범위이므로(사볼 탭에서 찾으면 사볼
@@ -392,7 +473,16 @@ export default function CommunityView() {
 
       {/* ── 말머리 · 정렬 ── */}
       <div className="board-filters">
-        <div className="chips">
+        {/* 말머리도 게임 탭과 같이 한 줄로 두고 옆으로 민다 (components/ScrollStrip.tsx).
+            게임 탭과 달리 오른쪽에 정렬 버튼이 같이 서 있어서, 밀리는 것은 이 칩 줄만이고
+            정렬 버튼은 줄 끝에 남는다 (app/globals.css 의 .board-filters). */}
+        <ScrollStrip
+          className="chips"
+          remeasureKey={categories.length}
+          /* 하나만 고르는 줄이라 되돌아왔을 때 고른 말머리가 보여야 한다 —
+             상세를 열면 이 화면이 통째로 사라졌다 다시 붙으면서 스크롤이 0 이 된다. */
+          revealKey={category ?? 'all'}
+        >
           <button
             type="button"
             className={category === null ? 'chip is-on' : 'chip'}
@@ -416,7 +506,7 @@ export default function CommunityView() {
               {c.label}
             </button>
           ))}
-        </div>
+        </ScrollStrip>
 
         {/* 인기글은 말머리와 다른 축(정렬)이라 같은 줄 오른쪽 끝에 따로 세운다.
             누르면 인기순, 다시 누르면 기본값인 최신순 — 정렬 버튼이 이것뿐이므로
@@ -437,6 +527,11 @@ export default function CommunityView() {
       </div>
 
       <div ref={listTopRef} />
+      {loadError && (
+        <p className="warn pad" role="alert">
+          {loadError}
+        </p>
+      )}
       <PostList
         posts={posts}
         notices={notices}
@@ -449,6 +544,7 @@ export default function CommunityView() {
            라고 해야 한다 — 글은 있고, 찾는 말이 없을 뿐이다 */
         searching={term !== ''}
         onOpen={openPost}
+        onPrefetch={prefetchPostDetail}
       />
 
       <Pagination

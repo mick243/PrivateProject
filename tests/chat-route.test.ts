@@ -1,6 +1,8 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createSessionToken } from '@/lib/auth';
+import { SESSION_COOKIE } from '@/lib/auth-types';
 
 /**
  * 챗봇 라우트의 **도구 왕복**을 붙잡아 둡니다.
@@ -12,6 +14,37 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *
  * DB 는 건드리지 않습니다. 확인하려는 것은 조회 결과가 아니라 왕복 자체입니다.
  */
+
+/**
+ * 라우트가 DB 를 건드리는 곳은 둘 — 기종 목록(프롬프트 범위)과 사용량 카운터.
+ * 둘 다 대역으로 세워 이 파일이 **DATABASE_URL 없이도** 돌게 합니다. 예전에는
+ * listMachines 가 실 DB 로 가서 .env.local 이 없는 환경에서 PGlite 콜드 스타트에
+ * 5초를 넘겨 타임아웃이 났습니다 (2026-09-13 QA T1).
+ */
+/**
+ * 세션 판정이 이제 players 한 줄을 봅니다 — 서명이 맞아도 `token_epoch` 이
+ * 다르거나 계정이 없으면 로그인이 아닙니다 (lib/auth.ts getSession, H12).
+ * 이 파일이 보려는 건 신원이지 회수가 아니라서, 세대 0 으로 답하는 대역을 둡니다.
+ */
+vi.mock('@/lib/db', () => ({
+  getDb: async () => ({
+    query: async () => ({ rows: [{ nickname: '테스터', is_admin: false, token_epoch: 0 }] }),
+  }),
+}));
+
+vi.mock('@/lib/arcades', () => ({
+  listMachines: vi.fn(async () => [
+    { id: 1, name: '펌프 잇 업', shortName: '펌프', category: 'rhythm', sortOrder: 1 },
+    { id: 3, name: '사운드 볼텍스', shortName: '사볼', category: 'rhythm', sortOrder: 3 },
+  ]),
+}));
+
+/** 사용량 카운터 대역 — 기본은 통과. 한도 초과 시나리오에서만 바꿉니다 */
+let rateResult = { allowed: true, count: 1, limit: 40, retryAfterMs: 0 };
+vi.mock('@/lib/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/rate-limit')>()),
+  consume: vi.fn(async () => rateResult),
+}));
 
 vi.mock('@/lib/chat-tools', () => ({
   searchArcades: vi.fn(async () => ({ rows: [] })),
@@ -73,12 +106,14 @@ function callCandidate(name: string, args: Record<string, unknown>) {
   };
 }
 
-async function post(turns: { role: string; text: string }[]) {
+const cookie = `${SESSION_COOKIE}=${createSessionToken(42, 0)}`;
+
+async function post(turns: { role: string; text: string }[], signedIn = true) {
   received = [];
   const res = await POST(
     new Request('http://localhost/api/chat', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...(signedIn ? { cookie } : {}) },
       body: JSON.stringify({ turns }),
     }),
   );
@@ -86,6 +121,27 @@ async function post(turns: { role: string; text: string }[]) {
 }
 
 describe('POST /api/chat', () => {
+  it('로그인하지 않으면 401 — 모델을 부르지 않는다 (비용 표면)', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    const { status, json } = await post([{ role: 'user', text: '안녕' }], false);
+    expect(status).toBe(401);
+    expect(json.error).toContain('로그인');
+    expect(received).toEqual([]);
+  });
+
+  it('하루 한도를 넘기면 429 와 Retry-After — 모델을 부르지 않는다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    rateResult = { allowed: false, count: 41, limit: 40, retryAfterMs: 3_600_000 };
+    try {
+      const { status, json } = await post([{ role: 'user', text: '안녕' }]);
+      expect(status).toBe(429);
+      expect(json.error).toContain('40');
+      expect(received).toEqual([]);
+    } finally {
+      rateResult = { allowed: true, count: 1, limit: 40, retryAfterMs: 0 };
+    }
+  });
+
   it('키가 없으면 503 과 안내 문구를 돌려준다', async () => {
     const saved = process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_API_KEY;

@@ -50,10 +50,12 @@ describe('reportInputSchema — 종류마다 필수 칸이 다르다', () => {
     if (r.success) expect(r.data.waitCount).toBeNull();
   });
 
-  it('익명 제보를 허용한다 (playerId 생략 → null)', () => {
-    const r = report({});
+  it('playerId 를 받지 않는다 — 보내도 버린다 (누구인지는 세션이 정한다)', () => {
+    const r = report({ playerId: 999 });
     expect(r.success).toBe(true);
-    if (r.success) expect(r.data.playerId).toBeNull();
+    // 통과시키되 결과에 남기지 않는다. 남으면 라우트가 세션 대신 이 값을 쓸 수
+    // 있고, 그러면 남의 이름으로 제보가 남는다 (lib/validation.ts 머리말).
+    if (r.success) expect('playerId' in r.data).toBe(false);
   });
 
   it('DB 범위를 벗어난 값은 막는다', () => {
@@ -73,7 +75,6 @@ const post = (over: Record<string, unknown>) =>
   postInputSchema.safeParse({
     machineId: 1,
     category: 'free',
-    playerId: 1,
     title: '제목입니다',
     body: '내용입니다',
     ...over,
@@ -144,7 +145,6 @@ describe('postInputSchema — 게임은 공지에서만 생략할 수 있다', (
   it('아예 보내지 않아도 같은 판단이다 (기본값 null)', () => {
     const r = postInputSchema.safeParse({
       category: 'free',
-      playerId: 1,
       title: '제목입니다',
       body: '내용입니다',
     });
@@ -242,13 +242,23 @@ describe('signupInputSchema — 값을 처음 정하는 자리라 깐깐하게 �
   const signup = (over: Record<string, unknown> = {}) =>
     signupInputSchema.safeParse({
       nickname: '펌린이',
+      email: 'pumlin@example.com',
       password: 'hunter2hunter',
       passwordConfirm: 'hunter2hunter',
+      termsAccepted: true,
       ...over,
     });
 
   it('제대로 채우면 통과한다', () => {
     expect(signup().success).toBe(true);
+  });
+
+  it('약관 동의 없이는 가입할 수 없다 — 체크박스를 우회한 요청도 서버가 막는다', () => {
+    expect(signup({ termsAccepted: false }).success).toBe(false);
+    expect(signup({ termsAccepted: undefined }).success).toBe(false);
+    expect(signup({ termsAccepted: 'true' }).success).toBe(false);
+    const r = signup({ termsAccepted: false });
+    if (!r.success) expect(formatIssues(r.error).join(' ')).toContain('동의');
   });
 
   it('아이디는 곧 화면에 찍히는 닉네임이라 공백을 막는다', () => {
@@ -271,6 +281,38 @@ describe('signupInputSchema — 값을 처음 정하는 자리라 깐깐하게 �
 
   it('짧은 비밀번호는 막는다', () => {
     expect(signup({ password: 'short', passwordConfirm: 'short' }).success).toBe(false);
+  });
+
+  // ─── 이메일 ───────────────────────────────────────────────
+  // 비밀번호를 잊었을 때 돌려줄 유일한 길이라, 없으면 가입 자체를 막습니다
+  // (db/migrate-050-player-email.sql).
+
+  it('이메일이 없으면 막는다 — 소셜이 아닌 가입은 필수다', () => {
+    for (const bad of [undefined, '', '   ']) {
+      const r = signup({ email: bad });
+      expect(r.success, String(bad)).toBe(false);
+      // 칸이 통째로 빠진 경우까지 우리 문장으로 답해야 한다 — zod 기본 메시지는
+      // 영문이라 그대로 화면에 나가면 읽을 수 없다.
+      if (!r.success) {
+        expect(formatIssues(r.error), String(bad)).toContain('email: 이메일을 입력해 주세요');
+      }
+    }
+  });
+
+  it('모양이 아닌 값은 막는다', () => {
+    for (const bad of ['pumlin', 'pumlin@', '@example.com', 'a b@example.com']) {
+      expect(signup({ email: bad }).success, bad).toBe(false);
+    }
+  });
+
+  it('소문자로 맞춰 저장한다 — 겉보기 같은 주소로 계정이 둘 생기면 안 된다', () => {
+    const r = signup({ email: '  PumLin@Example.COM  ' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.email).toBe('pumlin@example.com');
+  });
+
+  it('주소 하나가 가질 수 있는 길이를 넘기면 막는다', () => {
+    expect(signup({ email: `${'a'.repeat(250)}@example.com` }).success).toBe(false);
   });
 });
 
@@ -347,7 +389,7 @@ describe('nicknameInputSchema — 소셜로 들어온 사람이 이름을 처음
 });
 
 const comment = (tags: unknown) =>
-  commentInputSchema.safeParse({ playerId: 1, body: '폭타가 정직하게 나옵니다', tags });
+  commentInputSchema.safeParse({ body: '폭타가 정직하게 나옵니다', tags });
 
 describe('commentInputSchema — 성향 태그는 고정 목록만 받는다', () => {
   it('목록에 있는 태그는 통과한다', () => {

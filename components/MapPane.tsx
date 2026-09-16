@@ -1,6 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import { useState } from 'react';
 import type { LatLngBox } from '@/lib/geo';
 import type { Arcade } from '@/lib/types';
 import { hasNaverKey } from '@/lib/naver-loader';
@@ -76,6 +77,13 @@ export interface MapPaneProps {
 const NaverMap = dynamic(() => import('./NaverMap'), { ssr: false });
 const FallbackMap = dynamic(() => import('./FallbackMap'), { ssr: false });
 
+/**
+ * 키가 없으면 FallbackMap. 키가 있어도 SDK 가 **인증에 실패하면**(도메인 미등록·키 오류)
+ * 같은 곳으로 내려간다 — 예전에는 키 유무만 봐서 그 경우 회색 빈 지도가 남았다.
+ * FallbackMap 은 오락실 위치를 상대 좌표로 그리는 자체 뷰라 지도 없이도 목록·제보가 된다.
+ */
 export default function MapPane(props: MapPaneProps) {
-  return hasNaverKey ? <NaverMap {...props} /> : <FallbackMap {...props} />;
+  const [sdkFailed, setSdkFailed] = useState(false);
+  if (!hasNaverKey || sdkFailed) return <FallbackMap {...props} />;
+  return <NaverMap {...props} onSdkError={() => setSdkFailed(true)} />;
 }

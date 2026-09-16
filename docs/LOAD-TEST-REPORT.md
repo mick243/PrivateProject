@@ -4,6 +4,19 @@
 > 출처: `load-test/k6-read.js`(커밋 `fccef1d`), [PERFORMANCE.md](../PERFORMANCE.md)(개선 기록 원문), 기준선 측정 기록(2026-08-24)
 > 프런트엔드(지도·렌더) 성능은 [성능·접근성 리포트](PERF-A11Y-REPORT.md) 참조.
 
+> ## ⚠ 2026-09-11 — 이 리포트의 전제가 바뀌었습니다
+>
+> 아래 내용은 **목표 사용자 수를 정하기 전**에 "20 VU · 200 VU" 로 잰 것이고,
+> **크라우드소싱 계층이 빈 DB**(`arcade_machines` 4행 · 제보 0행) 위에서 잰 것입니다.
+> 둘 다 바뀌었습니다.
+>
+> - 기준이 생겼습니다 — **가입자 10,000명 · DAU 3,000명 → 평시 피크 3.4 req/s · 동시 54명.**
+>   여기 적힌 "천장 244 req/s" 는 목표의 72배입니다.
+> - 목표 규모 데이터로 다시 재니 같은 부하에서 **p95 가 22ms 대 152ms** 로 갈립니다.
+>
+> **새 기준선·시나리오·수치는 [PERFORMANCE.md 4부](../PERFORMANCE.md) 와
+> [load-test/README.md](../load-test/README.md) 를 보세요.** 아래는 그 전 기록으로 남깁니다.
+
 ## 1. 테스트 설계
 
 **환경**: 프로덕션 빌드(`npm run build && npm run start`) · PostgreSQL 18 · 오락실 942행 · 게시글 30행. `next dev`는 수치를 크게 왜곡하므로 금지.
@@ -187,6 +200,7 @@ export function cacheReference<A extends unknown[], R>(
 `npm test` 490건 · `npm run typecheck` 전부 통과. 추가 직접 확인:
 - 캐시가 실제로 DB를 안 침 — `/api/machines` 20회 요청에 앱발 쿼리 0건 (대조군 `/api/arcades`는 20건 그대로)
 - **사용자 데이터 미혼입** — 투표가 갈리는 채보에서 playerId 1→2→1→2 교차 호출, 매번 자기 값(비로그인은 null)
+  > 당시 방식입니다. R1(2026-09-11) 이후 `?playerId=` 는 무시되므로, 다시 확인하려면 **세션 쿠키를 바꿔 가며** 호출해야 합니다.
 - 총계·페이지네이션 보존 — 빈 뒤 페이지(`offset=1000`)에서도 `total` 29 유지(폴백 동작 확인)
 
 ## 7. 재측정 절차

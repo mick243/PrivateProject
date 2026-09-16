@@ -68,6 +68,7 @@ function arcade(
     is24h: true,
     phone: null,
     note: null,
+  homepage: null,
     machines: opts.machines ?? [],
     distanceKm: null,
     ratingAvg: null,

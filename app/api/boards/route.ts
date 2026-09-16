@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { json, REFERENCE_CACHE } from '@/lib/http';
 import { listBoards, listCategories } from '@/lib/board';
 
 export const runtime = 'nodejs';
@@ -10,7 +10,8 @@ export const dynamic = 'force-dynamic';
  * 글이 0건인 게임도 함께 돌려줍니다. 글이 있는 게임만 보여주면 새 게임에
  * 첫 글을 쓸 방법이 없어집니다.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const [boards, categories] = await Promise.all([listBoards(), listCategories()]);
-  return NextResponse.json({ boards, categories });
+  // 게임 탭과 말머리는 마이그레이션으로만 바뀝니다 (lib/http.ts REFERENCE_CACHE).
+  return json(request, { boards, categories }, { headers: { 'Cache-Control': REFERENCE_CACHE } });
 }

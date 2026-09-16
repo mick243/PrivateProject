@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isAdminRequest } from '@/lib/auth';
+import { isAdminRequest, requirePlayer, sessionPlayerId } from '@/lib/auth';
 import {
   createComment,
   deleteComment,
@@ -35,6 +35,9 @@ export async function POST(request: Request, ctx: Ctx) {
   const postId = parseId((await ctx.params).id);
   if (postId === null) return BAD_ID();
 
+  const guard = await requirePlayer(request);
+  if (!guard.ok) return guard.response;
+
   let body: unknown;
   try {
     body = await request.json();
@@ -55,12 +58,12 @@ export async function POST(request: Request, ctx: Ctx) {
     return NextResponse.json({ error: '글을 찾을 수 없습니다' }, { status: 404 });
   }
 
-  await createComment({ ...parsed.data, postId });
+  await createComment({ ...parsed.data, postId, playerId: guard.playerId });
   return NextResponse.json(
     {
       post: await getPost(
         postId,
-        parsed.data.playerId,
+        guard.playerId,
         lastCommentOffset(existing.commentCount + 1),
       ),
     },
@@ -69,11 +72,11 @@ export async function POST(request: Request, ctx: Ctx) {
 }
 
 /**
- * DELETE /api/posts/:id/comments?commentId=5&playerId=1&commentOffset=10
+ * DELETE /api/posts/:id/comments?commentId=5&commentOffset=10
  *   댓글 삭제 (본인 또는 **관리자**). commentOffset 을 넘기면 보고 있던 페이지를
  *   유지합니다 (그 페이지가 비면 getPost 가 마지막 페이지로 당깁니다).
  *
- *   관리자는 playerId 없이도 지울 수 있습니다 — 근거가 세션 쿠키입니다.
+ *   본인이든 관리자든 근거는 세션 쿠키입니다.
  */
 export async function DELETE(request: Request, ctx: Ctx) {
   const postId = parseId((await ctx.params).id);
@@ -81,14 +84,14 @@ export async function DELETE(request: Request, ctx: Ctx) {
 
   const { searchParams } = new URL(request.url);
   const commentId = parseId(searchParams.get('commentId') ?? '');
-  const playerId = parseId(searchParams.get('playerId') ?? '');
+  const playerId = await sessionPlayerId(request);
   if (commentId === null) {
     return NextResponse.json({ error: 'commentId 가 필요합니다' }, { status: 400 });
   }
 
   const isAdmin = await isAdminRequest(request);
   if (!isAdmin && playerId === null) {
-    return NextResponse.json({ error: 'playerId 가 필요합니다' }, { status: 400 });
+    return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
   }
 
   const rawOffset = Number(searchParams.get('commentOffset'));

@@ -1,5 +1,7 @@
 'use client';
 
+import { hasNaverKey } from '@/lib/naver-loader';
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { inBox, padBox, type Coord, type LatLngBox } from '@/lib/geo';
 import type { MapPaneProps } from './MapPane';
@@ -378,9 +380,18 @@ export default function FallbackMap({
       </div>
 
       <div className="map-badge">
-        지도 키 미설정 — 좌표 배치만 보여주는 대체 뷰입니다 (끌어서 이동 · 휠로 확대).
-        <code>.env.local</code> 에 <code>NEXT_PUBLIC_NAVER_MAP_KEY_ID</code> 를 넣으면
-        네이버 지도로 전환됩니다.
+        {hasNaverKey ? (
+          // 키는 있는데 SDK 인증·로드에 실패해 여기로 내려온 경우 (components/MapPane.tsx)
+          <>지도 서비스에 연결하지 못해 간이 지도로 보여드립니다 (끌어서 이동 · 휠로 확대). 잠시 뒤 새로고침해 주세요.</>
+        ) : process.env.NODE_ENV === 'production' ? (
+          <>지도를 준비 중입니다 — 오락실 위치를 상대 배치로 보여드립니다 (끌어서 이동 · 휠로 확대).</>
+        ) : (
+          <>
+            지도 키 미설정 — 좌표 배치만 보여주는 대체 뷰입니다 (끌어서 이동 · 휠로 확대).
+            <code>.env.local</code> 에 <code>NEXT_PUBLIC_NAVER_MAP_KEY_ID</code> 를 넣으면 네이버
+            지도로 전환됩니다.
+          </>
+        )}
       </div>
       {picking && <div className="map-hint">클릭해서 오락실 위치를 지정하세요</div>}
     </div>

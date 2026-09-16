@@ -1,0 +1,43 @@
+# /etc/systemd/system/arcade-finder.service
+#
+#   systemctl start|stop|status arcade-finder
+#   systemctl reload arcade-finder     ← 무중단 재기동 (SIGHUP → 인스턴스를 하나씩 교체)
+#   journalctl -u arcade-finder -f     ← 로그 (journald 가 로테이션·보존을 맡습니다)
+#
+# start-cluster 가 인스턴스 2개(3001·3002, 루프백)를 띄우고 3000 에 프록시를 둡니다.
+# 앞에 nginx·caddy 를 두면 TRUSTED_PROXY_HOPS=2 로 올리세요 (.env.local).
+
+[Unit]
+Description=오락실 파인더 (Next.js 클러스터)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=arcade
+Group=arcade
+WorkingDirectory=/srv/arcade-finder/app/arcade-finder
+# .env.local 은 앱이 아니라 여기서 읽어 넣습니다 — next start 는 .env.local 을 읽지만
+# start-cluster.mjs(프록시)는 읽지 않으므로 한 곳에서 주는 편이 확실합니다.
+EnvironmentFile=/srv/arcade-finder/app/arcade-finder/.env.local
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=INSTANCES=2
+Environment=PG_POOL_MAX=10
+ExecStart=/usr/bin/node scripts/start-cluster.mjs
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=20
+Restart=always
+RestartSec=3
+# 인스턴스 하나가 죽으면 start-cluster 가 살립니다. 이 줄은 start-cluster 자체가 죽었을 때.
+
+# 보안 — 앱은 자기 디렉터리의 uploads/ 와 .pglite/(폴백은 운영에서 꺼져 있지만) 에만 씁니다
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/arcade-finder/app/arcade-finder/uploads /srv/arcade-finder/app/arcade-finder/.pglite
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -201,6 +201,31 @@ describe('safeNext — 로그인 뒤 돌아갈 곳', () => {
     expect(safeNext(null)).toBe('/');
     expect(safeNext('')).toBe('/');
   });
+
+  /**
+   * 2026-09-13 QA 에서 실제로 뚫렸던 모양입니다.
+   *
+   * 브라우저와 `new URL()` 은 역슬래시를 슬래시로 취급하므로, "슬래시로 시작하고
+   * `//` 가 아니다" 라는 판정은 `/\evil.com` 을 통과시켰고 그 값이
+   * `new URL(next, 요청주소)` 에서 `https://evil.com/` 이 됐습니다. 카카오 로그인을
+   * 정상으로 마친 사람이 우리 도메인의 302 를 타고 남의 사이트에 착지합니다.
+   */
+  it('역슬래시로 출처를 바꿔치기하는 값도 막는다', () => {
+    for (const raw of ['/\\evil.com', '/\\\\evil.com', '/\\/evil.com', '/\\@evil.com']) {
+      expect(safeNext(raw)).toBe('/');
+    }
+  });
+
+  it('통과시킨 값을 실제로 이어 붙여도 우리 도메인을 벗어나지 않는다', () => {
+    const site = 'https://arcade.example.com';
+    for (const raw of ['/community', '/\\evil.com', '//evil.com', 'https://evil.com', '/?arcade=3']) {
+      expect(new URL(safeNext(raw), site).origin).toBe(site);
+    }
+  });
+
+  it('경로·질의·해시는 그대로 돌려준다', () => {
+    expect(safeNext('/tier?machineId=1#top')).toBe('/tier?machineId=1#top');
+  });
 });
 
 describe('oauthErrorMessage — 문장은 화면이 고른다', () => {

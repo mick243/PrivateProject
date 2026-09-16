@@ -12,6 +12,8 @@ import {
 } from '@google/genai';
 import { NextResponse } from 'next/server';
 import { listMachines } from '@/lib/arcades';
+import { requirePlayer } from '@/lib/auth';
+import { consume, DAY_MS, limitFromEnv, retryAfterLabel } from '@/lib/rate-limit';
 import {
   searchArcades,
   searchPosts,
@@ -213,7 +215,29 @@ async function runCalls(calls: FunctionCall[]): Promise<Part[]> {
   return parts;
 }
 
+/**
+ * 한 사람이 하루에 부를 수 있는 횟수와, 서비스 전체의 하루 상한.
+ *
+ * 2026-09-13 QA 전까지 이 경로는 **무인증·무제한**이었습니다. 요청 1건이 모델 호출
+ * 최대 8회 + 구글 검색 그라운딩이라, 스크립트 하나로 API 청구가 폭발할 수 있는
+ * 자리였습니다 — 키가 유출된 것과 비용 영향이 같습니다. 그래서
+ *   1. 로그인을 요구하고 (세션이 곧 키 — 위조 불가)
+ *   2. 사람마다 하루 N 회
+ *   3. 전체 하루 M 회 (계정을 아무리 만들어도 이 위로는 못 갑니다)
+ * 우선순위 탐색("오락실 찾아줘")은 브라우저에서 끝나므로 이 제한과 무관합니다.
+ */
+const CHAT_DAILY_LIMIT_PER_PLAYER = limitFromEnv('CHAT_DAILY_LIMIT', 40);
+const CHAT_DAILY_LIMIT_GLOBAL = limitFromEnv('CHAT_GLOBAL_DAILY_LIMIT', 2000);
+
 export async function POST(request: Request) {
+  const guard = await requirePlayer(request);
+  if (!guard.ok) {
+    return NextResponse.json(
+      { error: '챗봇은 로그인한 뒤 쓸 수 있어요. 오락실 탐색("오락실 찾아줘")은 로그인 없이도 됩니다.' },
+      { status: 401 },
+    );
+  }
+
   // 키가 없으면 이 경로만 죽습니다. 우선순위 탐색은 클라이언트에서 끝나므로
   // 키 없이도 앱의 본체는 그대로 돌아갑니다.
   if (!process.env.GEMINI_API_KEY) {
@@ -238,6 +262,23 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: '입력값이 올바르지 않습니다', details: formatIssues(parsed.error) },
       { status: 400 },
+    );
+  }
+
+  // 입력이 올바른 요청만 셉니다 — 400 으로 튕기는 요청은 모델을 부르지 않습니다.
+  const mine = await consume(`chat:player:${guard.playerId}`, CHAT_DAILY_LIMIT_PER_PLAYER, DAY_MS);
+  if (!mine.allowed) {
+    return NextResponse.json(
+      { error: `오늘 챗봇 질문 한도(${mine.limit}회)를 다 썼어요. ${retryAfterLabel(mine.retryAfterMs)} 뒤에 다시 열려요.` },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(mine.retryAfterMs / 1000)) } },
+    );
+  }
+  const all = await consume('chat:global', CHAT_DAILY_LIMIT_GLOBAL, DAY_MS);
+  if (!all.allowed) {
+    console.warn(`[chat] 전체 일일 한도 ${all.limit} 도달 — ${retryAfterLabel(all.retryAfterMs)} 뒤 해제`);
+    return NextResponse.json(
+      { error: '오늘은 챗봇 이용이 많아 잠시 쉬고 있어요. 내일 다시 시도해 주세요.' },
+      { status: 503, headers: { 'Retry-After': String(Math.ceil(all.retryAfterMs / 1000)) } },
     );
   }
 

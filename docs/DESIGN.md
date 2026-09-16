@@ -58,7 +58,7 @@ PostgreSQL 18 (기본) ⇄ PGlite (연결 실패 시 폴백, DB_FALLBACK=off로 
 3. **소셜 신원은 계정 밖에** — `players`에 provider 칸을 두면 "둘 중 하나만"이 되어 계정이 갈라짐. `player_identities(provider, provider_uid) → players`, 여러 신원이 한 계정을 가리킴.
 4. **이메일로 계정을 합치지 않음** — 제공자마다 이메일 검증 여부가 달라, 미검증 이메일 병합은 남의 계정을 가져가는 길. `player_identities.email`은 참고용 사본.
 5. **읽는 값은 캐시하고 쓸 때만 갱신** — 평점·투표 집계·댓글 수는 읽기 압도적. `recalc_arcade_rating` · `recalc_chart_stats` · `recalc_post_stats` 함수가 변경 순간에만 다시 씀.
-6. **게임별 차이는 코드가 아니라 테이블** — 등급 단계 수·모드·말머리를 CHECK에 박으면 항목 추가에 마이그레이션이 필요. `tier_grades` · `machine_modes` · `board_categories`.
+6. **게임별 차이는 코드가 아니라 테이블** — 등급 단계 수·모드·버전·난이도·말머리를 CHECK에 박으면 항목 추가에 마이그레이션이 필요. `tier_grades` · `machine_modes` · `game_versions` · `machine_difficulties` · `board_categories`. 행이 없으면 그 축의 선택기·표시가 화면에서 사라지는 것까지 같은 규칙(펌프에 버전 선택기 없음, 사볼에 모드 선택기 없음, 펌프 칩에 난이도 대괄호 없음).
 7. **투표 자격은 DB 제약으로 강제** — `difficulty_votes(player_id, chart_id)`가 `clear_records`를 **복합 FK**로 참조. 클리어 해제 = 투표 CASCADE 소멸.
 8. **원본과 조회용 분리** — 사건·설정은 테이블에 보존, "지금 상태"는 뷰·집계 캐시로. 조회 화면이 원본의 계산 방식에 직접 의존하지 않음.
 

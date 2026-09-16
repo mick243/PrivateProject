@@ -1,6 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useChatSearch } from './ChatBotHost';
+import { useSession } from '@/lib/use-session';
 import {
   RANK_LABELS,
   isArcadeSearchIntent,
@@ -19,22 +22,6 @@ import {
   type PriorityOrder,
 } from '@/lib/recommend';
 
-interface Props {
-  /**
-   * 탐색을 실제로 돌립니다. 순위 계산·지도 표시는 부모가 하고, 여기서는
-   * **말로 할 몫**만 돌려받습니다 — 챗봇이 자기 순위를 따로 매기면 지도와
-   * 채팅이 서로 다른 1위를 말하게 됩니다.
-   */
-  onSearch: (order: PriorityOrder, constraints: ChatConstraints | null) => SearchOutcome;
-  /**
-   * 트리거 문장에서 제약(언급된 오락실·기종)을 뽑습니다. 오락실·기종 목록은
-   * 부모가 들고 있으므로 판별도 부모의 것입니다 — 여기서는 결과를 보여 주고
-   * 사용자가 끌 수 있게만 합니다.
-   */
-  extract: (text: string) => ChatConstraints;
-  /** 마지막으로 쓴 우선순위 — 드롭다운의 시작값 */
-  initialOrder: PartialOrder;
-}
 
 /** 서버로 보낼 대화 기록의 최대 길이 (한 번 요청에 실리는 분량) */
 const HISTORY_LIMIT = 12;
@@ -88,7 +75,13 @@ function formatOutcome(outcome: SearchOutcome, order: PriorityOrder): string {
   return lines.join('\n');
 }
 
-export default function ChatBot({ onSearch, extract, initialOrder }: Props) {
+export default function ChatBot() {
+  /*
+    탐색 기능은 props 가 아니라 **파인더가 등록한 것**을 씁니다 (ChatBotHost.tsx).
+    챗봇이 모든 화면에 떠 있어야 해서 레이아웃에 올렸는데, 순위 계산·지도 표시는
+    파인더만 할 수 있기 때문입니다. 파인더가 아닌 화면에서는 null 입니다.
+  */
+  const search = useChatSearch();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
     { id: nextId(), role: 'assistant', text: GREETING },
@@ -161,11 +154,22 @@ export default function ChatBot({ onSearch, extract, initialOrder }: Props) {
     [],
   );
 
+  /**
+   * 로그인 여부. 자유 질문(/api/chat)만 로그인이 필요하고, '오락실 찾아줘' 는
+   * 브라우저에서 계산하므로 로그인 없이도 그대로 됩니다 (lib/recommend.ts).
+   * 그 사실을 **보내기 전에** 말해 주려고 여기서 읽습니다 — 예전에는 질문을 다 쓰고
+   * 보낸 뒤에야 401 로 알게 됐습니다 (2026-09-13 UX 점검).
+   */
+  const user = useSession();
+
   // ── 보내기 ─────────────────────────────────────────────────
-  const send = useCallback(() => {
-    const text = input.trim();
+  /**
+   * 한 줄을 실제로 처리합니다. 입력창과 **주소로 넘어온 질문**(?ask=)이 같은 경로를
+   * 타야 답이 갈리지 않으므로 send 에서 떼어 두었습니다.
+   */
+  const submitText = useCallback((raw: string) => {
+    const text = raw.trim();
     if (text === '' || busy) return;
-    setInput('');
 
     const userMsg: ChatMessage = { id: nextId(), role: 'user', text };
 
@@ -173,10 +177,29 @@ export default function ChatBot({ onSearch, extract, initialOrder }: Props) {
     // 이 갈림길로 다음 화면이 정해지므로 매번 같은 판단이어야 하고, API 키가
     // 없어도 이 경로는 끝까지 굴러가야 한다.
     if (isArcadeSearchIntent(text)) {
+      /*
+        파인더가 떠 있지 않으면 여기서 탐색할 수 없습니다 — 순위를 매겨도 보여 줄
+        목록과 지도가 없습니다. 폼을 띄웠다가 "못 한다" 고 하는 대신, 할 수 있는
+        곳으로 데려갑니다. 적은 문장은 버리지 않고 파인더 주소에 실어 보냅니다.
+      */
+      if (!search) {
+        setMessages((prev) => [
+          ...prev,
+          userMsg,
+          {
+            id: nextId(),
+            role: 'assistant',
+            text: '오락실 찾기는 파인더 화면에서 해 드려요. 아래 링크로 가시면 이어서 찾아 드립니다.',
+            goFinder: text,
+          },
+        ]);
+        return;
+      }
+
       // 문장을 폼으로 갈아타며 버리지 않는다 — 언급된 기종·오락실을 뽑아
       // 탐색에 넘긴다. 오락실 언급은 "지금 있는 곳"으로 보고 기준점+제외에
       // 쓰는데, 오인식일 수 있으므로 폼에 보여 주고 끌 수 있게 한다.
-      const constraints = extract(text);
+      const constraints = search.extract(text);
       const hasConstraints = constraints.arcade !== null || constraints.machineIds.length > 0;
       const machineNote = constraints.machineIds.length
         ? `기종은 ${constraints.machineNames.join('·')}(으)로 좁힐게요. `
@@ -195,24 +218,75 @@ export default function ChatBot({ onSearch, extract, initialOrder }: Props) {
       return;
     }
 
+    // 자유 질문은 로그인이 필요하다. 서버까지 갔다가 401 을 받아 오는 대신 여기서
+    // 답한다 — 결과가 같고, 기다림이 없고, 무엇보다 **입력창 위에 이미 적혀 있던
+    // 말과 같은 말**이라 사용자가 두 번 놀라지 않는다.
+    if (!user) {
+      setMessages((prev) => [
+        ...prev,
+        userMsg,
+        {
+          id: nextId(),
+          role: 'assistant',
+          text: '자유 질문은 로그인한 뒤에 답해 드릴 수 있어요. 오락실을 찾는 것이라면 "오락실 찾아줘" 라고 적어 주시면 로그인 없이 바로 찾아 드립니다.',
+          failed: true,
+        },
+      ]);
+      return;
+    }
+
     // setMessages 의 updater 안에서 ask() 를 부르면 안 된다 — updater 는 순수해야
     // 하고, StrictMode 는 그걸 확인하려고 두 번 호출한다. 그러면 요청이 두 번
     // 나가고 같은 답이 두 번 붙는다. 다음 목록을 여기서 만들어 넘긴다.
     const next = [...messages, userMsg];
     setMessages(next);
     void ask(next);
-  }, [input, busy, ask, messages]);
+  }, [busy, ask, messages, user, search]);
+
+  const send = useCallback(() => {
+    const text = input.trim();
+    if (text === '' || busy) return;
+    setInput('');
+    submitText(text);
+  }, [input, busy, submitText]);
+
+  /**
+   * 다른 화면에서 "오락실 찾아줘" 라고 한 사람을 이어받습니다.
+   *
+   * 그쪽 챗봇은 탐색을 못 해서 `/finder?ask=…` 링크로 보냅니다(위 goFinder). 여기서
+   * 그 문장을 집어 **그대로 다시 넣어** 폼까지 띄웁니다 — 안 그러면 "이어서 찾아
+   * 드립니다" 라고 해 놓고 빈 입력창을 보여 주게 됩니다.
+   *
+   * 한 번만 돕니다. submitText 는 대화가 바뀔 때마다 정체가 달라지므로 그대로 두면
+   * 같은 질문이 반복해서 들어갑니다. 주소에서도 지웁니다 — 새로고침이 곧 재질문이
+   * 되면 안 됩니다 (커뮤니티의 ?post= 와 같은 규칙).
+   */
+  const askedRef = useRef(false);
+  useEffect(() => {
+    if (askedRef.current || !search) return;
+    const asked = new URLSearchParams(window.location.search).get('ask');
+    if (!asked) return;
+    askedRef.current = true;
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete('ask');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
+
+    setOpen(true);
+    submitText(asked);
+  }, [search, submitText]);
 
   // ── 우선순위 제출 → 탐색 ───────────────────────────────────
   const submitPriority = useCallback(
     (formId: string, order: PriorityOrder, constraints: ChatConstraints | null) => {
-      const outcome = onSearch(order, constraints);
+      if (!search) return;
+      const outcome = search.onSearch(order, constraints);
       setMessages((prev) => [
         ...prev.map((m) => (m.id === formId ? { ...m, formDone: true } : m)),
         { id: nextId(), role: 'assistant', text: formatOutcome(outcome, order) },
       ]);
     },
-    [onSearch],
+    [search],
   );
 
   /** "○○ 기준 · 제외" 를 켜고 끈다 — 추출이 오인식일 때의 탈출구 */
@@ -269,6 +343,16 @@ export default function ChatBot({ onSearch, extract, initialOrder }: Props) {
                   </ul>
                 )}
 
+                {m.goFinder && (
+                  <Link
+                    className="btn btn-primary btn-sm chat-go-finder"
+                    href={`/finder?ask=${encodeURIComponent(m.goFinder)}`}
+                    onClick={() => setOpen(false)}
+                  >
+                    파인더에서 찾기
+                  </Link>
+                )}
+
                 {m.form === 'priority' && (
                   <>
                     {m.constraints?.arcade && (
@@ -285,7 +369,7 @@ export default function ChatBot({ onSearch, extract, initialOrder }: Props) {
                       </label>
                     )}
                     <PriorityForm
-                      initial={initialOrder}
+                      initial={search?.initialOrder ?? []}
                       done={m.formDone === true}
                       onSubmit={(order) =>
                         submitPriority(
@@ -305,6 +389,16 @@ export default function ChatBot({ onSearch, extract, initialOrder }: Props) {
             ))}
           </div>
 
+          {!user && (
+            <p className="chat-gate">
+              자유 질문은{' '}
+              <Link href="/login?next=%2Ffinder" onClick={() => setOpen(false)}>
+                로그인
+              </Link>{' '}
+              후에 답해 드려요. <strong>오락실 찾기</strong>는 로그인 없이도 됩니다.
+            </p>
+          )}
+
           <form
             className="chat-input"
             onSubmit={(e) => {
@@ -316,7 +410,7 @@ export default function ChatBot({ onSearch, extract, initialOrder }: Props) {
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="오락실 찾아줘 / 펌프 신곡 뭐 나왔어?"
+              placeholder={user ? '오락실 찾아줘 / 펌프 신곡 뭐 나왔어?' : '오락실 찾아줘'}
               maxLength={2000}
               disabled={busy}
             />

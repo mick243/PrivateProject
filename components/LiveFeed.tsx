@@ -70,6 +70,7 @@ export default function LiveFeed() {
 
   const [reports, setReports] = useState<MachineReport[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   useEffect(() => {
@@ -123,9 +124,18 @@ export default function LiveFeed() {
 
     setLoading(true);
     try {
-      const data = await fetch(`/api/reports?${params}`).then((r) => r.json());
+      const res = await fetch(`/api/reports?${params}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setLoadError(data.error ?? `제보를 불러오지 못했습니다 (${res.status})`);
+        return;
+      }
+      setLoadError(null);
       setReports((data.reports as MachineReport[]) ?? []);
       setFetchedAt(Date.now());
+    } catch {
+      // 30초마다 다시 시도하므로 옛 목록은 그대로 두고 문구만 띄운다
+      setLoadError('네트워크에 연결하지 못했습니다');
     } finally {
       setLoading(false);
     }
@@ -169,11 +179,18 @@ export default function LiveFeed() {
    * 아직 찾아보지도 않은 말로 "없습니다" 라고 하면 거짓말이 됩니다.
    */
   const rangeLabel = RANGES.find((r) => r.hours === hours)?.label ?? null;
-  const emptyMessage = !term
-    ? '해당 조건의 제보가 없습니다.'
-    : hours === null || rangeLabel === null
+  /** 종류·기종·검색어를 아무것도 안 건드린 상태인가 (기간은 기본값이 있으므로 뺀다) */
+  const untouched = kindKey === 'all' && machineId === '' && !term;
+  const emptyMessage = term
+    ? hours === null || rangeLabel === null
       ? `'${term}' 검색 결과가 없습니다.`
-      : `'${term}' 검색 결과가 최근 ${rangeLabel} 안에는 없습니다. 기간을 넓혀 보세요.`;
+      : `'${term}' 검색 결과가 최근 ${rangeLabel} 안에는 없습니다. 기간을 넓혀 보세요.`
+    : !untouched
+      ? '고른 조건에 맞는 제보가 없습니다. 종류·기종·기간을 넓혀 보세요.'
+      : hours === null
+        ? // 기간이 '전체' 인데도 없다 — 정말 아직 아무도 올리지 않은 것이다.
+          '아직 올라온 제보가 없습니다. 오락실을 열고 대기 인원·기체 컨디션을 알려 주시면 여기에 바로 뜹니다.'
+        : `최근 ${rangeLabel ?? '24시간'} 안에 올라온 제보가 없습니다. 기간을 '전체' 로 넓혀 보거나, 오락실을 열고 지금 상태를 알려 주세요.`;
 
   return (
     <div className="feed-page">
@@ -253,7 +270,12 @@ export default function LiveFeed() {
         </select>
       </div>
 
-      {loading && reports.length === 0 ? (
+      {loadError && (
+        <p className="warn pad" role="alert">
+          {loadError}
+        </p>
+      )}
+      {loading && reports.length === 0 && !loadError ? (
         <p className="muted pad">불러오는 중…</p>
       ) : reports.length === 0 ? (
         <p className="muted pad">{emptyMessage}</p>
@@ -264,7 +286,7 @@ export default function LiveFeed() {
               <span className={`kind kind-${r.kind}`}>{REPORT_KIND_LABEL[r.kind]}</span>
 
               <span className="feed-body">
-                <Link href={`/?arcade=${r.arcadeId}`} className="feed-arcade">
+                <Link href={`/finder?arcade=${r.arcadeId}`} className="feed-arcade">
                   {r.arcadeName}
                 </Link>
                 <strong className="feed-machine">

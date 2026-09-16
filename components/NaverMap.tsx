@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { inBox, padBox, type LatLngBox } from '@/lib/geo';
 import { drawTally, reportSync, setPerfMap, useCullingOff } from '@/lib/map-perf';
 import type { Arcade } from '@/lib/types';
-import { loadNaverMaps } from '@/lib/naver-loader';
+import { loadNaverMaps, mapErrorMessage } from '@/lib/naver-loader';
 import type { MapPaneProps } from './MapPane';
 
 const DEFAULT_CENTER = { lat: 37.5665, lng: 126.978 }; // 서울시청
@@ -311,7 +311,11 @@ export default function NaverMap({
   focusNonce = 0,
   centerNonce = 0,
   focusPoint = null,
-}: MapPaneProps) {
+  onSdkError,
+}: MapPaneProps & {
+  /** SDK 를 못 띄웠을 때 (인증 실패·타임아웃). MapPane 이 FallbackMap 으로 갈아탄다 */
+  onSdkError?: (e: unknown) => void;
+}) {
   /** 계측 패널이 컬링을 껐는지 (`/?perf=1` 에서만 켜집니다 — 평소엔 늘 false) */
   const cullingOff = useCullingOff();
 
@@ -400,7 +404,12 @@ export default function NaverMap({
         setViewport(readViewport(map));
         setReady(true);
       })
-      .catch((e: Error) => !disposed && setError(e.message));
+      .catch((e: unknown) => {
+        if (disposed) return;
+        console.error('[map] 네이버 지도 SDK —', e instanceof Error ? e.message : e);
+        setError(mapErrorMessage(e));
+        onSdkError?.(e);
+      });
 
     return () => {
       disposed = true;
@@ -637,10 +646,10 @@ export default function NaverMap({
         map,
         center: latlng,
         radius: radiusKm * 1000,
-        strokeColor: '#6d5efc',
+        strokeColor: '#356ee6',
         strokeOpacity: 0.8,
         strokeWeight: 1,
-        fillColor: '#6d5efc',
+        fillColor: '#356ee6',
         fillOpacity: 0.08,
         clickable: false,
       });
