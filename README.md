@@ -53,6 +53,18 @@ npm run dev
 
 ---
 
+## 운영에 올리기
+
+배포·무중단 재기동·비파괴 마이그레이션(`npm run db:migrate`)·백업·복구 절차와 출시
+체크리스트는 **[deploy/README.md](deploy/README.md)** 에 있습니다. 운영 필수 환경변수가
+빠지면 서버가 뜨지 않고 이유를 로그에 남깁니다(`lib/env-check.ts`). 출시 전 QA 결과는
+[docs/QA-LAUNCH-READINESS.md](docs/QA-LAUNCH-READINESS.md).
+
+**앱 버전**은 설치형 웹앱(PWA)입니다 — 홈 화면 설치·오프라인 안내·앱 아이콘. 확인법과
+스토어(Play·App Store)로 가는 길은 [docs/PWA.md](docs/PWA.md).
+
+---
+
 ## DB — 설치 없이 시작, 나중에 진짜 Postgres로
 
 [`lib/db.ts`](lib/db.ts) 가 환경에 따라 두 드라이버 중 하나를 고릅니다.
@@ -120,6 +132,18 @@ Get-Service postgresql-x64-18         # 상태 확인
 모니터링 도구가 `check.db_primary` 로 잡을 수 있다 (정상이면 `healthy`, DB 조회 자체가 실패하면 `503 unhealthy`).
 [Pulse](https://github.com/mick243/pulse) 에 PROBE 대상으로 등록하면 응답시간·가동 여부와 함께 이 값이 차트와 알림 룰이 된다.
 
+**실제 트래픽까지 보기 — 앱 계측 (`lib/telemetry.ts`).** `.env.local` 에 `PULSE_API_URL` 과 `PULSE_AGENT_KEY` 를 넣으면
+(Pulse 대시보드에서 AGENT 대상을 추가하면 키를 한 번 보여준다) 두 가지가 켜진다:
+- **라우트별 요청수·p95·5xx** — Next.js 가 내장으로 내보내는 OpenTelemetry 스팬을 `instrumentation.ts` 에서 받는다.
+  라우트 파일은 하나도 고치지 않는다 (`lib/telemetry-node.ts`).
+- **SQL 지문별 호출수·p95·에러·느린 쿼리(≥250ms)** — `lib/db.ts` 의 어댑터를 한 겹 감싸 PGlite·PostgreSQL 양쪽의 모든 쿼리를 잰다.
+  SQL 은 `SELECT arcade_reviews` 처럼 동사+주 테이블 지문으로만 나가고 원문은 나가지 않는다.
+
+30초마다 메모리 집계를 Pulse 로 보내며, 요청 경로에 얹히는 비용은 Map 갱신 하나다. 키가 없으면 계측 코드가 전혀 실행되지 않고,
+Pulse 가 죽어 있어도 경고 한 줄만 남기고 앱은 영향받지 않는다. 대시보드에서는 `GET /api/arcades/[id]/reviews` 의 p95 와 그 뒤의
+`SELECT arcade_reviews` p95 를 나란히 볼 수 있어 "느린 게 API 인가 쿼리인가"를 바로 가른다.
+(서버리스에서는 인스턴스가 요청마다 사라져 이 방식이 맞지 않는다 — 상주 프로세스용이다.)
+
 ### 스키마
 
 [`db/schema.sql`](db/schema.sql) — 오락실 파인더
@@ -151,6 +175,9 @@ Get-Service postgresql-x64-18         # 상태 확인
 - `clear_records` — 클리어 기록. **투표 자격의 근거**
 - `difficulty_votes` — 체감 난이도 투표
 - `tier_grades` / `tier_settings` — 등급 구간표와 임계값 (아래 참고)
+- `game_versions` — 기종 안의 버전 (EZ2DJ 6th TRAX …). `charts.version_id` 가
+  가리키고, **NULL 이면 버전을 구분하지 않는 게임**입니다 (펌프 · 사볼)
+  ([`db/migrate-059-ez2dj-6th-trax-tier.sql`](db/migrate-059-ez2dj-6th-trax-tier.sql))
 
 [`db/schema-community.sql`](db/schema-community.sql) — 제보 · 리뷰 · 채보 평가
 
@@ -164,6 +191,10 @@ Get-Service postgresql-x64-18         # 상태 확인
 - `chart_comments` — 채보 평가 (코멘트 + 성향 태그)
 - `machine_modes` — 게임별 플레이 모드. `charts.mode` 의 `CHECK` 를 대체합니다
   (펌프 S/D/CO, 사볼 NOV/ADV/EXH/MXM — 게임마다 모드 체계가 다름)
+- `machine_difficulties` — 한 모드 안에서 곡마다 갈리는 채보 (EZ2DJ 의 N/H).
+  `charts.difficulty` 가 가리키고 **NULL 이면 난이도 축이 없는 채보**입니다.
+  모드와 다른 축입니다 — 아래 [난이도 축](#난이도-축) 참고
+  ([`db/migrate-059-ez2dj-6th-trax-tier.sql`](db/migrate-059-ez2dj-6th-trax-tier.sql))
 
 [`db/schema-board.sql`](db/schema-board.sql) — 커뮤니티 게시판
 
@@ -290,10 +321,9 @@ NEXT_PUBLIC_NAVER_MAP_KEY_ID=발급받은_키
 치우는 쪽뿐입니다 — 글·댓글 **삭제**는 되지만 **수정은 본인만** 입니다. 지우는 것과 달리
 고치는 건 남의 이름으로 남는 글의 내용이 바뀌는 일이라, 관리에 필요한 최소한을 넘습니다.
 
-관리자 권한은 **본인 확인을 대체하는 게 아니라 우회합니다**: 일반 사용자 경로는 지금까지와
-똑같이 쿼리스트링의 `playerId` 로 작성자를 확인하고 남의 글은 403 입니다. 관리자만
-그 검사를 건너뛰고, 그 근거는 클라이언트가 보낸 값이 아니라 **세션 쿠키**입니다
-([`lib/auth.ts`](lib/auth.ts) `isAdminRequest`).
+관리자 권한은 **본인 확인을 대체하는 게 아니라 우회합니다**: 일반 사용자 경로는 세션
+주인을 작성자로 보고 남의 글은 403 입니다. 관리자만 그 검사를 건너뜁니다. 둘 다 근거는
+**세션 쿠키** 하나입니다 ([`lib/auth.ts`](lib/auth.ts) `requirePlayer` · `isAdminRequest`).
 
 `lib/board.ts` 에서 소유자 검사를 없애는 방식이 아니라 `deletePostAsAdmin` /
 `deleteCommentAsAdmin` 로 **함수 이름을 나눴습니다**. `deletePost(id, null)` 처럼
@@ -334,8 +364,14 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # AUT
 - **판정은 서버가** — 화면에서 버튼을 감추는 건 안내일 뿐입니다. 실제 차단은 라우트
   첫 줄의 `requireAdmin` 이고, 쿠키의 `adm` 만 믿지 않고 **DB 를 한 번 더 봅니다**
   (권한을 뗀 계정의 쿠키가 만료까지 통하면 회수가 회수가 아닙니다)
-- **시도 제한** — 같은 IP 에서 8회 실패하면 10분. 프로세스 메모리에만 남는 최소한의
-  제동장치입니다 (서버가 여러 대면 대수만큼 여유가 생깁니다 — 제대로 하려면 Redis 로)
+- **시도 제한** — 같은 IP 에서 8회 실패하면 10분. 카운터는 **DB**(`login_failures`,
+  db/migrate-052)에 있으므로 프로세스를 여러 개 띄워도 하나로 셉니다. 프로세스
+  메모리였던 동안에는 프로세스 수만큼 여유가 생겼고(8프로세스 = 실질 64회),
+  재시작하면 풀렸습니다.
+  **아직 IP 만 셉니다** — 프록시를 갈아타며 한 계정을 노리는 분산 시도는 못 막고,
+  IP 를 공유하는 곳(학교·회사)에서는 무고한 사람이 함께 잠깁니다. 다음 걸음은
+  `account:<닉네임>` 키를 하나 더 세는 것입니다(없는 닉네임에도 걸어야 합니다 —
+  안 그러면 잠기는지 여부로 계정 존재가 샙니다)
 
 소셜 로그인도 같은 것을 그대로 씁니다 — 바뀌는 건 "무엇으로 본인을 증명했는가"
 (비밀번호 → 인가 코드)뿐이고, 세션 발급과 권한 판정은 한 벌입니다.
@@ -349,7 +385,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"   # AUT
 | 길 | 화면 | 만들어지는 것 |
 |---|---|---|
 | 아이디 / 비밀번호 | `/login` | — (이미 있는 계정으로 들어옵니다) |
-| 회원가입 | `/signup` | `players` 한 줄 (`password_hash` 채움, `is_admin` 은 그대로 FALSE) |
+| 회원가입 | `/signup` | `players` 한 줄 (`password_hash`·`email` 채움, `is_admin` 은 그대로 FALSE) |
 | 소셜 (Google · 카카오 · 네이버) | 두 화면의 버튼 | `players` 한 줄 + `player_identities` 한 줄 |
 
 가입은 **아이디와 비밀번호만** 받습니다. 이메일은 받지 않습니다 — 인증 메일도 비밀번호
@@ -837,12 +873,70 @@ naver 는 창 크기만 지켜보므로 사이드바를 접었다 편 것을 모
 INSERT INTO tier_settings (machine_id, vote_min, vote_max, tier_step, min_votes, min_convergence) …
 INSERT INTO tier_grades   (machine_id, code, label, anchor, sort_order) …   -- 단계 수는 자유
 INSERT INTO machine_modes (machine_id, code, label, sort_order) …           -- 그 게임의 모드
+INSERT INTO game_versions (machine_id, code, label, sort_order) …           -- 버전이 있는 게임만
+INSERT INTO machine_difficulties (machine_id, code, label, sort_order) …    -- 난이도 축이 있는 게임만
 INSERT INTO songs / charts …
 ```
 
 시드에는 **펌프(7단계, S/D)** 와 **사운드 볼텍스(5단계, EXH/MXM)** 를 넣어 뒀습니다 —
 단계 수·투표 범위·모드 이름이 게임마다 다르게 나오는지 확인하기 위한 것입니다.
 투표 분포 히스토그램의 열 수도 등급 수에 맞춰 늘어납니다.
+
+### 버전이 있는 게임
+
+EZ2DJ 처럼 한 기종 이름 아래 1st·2nd·…·6th 가 이어지고 **같은 곡의 채보가 버전마다
+다른** 게임은, 버전을 구분하지 않으면 6th 의 `Ztar warZ` 와 다른 버전의 `Ztar warZ` 가
+한 칸에 섞입니다. 그래서 채보가 `charts.version_id` 로 버전을 답니다
+([`migrate-059`](db/migrate-059-ez2dj-6th-trax-tier.sql)).
+
+- `game_versions` 에 행이 있는 게임만 화면에 **버전 선택기**가 생깁니다. 없으면
+  (펌프·사볼) 선택기가 아예 그려지지 않고 `version_id` 는 NULL 로 남습니다 —
+  난이도 축인 게임에 모드 선택기가 없는 것과 같은 방식입니다.
+- 보드를 정하는 단위가 (기종, **버전**, 모드, 레벨) 이 됩니다.
+- 기본값은 그 게임의 **첫 버전**(`sort_order = 1`)입니다 — 게임·레벨 선택기가 모두
+  "없으면 첫 항목" 이라 같은 규칙으로 뒀습니다.
+
+지금 등록된 것은 **EZ2DJ 의 두 버전**이고, 둘 다 투표를 넣지 않아 전부 '미정' 에서
+시작합니다. 모드는 7개로 같습니다 (Ruby · 5 Street · 7 Street · Club · Space ·
+Catch · Turn).
+
+| 버전 | 곡 | 채보 | 난이도 |
+|---|---:|---:|---|
+| 6th TRAX ~Self Evolution~ ([059](db/migrate-059-ez2dj-6th-trax-tier.sql)) | 138 | 837 | N · H |
+| 7th TRAX ~Resistance~ ([060](db/migrate-060-ez2dj-7th-trax-tier.sql)) | 170 | 1,080 | E · N · H · S |
+
+두 버전이 곡을 공유합니다 — `songs` 는 한 벌(170곡)이고 `charts` 만 버전별로 붙습니다.
+7th 문서가 같은 곡을 다르게 적은 것이 50곡이라(`Dieoxin`/`DIEOXIN`, `1234`/`One Two
+Three Four`) 060 이 별칭 표로 이어 붙입니다 — 안 하면 songs 가 두 줄이 됩니다.
+
+### 레벨을 모르는 채보
+
+출처가 난이도 칸을 `?` 로 비워 둔 채보가 셋 있습니다(Space H 의 `Look Out` ·
+`Dieoxin` · `Frantic`). **채보는 있는데 난이도만 모르는 것**이라 빼지도 지어내지도
+않고 `charts.level` 을 NULL 로 둡니다.
+
+- 레벨 선택기에 `Lv.?` 칸이 하나 생기고 거기 모입니다 (제목은 `Space Lv.?`). 주소에서는
+  `?level=unknown` 입니다 (`UNKNOWN_LEVEL` — 숫자 자리에 물음표를 넣으면 파서가
+  흔들립니다).
+- 보드 조회가 `c.level = $4` 가 아니라 `IS NOT DISTINCT FROM` 인 이유가 이것입니다 —
+  `= NULL` 은 아무것도 고르지 못합니다.
+- 같은 이유로 `charts.level` 의 상한이 30 → **99** 입니다. `Theme of Ez2Dj` 의 히든
+  채보가 그 게임에서 실제로 **99** 로 표시됩니다.
+
+### 난이도 축
+
+**모드와 난이도는 다른 축입니다.** 모드는 *무엇을 플레이하는가*(Ruby · Club · Space…)고,
+난이도는 *같은 곡의 어느 채보인가*(EZ · NM · HD · SHD)입니다. EZ2DJ 는 둘 다 있는 첫 게임입니다.
+
+- 보드는 여전히 **(모드, 레벨)** 로 정해지고, 난이도는 사볼처럼 곡명 뒤 대괄호로만
+  보입니다 (`Weird Wave [HD]`). 같은 레벨이면 NM 이든 HD 든 **한 표에서 비교해야**
+  하기 때문입니다 — 근거는 [`migrate-045`](db/migrate-045-mode-is-difficulty.sql).
+- 그래서 `UNIQUE` 가 `(song_id, version_id, mode, difficulty, level)` 입니다. 난이도를
+  빼면 `Complex` 의 Space NM 10 과 HD 10 처럼 **레벨까지 같은 두 채보**가 조용히
+  사라집니다 (`ON CONFLICT DO NOTHING` 이라 오류도 안 납니다).
+- **사볼은 이 컬럼을 쓰지 않습니다.** 모드 축이 아예 없어서 난이도를 `charts.mode` 에
+  담고 `tier_settings.mode_is_difficulty` 로 구분하는 지름길을 씁니다(045). 두 방법이
+  공존하는 셈이라, 언젠가 사볼을 `difficulty` 로 옮기면 하나로 줄일 수 있습니다.
 
 > ⚠ 게임을 바꾸면 이전 게임의 (모드, 레벨) 이 그대로 넘어옵니다 (펌프 S1 → 사볼 S1).
 > `/api/tier` 는 mode/level 을 **희망값**으로 받아 없는 조합이면 가장 가까운 조합으로
@@ -857,6 +951,14 @@ INSERT INTO songs / charts …
 
 - **태그는 고정 목록** ([`CHART_TAGS`](lib/community-types.ts)) — 자유 입력으로 두면
   '폭타' / '폭타패턴' / '폭타형' 이 각각 쌓여 집계가 불가능해집니다.
+- **고를 수 있는 태그는 게임마다 다릅니다** (`CHART_TAGS_BY_MACHINE`) — 무엇으로
+  어려운지가 게임마다 달라서입니다. 펌프는 발판(떨기·틀기·겹발·체중이동·체력), 사볼은
+  손(지력·건반·노브·트릴), EZ2AC·EZ2DJ 는 거기에 턴테이블과 발이 더 붙습니다
+  (**트릴·스크래치·페달·겹놋**). 등록되지 않은 게임은 공통 태그 8개만 나옵니다.
+  저장 검증은 **합집합**(`CHART_TAGS`)으로 합니다 — 게임별로 좁히면 목록을 손볼 때마다
+  이미 저장된 평가를 그 작성자가 수정할 수 없게 됩니다.
+- **태그 줄은 한 줄에 두고 옆으로 밉니다** (`ScrollStrip` — 커뮤니티 게임 탭과 같은
+  부품). 접히게 두면 게임마다 태그 수가 달라 그 아래 입력란이 오르내립니다.
 - **클리어 게이트가 없습니다** — 못 깬 사람의 "여기서 막힌다" 도 정보입니다. 대신 목록에
   **클리어 / 미클리어** 배지를 함께 실어 읽는 쪽이 가중치를 판단합니다.
 - **투표값은 평가에 붙이지 않습니다** — 투표 분포를 익명으로 두기로 한 결정이 평가란을
@@ -1022,7 +1124,10 @@ HTML 을 그대로 DB 에 넣으면 (1) 출력마다 sanitizer 를 통과시켜�
 | 메서드 | 경로 | 설명 |
 |---|---|---|
 | `POST` | `/api/auth/login` | 로그인 `{nickname, password}` → `{user}` + 세션 쿠키. 실패 **401**(이유는 한 문장으로 통일), 시도 초과 **429**, `ADMIN_PASSWORD` 미설정 **503** |
-| `POST` | `/api/auth/signup` | 회원가입 `{nickname, password, passwordConfirm}` → **201** `{user}` + 세션 쿠키. 중복 아이디 **409**, 형식 오류 **400**, 시도 초과 **429** |
+| `POST` | `/api/auth/signup` | 회원가입 `{nickname, email, password, passwordConfirm}` → **201** `{user}` + 세션 쿠키, 그리고 **인증 메일 한 통**(응답 뒤에 `after()` 로 — 메일이 늦어도 가입은 늦지 않음). 이메일은 소셜이 아닌 가입에만 있고 필수(소문자로 맞춰 저장). 중복 아이디·**확인된** 중복 이메일 **409**(구분해 안내), 형식 오류 **400**, 시도 초과 **429** |
+| `GET` | `/api/auth/verify?token=` | 인증 메일의 링크. 로그인 불요(링크가 증명). 24시간 · 1회용 · DB 에는 해시만. 결과는 `/verify-email?status=` 로 **302** |
+| `GET` | `/api/auth/verify/resend` | 내 이메일이 확인됐나 `{email, verified, mailConfigured}`. 비로그인 **401** |
+| `POST` | `/api/auth/verify/resend` | 인증 메일 다시 보내기(세션 주인의 주소로만). 분당 1회·시간당 5회 **429**, 이미 확인·이메일 없음 **409**, 발송 실패 **502** |
 | `POST` | `/api/auth/logout` | 세션 쿠키 삭제 |
 | `GET` | `/api/auth/session` | 지금 로그인한 사람 `{user}` (없으면 `{user: null}`). 화면이 관리자 버튼을 그릴지 정하는 근거 |
 | `GET` | `/api/auth/oauth/:provider?next=` | 소셜 로그인 시작 — state 쿠키를 심고 제공자로 **302**. 키 미설정이면 `/login?error=unconfigured` 로 되돌립니다 |
@@ -1030,17 +1135,24 @@ HTML 을 그대로 DB 에 넣으면 (1) 출력마다 sanitizer 를 통과시켜�
 | `GET` | `/api/auth/nickname` | 소셜 첫 진입인가 — `{nickname, pending}`. 비로그인 **401** |
 | `POST` | `/api/auth/nickname` | 닉네임 확정 `{nickname}` → `{user}` + **세션 쿠키 재발급**(쿠키에 이름이 박혀 있습니다). 중복·예약어·이미 정해진 계정 **409**, 형식 오류 **400**, 비로그인 **401** |
 
+> **아래 표에 `playerId` 가 없는 이유** — "누가 하는가" 는 요청이 아니라 **세션 쿠키**가
+> 정합니다 ([`lib/auth.ts`](lib/auth.ts) `requirePlayer`). 이름이 붙는 쓰기는 비로그인이면
+> **401** 이고, 본문이나 쿼리스트링에 `playerId` 를 섞어 보내도 스키마가 받지 않습니다.
+> 개인화되는 읽기(내 추천 여부, 내 클리어)도 같은 근거입니다. **예외는 제보 하나** —
+> 지나가다 본 것을 알려주는 자리라 로그인을 요구하지 않고, 익명은 자동 반영 임계값에
+> 세지 않습니다.
+
 **제보 · 리뷰**
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
 | `GET` | `/api/arcades/:id/reports?limit=30` | 그 오락실의 최근 제보 |
-| `POST` | `/api/arcades/:id/reports` | 제보 `{machineId, playerId, kind, cabinetId?, waitCount?, condition?, comment?}` → **201** + `{report, outcome, support, arcade}`. 컨디션 제보는 `cabinetId` 필수(없으면 400). 미등록 기종에 대기/컨디션 제보이거나 없는 기체를 가리키면 **409** |
+| `POST` | `/api/arcades/:id/reports` | 제보 `{machineId, kind, cabinetId?, waitCount?, condition?, comment?}` → **201** + `{report, outcome, support, arcade}`. **로그인 없이도 됩니다**(익명 = 임계값에 안 셈). 컨디션 제보는 `cabinetId` 필수(없으면 400). 미등록 기종에 대기/컨디션 제보이거나 없는 기체를 가리키면 **409** |
 | `GET` | `/api/reports?kind=queue,condition&sinceHours=24&machineId=1&limit=50` | 전국 실시간 피드 |
 | `DELETE` | `/api/reports/:id` | 제보 삭제 · **관리자만** → **204**. 작성자 본인에게도 열지 않습니다 (없어졌어요 임계값을 채운 뒤 흔적만 지우는 길이 열립니다). 이미 반영된 보유 기종은 되돌아가지 않습니다 |
 | `GET` | `/api/arcades/:id/reviews` | 리뷰 목록 |
-| `POST` | `/api/arcades/:id/reviews` | 리뷰 등록/수정 `{playerId, rating, body}` (1인 1리뷰 UPSERT) |
-| `DELETE` | `/api/arcades/:id/reviews?playerId=1` | 본인 리뷰 삭제 |
+| `POST` | `/api/arcades/:id/reviews` | 리뷰 등록/수정 `{rating, body}` (1인 1리뷰 UPSERT) |
+| `DELETE` | `/api/arcades/:id/reviews` | 본인 리뷰 삭제 |
 
 `outcome` 은 있어요/없어졌어요가 임계값을 채워 `arcade_machines` 를 실제로 바꿨을 때
 `'added'` / `'removed'`, 아니면 `null` 입니다. `support` 는 `{count, threshold}` 로
@@ -1050,30 +1162,29 @@ HTML 을 그대로 DB 에 넣으면 (1) 출력마다 sanitizer 를 통과시켜�
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| `GET` | `/api/games` | 서열표가 있는 게임(= `tier_settings` 등록) + 모드 목록 |
-| `GET` | `/api/tier?machineId=1&mode=S&level=15&playerId=1` | 서열표. 없는 조합이면 가장 가까운 조합으로 대체 |
-| `GET` | `/api/charts/:id?playerId=1` | 채보 상세 + 익명 투표 분포 + 평가 목록 |
-| `POST` | `/api/charts/:id/clear` | 클리어 기록 등록/해제 `{playerId, cleared}` |
-| `POST` | `/api/charts/:id/vote` | 투표 `{playerId, value}` · `value: null` 이면 취소. 클리어 없으면 **403** |
+| `GET` | `/api/games` | 서열표가 있는 게임(= `tier_settings` 등록) + 모드 · 버전 목록 |
+| `GET` | `/api/tier?machineId=1&mode=S&level=15` | 서열표. 없는 조합이면 가장 가까운 조합으로 대체. 버전이 있는 게임은 `&versionId=1` 도 (없으면 첫 버전) |
+| `GET` | `/api/charts/:id` | 채보 상세 + 익명 투표 분포 + 평가 목록 |
+| `POST` | `/api/charts/:id/clear` | 클리어 기록 등록/해제 `{cleared}` |
+| `POST` | `/api/charts/:id/vote` | 투표 `{value}` · `value: null` 이면 취소. 클리어 없으면 **403** |
 | `GET` | `/api/charts/:id/comments` | 채보 평가 목록 |
-| `POST` | `/api/charts/:id/comments` | 평가 등록/수정 `{playerId, body, tags}` (1인 1평가 UPSERT, 태그 4개까지) |
-| `DELETE` | `/api/charts/:id/comments?playerId=1` | 본인 평가 삭제 |
-| `GET` | `/api/players` | 플레이어 목록 (인증 대체) |
+| `POST` | `/api/charts/:id/comments` | 평가 등록/수정 `{body, tags}` (1인 1평가 UPSERT, 태그 4개까지) |
+| `DELETE` | `/api/charts/:id/comments` | 본인 평가 삭제 |
 
 **커뮤니티 게시판**
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
 | `GET` | `/api/boards` | 게임 탭(글 0건 포함) + 말머리 목록 |
-| `GET` | `/api/posts?machineId=1&category=guide&sort=popular&playerId=1&limit=20&offset=0` | 글 목록(20개/페이지). `machineId` 없으면 '전체' 탭. `sort`: `recent`\|`popular`(추천 5개 이상만) → `{posts, total, hasMore}` |
-| `POST` | `/api/posts` | 글 작성 `{machineId, category, playerId, title, body}` → **201**. 붙는 이미지는 `body` 의 `[[image:N]]` 마커로 정해짐 |
-| `GET` | `/api/posts/:id?playerId=1&view=1&commentOffset=10` | 상세 + 댓글 한 페이지(10개) + 첨부 이미지. `view=1` 이면 조회수 +1 |
+| `GET` | `/api/posts?machineId=1&category=guide&sort=popular&limit=20&offset=0` | 글 목록(20개/페이지). `machineId` 없으면 '전체' 탭. `sort`: `recent`\|`popular`(추천 5개 이상만) → `{posts, total, hasMore}` |
+| `POST` | `/api/posts` | 글 작성 `{machineId, category, title, body}` → **201**. 붙는 이미지는 `body` 의 `[[image:N]]` 마커로 정해짐 |
+| `GET` | `/api/posts/:id?view=1&commentOffset=10` | 상세 + 댓글 한 페이지(10개) + 첨부 이미지. `view=1` 이면 조회수 +1 |
 | `PUT` | `/api/posts/:id` | 수정 (**본인만** — 관리자도 안 됨, 아니면 **403**). 본문에서 사라진 마커의 이미지는 떼어냄 |
-| `DELETE` | `/api/posts/:id?playerId=1` | 삭제 (본인 또는 **관리자**, 댓글·추천·이미지 CASCADE) → **204**. 관리자는 `playerId` 없이도 됩니다 (근거가 세션 쿠키) |
-| `POST` | `/api/posts/:id/comments` | 댓글 작성 `{playerId, body}` → 방금 쓴 댓글이 있는 **마지막 페이지**를 담은 글 |
-| `DELETE` | `/api/posts/:id/comments?commentId=5&playerId=1&commentOffset=10` | 댓글 삭제 (본인 또는 **관리자**, 보던 페이지 유지). 관리자는 `playerId` 없이도 되고, 없는 댓글이면 **404**(본인 경로는 남의 댓글에 **403**) |
-| `POST` | `/api/posts/:id/like` | 추천 토글 `{playerId, commentOffset?}` → `{liked, post}` |
-| `POST` | `/api/uploads` | 이미지 1장 (multipart: `image`, `playerId`) → **201** `{image:{id,url,bytes}}`. 형식 오류 **415**, 초과 **413** |
+| `DELETE` | `/api/posts/:id` | 삭제 (본인 또는 **관리자**, 댓글·추천·이미지 CASCADE) → **204** |
+| `POST` | `/api/posts/:id/comments` | 댓글 작성 `{body}` → 방금 쓴 댓글이 있는 **마지막 페이지**를 담은 글 |
+| `DELETE` | `/api/posts/:id/comments?commentId=5&commentOffset=10` | 댓글 삭제 (본인 또는 **관리자**, 보던 페이지 유지). 관리자에게는 없는 댓글이 **404**(본인 경로는 남의 댓글에 **403**) |
+| `POST` | `/api/posts/:id/like` | 추천 토글 `{commentOffset?}` → `{liked, post}` |
+| `POST` | `/api/uploads` | 이미지 1장 (multipart: `image`) → **201** `{image:{id,url,bytes}}`. 형식 오류 **415**, 초과 **413** |
 | `GET` | `/api/uploads/:id` | 첨부 이미지 원본 (내용 해시 파일명이라 `immutable` 캐시) |
 
 없는 말머리를 보내면 `board_categories` FK 위반을 **400** 으로 바꿔 돌려줍니다
@@ -1168,8 +1279,9 @@ curl "http://localhost:3000/api/arcades?machines=1,3&lat=37.5665&lng=126.978&rad
 
 **서열표 · 채보 평가 (`/tier`)**
 
-- **게임 전환** (펌프 / 사볼) — 등급 단계 수·투표 범위·모드 이름이 게임마다 다름
-- 모드 · 레벨 전환, 등급별 서열 보드 (게임 등급 수 + 개인차 + 미정)
+- **게임 전환** (펌프 / 사볼 / EZ2DJ) — 등급 단계 수·투표 범위·모드 이름이 게임마다 다름
+- 버전 · 모드 · 레벨 전환, 등급별 서열 보드 (게임 등급 수 + 개인차 + 미정).
+  버전·모드 선택기는 그 축이 있는 게임에만 그려집니다
 - 채보 상세 — 평균/투표수/수렴도, 등급별 투표 분포 히스토그램
 - 클리어 기록 등록·해제, 체감 난이도 투표·수정·취소
 - 투표 시 해당 채보만 즉시 재집계 → 등급이 실시간으로 이동
@@ -1197,20 +1309,24 @@ curl "http://localhost:3000/api/arcades?machines=1,3&lat=37.5665&lng=126.978&rad
 
 **아직 없는 것 (의도적)**
 
-- **일반 사용자의** 로그인/인증 — 지금은 상단 네비에서 플레이어를 드롭다운으로 고르고
-  `localStorage` 에 담아 화면끼리 공유합니다 ([`lib/use-player.ts`](lib/use-player.ts)).
-  카카오 OAuth 가 붙으면 그 파일이 세션에서 읽는 형태로 바뀌고 호출부는 그대로 둘 수
-  있습니다. **다음 작업이 이것입니다** — 게시판 권한 검사가 지금은 클라이언트가 보낸
-  `playerId` 를 그대로 믿습니다. 남의 글은 403 으로 막지만, `playerId` 를 바꿔 보내면
-  통과합니다. 제보 어뷰징 방어와 신고·차단도 전부 계정에 매달려 있습니다.
-  (**관리자만 예외로 진짜 로그인이 있습니다** —
-  [위](#관리자-권한) 참고. 세션·권한 판정은
-  [`lib/auth.ts`](lib/auth.ts) 에 이미 있으므로 OAuth 는 그 위에 얹으면 됩니다)
+- ~~**일반 사용자의** 로그인/인증~~ — **붙었습니다.** 아이디/비밀번호 가입·로그인과
+  Google·카카오·네이버 OAuth 가 모두 있고, `usePlayerId()` 는 세션 하나만 봅니다
+  ([`lib/use-player.ts`](lib/use-player.ts)). 그 위에 걸려 있던 "API 가 클라이언트가 보낸
+  `playerId` 를 믿는다" 는 문제도 함께 닫혔습니다 — 이름이 붙는 쓰기는 전부
+  `requirePlayer(request)` 를 지나고, 요청에 섞인 `playerId` 는 스키마가 아예 받지
+  않습니다 ([`lib/auth.ts`](lib/auth.ts) · [`lib/validation.ts`](lib/validation.ts) 머리말).
+  아직 없는 것은 그 **다음** 단계입니다 — 신고·차단, MFA, 이메일 본인확인
+- **로그인 2단계(MFA)** — 지금 로그인은 아이디+비밀번호 한 단계입니다. 시도 제한(IP당
+  8회 실패 → 10분)은 DB 에 있어 재시작·다중 프로세스에도 유지되지만, 두 번째 확인
+  수단(문자·인증 앱)은 없습니다
 - 서식 (굵게·링크·인용 등) — 이미지 위치만 자유롭고, 글자는 평문입니다. 서식을 넣으려면
   마커 문법을 늘리거나 HTML 저장으로 가야 하는데, 후자는 sanitizer 를 들이는 결정입니다
 - **이미지 리사이즈/썸네일** — 원본을 그대로 저장하고 그대로 내보냅니다. 폰 사진 한 장이
-  3~5MB 라 상세 화면에서 그만큼 내려옵니다. 목록에는 이미지를 싣지 않아 목록은 가볍지만,
-  이건 실제로 먼저 붙여야 할 항목입니다 (`lib/uploads.ts` 의 `save` 에서 리사이즈)
+  3~5MB 라 **상세 화면에서** 그만큼 내려옵니다. 목록은 썸네일을 `next/image` 로 줄여
+  받아 가볍지만(행당 수 KB — [`components/PostList.tsx`](components/PostList.tsx) 의
+  `PostThumb`), 그건 목록 한 곳을 막은 것이지 저장 방식을 고친 게 아닙니다. 상세 화면과
+  움직이는 GIF 는 그대로입니다. 실제로 먼저 붙여야 할 항목입니다
+  (`lib/uploads.ts` 의 `save` 에서 리사이즈)
 - **글에 붙지 않은 업로드 정리 배치** — 작성하다 그만두면 `post_images` 에 고아 행과
   파일이 남습니다 (`post_images_orphan_idx` 로 찾을 수 있게만 해뒀습니다)
 - 게시판 검색, 대댓글, 신고·차단, 알림
@@ -1265,7 +1381,6 @@ app/
   api/boards/route.ts            게시판 게임 탭 + 말머리
   api/posts/…                    글 목록·작성 · 상세/수정/삭제 · comments · like
                                  (삭제는 본인 또는 관리자)
-  api/players/route.ts           플레이어 목록
 components/
   ArcadeFinder.tsx               파인더 전체 상태 (필터 / 선택 / 폼 모드)
   MapPane.tsx                    키 유무에 따라 지도 구현 선택
@@ -1277,7 +1392,7 @@ components/
   LiveBadge.tsx                  대기(기종) / 컨디션(기체) 뱃지
   LiveFeed.tsx                   실시간 피드 (필터 · 자동 갱신)
   StarRating.tsx                 별점 표시/입력
-  TierBoardView.tsx              서열표 전체 상태 (게임 · 모드 · 레벨)
+  TierBoardView.tsx              서열표 전체 상태 (게임 · 버전 · 모드 · 레벨)
   ChartDetailPanel.tsx           분포 · 클리어 · 투표
   ChartComments.tsx              채보 평가 (태그 + 코멘트)
   CommunityView.tsx              게시판 전체 상태 (게임 탭 / 말머리 / 정렬 / 페이지)

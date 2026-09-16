@@ -1,6 +1,6 @@
 'use client';
 
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import type { ScoredArcade } from '@/lib/recommend';
 import { formatDistance } from '@/lib/geo';
 import type { Arcade, ArcadeCabinet } from '@/lib/types';
@@ -28,13 +28,18 @@ interface Props {
   onEdit: (arcade: Arcade) => void;
   onDelete: (arcade: Arcade) => void;
   /**
-   * 비어 있을 때 할 말. 기본값은 검색·필터를 걸었을 때의 말이라, 아무 조건도
-   * 걸지 않은 첫 화면에서는 맞지 않는다 ("조건에 맞는" 조건이 없다).
+   * 비어 있을 때 할 말. 부모(ArcadeFinder listEmptyState)가 **왜 비었는지에 따라**
+   * 다른 것을 넘긴다 — 기종 필터가 0곳이면 그 이유와 '필터 끄기' 버튼까지 온다.
    *
-   * `null` 이면 아무것도 그리지 않는다 — 보여 줄 것이 없는 첫 화면은 빈 자리로
-   * 둔다. 없는 것을 설명하는 한 줄이 그 자리를 채우면 그게 화면의 내용이 된다.
+   * 2026-09-13 까지는 여기가 `null`(= 아무것도 안 그림)이었다. "없는 것을 설명하는
+   * 한 줄이 그 자리를 채우면 그게 화면의 내용이 된다" 는 이유였는데, 실제로 써 보니
+   * **기종 필터 14개 중 12개가 0곳**이라 사용자가 보는 것은 여백이 아니라 고장이었다.
+   * 크라우드소싱 서비스에서 빈 화면은 "아직 아무도 안 알려 줬다" 는 뜻이므로,
+   * 그 자리가 제보를 부탁할 자리다.
+   *
+   * `null` 은 여전히 "아무것도 그리지 않음" 이다 (조회 중 등).
    */
-  emptyMessage?: string | null;
+  emptyMessage?: ReactNode;
 }
 
 /**
@@ -45,10 +50,24 @@ function cabinetCondition(c: ArcadeCabinet): number | null {
   return c.conditionSummary?.value ?? null;
 }
 
-function hours(a: Arcade): string {
+/**
+ * 영업시간 한 줄. **모르면 null** 이고, 그때는 줄 자체를 그리지 않는다.
+ *
+ * 예전에는 '영업시간 미등록' 을 돌려줬다. 그런데 939곳 중 영업시간이 있는 곳이
+ * 1곳이라(네이버 지역 검색이 그 필드를 주지 않는다) 목록 열 줄이 모두 같은 말을
+ * 반복했고, 화면에서 가장 눈에 띄는 것이 '없음' 이었다 (2026-09-13 UX 점검).
+ * 없는 정보를 열 번 말하는 것보다 말하지 않는 쪽이 낫다 — 상세에서는 여전히
+ * 알려 준다(ArcadeDetailPanel).
+ */
+function hours(a: Arcade): string | null {
   if (a.is24h) return '24시간';
   if (a.openTime && a.closeTime) return `${a.openTime} ~ ${a.closeTime}`;
-  return '영업시간 미등록';
+  return null;
+}
+
+/** 수집한 주소를 링크로 쓸 수 있는지 — 데이터에서 온 값이라 스킴을 확인한다 */
+export function isHttpUrl(raw: string | null): boolean {
+  return raw !== null && /^https?:\/\//i.test(raw);
 }
 
 /**
@@ -75,7 +94,12 @@ function ArcadeList({
 }: Props) {
   if (loading) return <p className="muted pad">불러오는 중…</p>;
   if (items.length === 0) {
-    return emptyMessage === null ? null : <p className="muted pad">{emptyMessage}</p>;
+    if (emptyMessage === null || emptyMessage === undefined) return null;
+    return (
+      <div className="list-empty pad" role="status">
+        {typeof emptyMessage === 'string' ? <p className="muted">{emptyMessage}</p> : emptyMessage}
+      </div>
+    );
   }
 
   return (
@@ -89,7 +113,31 @@ function ArcadeList({
             onClick={() => onSelect(a.id)}
           >
             <div className="arcade-head">
-              <h3>{a.name}</h3>
+              {/*
+                제목이 곧 이 줄을 여는 버튼입니다 (접근성 P1).
+
+                줄 전체(`<li onClick>`)는 마우스 편의로 남겨 두되, **키보드와
+                보조기술에는 진짜 버튼이 필요합니다.** 지도 마커는 구조상 보조기술로
+                접근할 수 없어서(커스텀 오버레이 div), 이 목록이 오락실을 고르는
+                유일한 대체 경로입니다 — 그 경로가 마우스 전용이면 지도 전체가
+                접근 불가가 됩니다 (docs/PERF-A11Y-REPORT.md P1).
+
+                `<li>` 를 통째로 <button> 으로 감싸지 않는 이유: 안에 즐겨찾기·수정·
+                삭제 버튼이 들어 있어 버튼 중첩이 됩니다.
+              */}
+              <h3>
+                <button
+                  type="button"
+                  className="row-title"
+                  onClick={(e) => {
+                    // 줄 클릭과 겹쳐 두 번 불리지 않게 막는다
+                    e.stopPropagation();
+                    onSelect(a.id);
+                  }}
+                >
+                  {a.name}
+                </button>
+              </h3>
               {scored.distanceKm !== null && (
                 <span className="distance">{formatDistance(scored.distanceKm)}</span>
               )}
@@ -112,16 +160,27 @@ function ArcadeList({
             </div>
 
             <p className="address">{a.address}</p>
-            <p className="hours">
-              {hours(a)}
-              {a.phone && <span className="dot-sep">{a.phone}</span>}
-              {a.reviewCount > 0 && (
-                <span className="dot-sep rating-inline">
-                  <StarRating value={a.ratingAvg} />
-                  {a.ratingAvg?.toFixed(1)} ({a.reviewCount})
-                </span>
-              )}
-            </p>
+            {/* 할 말이 하나도 없으면 줄을 만들지 않는다 (빈 줄이 카드 간격만 늘린다) */}
+            {(hours(a) !== null || a.phone || a.reviewCount > 0) && (
+              <p className="hours">
+                {[
+                  hours(a),
+                  a.phone,
+                ]
+                  .filter(Boolean)
+                  .map((part, i) => (
+                    <span key={part as string} className={i > 0 ? 'dot-sep' : undefined}>
+                      {part}
+                    </span>
+                  ))}
+                {a.reviewCount > 0 && (
+                  <span className="dot-sep rating-inline">
+                    <StarRating value={a.ratingAvg} />
+                    {a.ratingAvg?.toFixed(1)} ({a.reviewCount})
+                  </span>
+                )}
+              </p>
+            )}
 
             {a.machines.length > 0 && (
               <div className="badges">
@@ -165,6 +224,24 @@ function ArcadeList({
             )}
 
             {a.note && <p className="note">{a.note}</p>}
+
+            {/*
+              업체가 등록한 홈페이지·SNS. 예전에는 이 주소가 출처 문자열과 함께
+              `note` 에 **원본 그대로** 찍혀 카드에서 세 줄을 차지했다 (migrate-055).
+              행 전체가 '선택' 이므로 링크를 눌렀을 때 상세까지 열리지 않게 막는다.
+            */}
+            {isHttpUrl(a.homepage) && (
+              <p className="ext-link">
+                <a
+                  href={a.homepage as string}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  홈페이지 · SNS
+                </a>
+              </p>
+            )}
 
             {/* 관리자의 수정·삭제와 선택 해제가 같은 줄에 앉는다. 해제는
                 선택된 행에만, 오른쪽 끝에 — 행을 다시 눌러도 해제되지

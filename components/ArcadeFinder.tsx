@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SearchOutcome } from '@/lib/chat-types';
 import { distanceKm, formatDistance, inBox, type LatLngBox } from '@/lib/geo';
 import {
@@ -30,12 +30,13 @@ import { useIsAdmin } from '@/lib/use-session';
 import { useLiveLocation } from '@/lib/use-live-location';
 import { usePriorityOrder } from '@/lib/use-priority';
 import { useSidebarOpen } from '@/lib/use-sidebar';
+import ScrollStrip from './ScrollStrip';
 import MapPane, { type Coord } from './MapPane';
 import ArcadeList from './ArcadeList';
 import Pagination from './Pagination';
 import ArcadeForm from './ArcadeForm';
 import ArcadeDetailPanel from './ArcadeDetailPanel';
-import ChatBot from './ChatBot';
+import { useRegisterChatSearch, useSuppressChatBot, type ChatSearchApi } from './ChatBotHost';
 import LocateButton from './LocateButton';
 import SidebarHandle from './SidebarHandle';
 import { useIsMapFolded, useIsStacked } from '@/lib/use-stacked';
@@ -139,6 +140,8 @@ export default function ArcadeFinder() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [arcades, setArcades] = useState<Arcade[]>([]);
   const [loading, setLoading] = useState(true);
+  /** 목록 조회 실패 문구. 없으면 조용히 옛 목록이 남아 "왜 안 바뀌지" 가 된다 */
+  const [listError, setListError] = useState<string | null>(null);
 
   /**
    * 지도가 **지금 그리고 있는** 범위 (화면 + 마커 여백). 사이드바 목록이 이걸로
@@ -223,6 +226,13 @@ export default function ArcadeFinder() {
       if (typeof saved.id === 'number' && Number.isInteger(saved.id)) {
         setSelectedId(saved.id);
         setDetailOpen(saved.open === true);
+        // 새로고침으로 돌아온 자리다. 칸을 쌓지 않고 주소만 맞춰 둔다 — 그래야
+        // 지금 보고 있는 화면과 주소창이 같고, 그 주소를 그대로 공유할 수 있다.
+        if (saved.open === true) {
+          const params = new URLSearchParams(window.location.search);
+          params.set('arcade', String(saved.id));
+          window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
+        }
       }
     } catch {
       // 저장값이 깨져 있으면 없는 셈 친다
@@ -243,6 +253,83 @@ export default function ArcadeFinder() {
       // 시크릿 모드 등에서 저장이 막혀도 화면 동작에는 지장이 없다
     }
   }, [selectedId, detailOpen]);
+
+  /**
+   * 상세 패널을 **브라우저 히스토리 한 칸**으로 만든다.
+   *
+   * 고치는 문제: 상세를 열어 둔 채 뒤로가기를 누르면 패널이 닫히는 게 아니라
+   * 사이트를 통째로 벗어났다 (2026-09-13 UX 점검). 안드로이드와 설치형 앱(PWA)에서는
+   * 뒤로가기가 주된 조작이라 자주 겪는다. 커뮤니티(CommunityView)는 이미 pushState 로
+   * 같은 문제를 풀고 있어서, 같은 앱의 두 화면이 서로 다르게 움직이고 있었다.
+   *
+   * 같이 얻는 것: 주소에 `?arcade=<id>` 가 남아 **링크 공유·북마크**가 된다. 실시간
+   * 피드는 이미 `/?arcade=3` 으로 넘어오고 있었는데, 정작 지도에서 고를 때는 주소가
+   * 바뀌지 않아 그 주소를 만들 방법이 없었다.
+   *
+   * ⚠ 오락실을 **바꿀 때는 쌓지 않고 갈아끼운다**(replace). 목록을 훑으며 여러 곳을
+   * 눌러 보는 화면이라, 누를 때마다 한 칸씩 쌓으면 목록으로 돌아가는 데 뒤로가기를
+   * 스무 번 눌러야 한다.
+   *
+   * pushState/replaceState 의 state 로는 `null` 만 넘긴다 — Next 가 이 두 함수를 감싸
+   * 라우터 내부 상태를 스스로 채운다(공식 문서의 사용법). 우리 값을 넣으면 그 자리를
+   * 덮어써서 뒤로가기 때 페이지가 통째로 다시 마운트된다.
+   */
+  const pushedRef = useRef(false);
+
+  /** 다른 쿼리(?perf=1 등)는 건드리지 않고 arcade 만 넣거나 뺀 주소 */
+  const detailUrl = (id: number | null): string => {
+    const params = new URLSearchParams(window.location.search);
+    if (id === null) params.delete('arcade');
+    else params.set('arcade', String(id));
+    const qs = params.toString();
+    return `${window.location.pathname}${qs ? `?${qs}` : ''}`;
+  };
+
+  const openDetail = useCallback((id: number) => {
+    setSelectedId(id);
+    setDetailOpen(true);
+    if (pushedRef.current) {
+      // 이미 우리가 쌓은 칸 위다 — 보는 대상만 바뀌므로 주소만 갈아끼운다
+      window.history.replaceState(null, '', detailUrl(id));
+    } else {
+      window.history.pushState(null, '', detailUrl(id));
+      pushedRef.current = true;
+    }
+  }, []);
+
+  /**
+   * 상세 닫기. 우리가 쌓은 칸 위라면 **뒤로 한 걸음** 간다 — 화면을 바꾸는 일은
+   * popstate 핸들러가 하므로, 인앱 '닫기' 와 브라우저 뒤로가기가 완전히 같은 경로를
+   * 지난다. 히스토리 깊이도 눈에 보이는 이동 횟수와 어긋나지 않는다.
+   */
+  const closeDetail = useCallback(() => {
+    if (pushedRef.current) {
+      window.history.back();
+      return;
+    }
+    setDetailOpen(false);
+    // 딥링크(?arcade=3)로 들어온 첫 칸이면 칸을 더 쌓지 않고 주소만 정리한다
+    if (new URLSearchParams(window.location.search).has('arcade')) {
+      window.history.replaceState(null, '', detailUrl(null));
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => {
+      const id = Number(new URLSearchParams(window.location.search).get('arcade')) || null;
+      if (id === null) {
+        pushedRef.current = false;
+        // 선택은 남긴다 — 뒤로가기는 '닫기' 와 같은 뜻이지 "방금 보던 곳을 잊어라" 가 아니다
+        setDetailOpen(false);
+        return;
+      }
+      pushedRef.current = true;
+      setSelectedId(id);
+      setDetailOpen(true);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   // 목록을 접었는지. 접으면 지도가 화면을 다 쓴다 (CSS: .layout.sidebar-off)
   const { open: sidebarOpen, toggle: toggleSidebar, setOpen: setSidebarOpen } = useSidebarOpen();
@@ -295,13 +382,19 @@ export default function ArcadeFinder() {
 
     try {
       const res = await fetch(`/api/arcades?${params}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `오락실 목록을 불러오지 못했습니다 (${res.status})`);
       // 늦게 도착한 이전 요청이 최신 결과를 덮어쓰지 않도록.
       if (seq === reqSeq.current) {
-        setArcades(data.arcades as Arcade[]);
+        setArcades((data.arcades as Arcade[]) ?? []);
+        setListError(null);
         if (!debouncedQ.trim() && !machineIds.length && !anchor) {
-          fullListRef.current = data.arcades as Arcade[];
+          fullListRef.current = (data.arcades as Arcade[]) ?? [];
         }
+      }
+    } catch (e) {
+      if (seq === reqSeq.current) {
+        setListError(e instanceof Error ? e.message : '오락실 목록을 불러오지 못했습니다');
       }
     } finally {
       if (seq === reqSeq.current) setLoading(false);
@@ -567,7 +660,7 @@ export default function ArcadeFinder() {
       // 순위는 이미 말풍선에 적혀 있다. 보던 상세가 있었어도 새 1위의 상세로
       // 바꿔치기하지 않도록 닫는다.
       setSelectedId(scored[0]?.arcade.id ?? null);
-      setDetailOpen(false);
+      closeDetail();
 
       return {
         total: scored.length,
@@ -666,7 +759,7 @@ export default function ArcadeFinder() {
   const jumpToArcade = (arcade: Arcade) => {
     setSelectedId(arcade.id);
     // 좁은 폭에서 상세가 지도를 밀어내면(≤1180px display:none) 이동이 안 보인다.
-    setDetailOpen(false);
+    closeDetail();
     setFollow(false);
     live.stop();
     setFixedCenter({ lat: arcade.lat, lng: arcade.lng });
@@ -722,7 +815,7 @@ export default function ArcadeFinder() {
       // 이전에 보던 오락실 선택은 이전 동네의 맥락이다. 남겨 두면 선택 고정
       // 규칙(selectedFirst) 때문에 "가까운 순" 1번에 11km 밖 지점이 앉는다.
       setSelectedId(null);
-      setDetailOpen(false);
+      closeDetail();
       setCenterNonce((n) => n + 1);
       setPlaceNotice(`'${data.place.name}' 주변을 보는 중 — 필요하면 위에서 반경을 걸 수 있습니다.`);
     } catch {
@@ -766,8 +859,7 @@ export default function ArcadeFinder() {
 
   const handleSaved = (arcade: Arcade) => {
     closeForm();
-    setSelectedId(arcade.id);
-    setDetailOpen(true);
+    openDetail(arcade.id);
     void fetchArcades();
   };
 
@@ -779,7 +871,7 @@ export default function ArcadeFinder() {
       if (res.ok) {
         if (selectedId === arcade.id) {
           setSelectedId(null);
-          setDetailOpen(false);
+          closeDetail();
         }
         if (mode.kind === 'edit' && mode.arcade.id === arcade.id) closeForm();
         void fetchArcades();
@@ -813,10 +905,7 @@ export default function ArcadeFinder() {
 
   // 지도 핀: 고르는 행위가 곧 상세를 여는 행위다 — 닫아 둔 상세도
   // 같은 곳을 다시 누르면 도로 열린다.
-  const handleSelect = useCallback((id: number) => {
-    setSelectedId(id);
-    setDetailOpen(true);
-  }, []);
+  const handleSelect = useCallback((id: number) => openDetail(id), [openDetail]);
 
   /**
    * 목록 줄 — 데스크톱에서는 핀과 똑같이 상세를 열지만, 모바일(세로 스택,
@@ -832,10 +921,14 @@ export default function ArcadeFinder() {
    */
   const handleListSelect = useCallback(
     (id: number) => {
-      setSelectedId(id);
-      setDetailOpen(!stacked);
+      // 폰에서는 지도 이동까지만 — 히스토리에 쌓을 '열림' 이 없다.
+      if (stacked) {
+        setSelectedId(id);
+        return;
+      }
+      openDetail(id);
     },
-    [stacked],
+    [stacked, openDetail],
   );
 
   /**
@@ -843,7 +936,7 @@ export default function ArcadeFinder() {
    * useCallback 인 이유: 이 참조가 렌더마다 바뀌면 memo(ArcadeDetailPanel) 가
    * 무력해진다 (아래 최적화 주석).
    */
-  const handleCloseDetail = useCallback(() => setDetailOpen(false), []);
+  const handleCloseDetail = useCallback(() => closeDetail(), [closeDetail]);
 
   /**
    * 목록 행의 "위치 찾기 취소" — 선택을 통째로 푼다 (닫기와 다른 점).
@@ -852,8 +945,8 @@ export default function ArcadeFinder() {
    */
   const handleClearSelect = useCallback(() => {
     setSelectedId(null);
-    setDetailOpen(false);
-  }, []);
+    closeDetail();
+  }, [closeDetail]);
 
   /**
    * 별 누르기. 스토어가 낙관적으로 먼저 바꾸고 서버 응답으로 한 번 더 맞춘다
@@ -913,8 +1006,28 @@ export default function ArcadeFinder() {
     hasOrigin: origin !== null,
     truncated: inViewport.length > ordered.length,
     searching,
-    loading,
   });
+
+  /**
+   * 목록이 비었을 때 그 자리에 들어갈 것 (왜 비었는지 + 다음 행동).
+   *
+   * useMemo 인 이유: ArcadeList 는 memo 다. 이 노드를 렌더마다 새로 만들면
+   * 참조가 매번 바뀌어 memo 가 무력해진다 (검색어 타이핑마다 목록 전체 재렌더).
+   */
+  const emptyState = useMemo(
+    () =>
+      listEmptyState({
+        loading,
+        searching,
+        offscreen,
+        machineNames: machines
+          .filter((m) => machineIds.includes(m.id))
+          .map((m) => m.shortName || m.name),
+        matchedTotal: arcades.length,
+        onClearMachines: () => setMachineIds([]),
+      }),
+    [loading, searching, offscreen, machines, machineIds, arcades.length],
+  );
 
   /**
    * 검색의 첫 매치 — 버튼·Enter 가 갈 곳.
@@ -947,6 +1060,21 @@ export default function ArcadeFinder() {
   ]
     .filter(Boolean)
     .join(' ');
+
+  /*
+    챗봇은 레이아웃에 떠 있고(components/ChatBotHost.tsx), 탐색 기능만 여기서
+    등록합니다. 순위 계산과 지도 표시는 이 컴포넌트만 할 수 있기 때문입니다.
+    useMemo 로 묶지 않으면 렌더마다 새 객체가 되어 등록이 무한히 반복됩니다.
+  */
+  const chatSearch = useMemo<ChatSearchApi>(
+    () => ({ onSearch: runSearch, extract, initialOrder: order }),
+    [runSearch, extract, order],
+  );
+  useRegisterChatSearch(chatSearch);
+
+  // 오락실 등록·수정 중에는 챗봇을 띄우지 않는다 — 단추가 폼 위에 겹쳐 앉는다.
+  // (전역으로 올리기 전에는 이 조건이 렌더에 직접 붙어 있었다.)
+  useSuppressChatBot(mode.kind !== 'list');
 
   return (
     <div className={layoutClass}>
@@ -1026,7 +1154,11 @@ export default function ArcadeFinder() {
               />
               {live.error && <p className="warn">{live.error}</p>}
 
-              <div className="chips">
+              {/* 기종은 계속 늘어나는 목록이라 접히게 두면 사이드바 세로를 다 먹는다 —
+                  한 줄로 두고 옆으로 민다 (components/ScrollStrip.tsx).
+                  revealKey 는 주지 않는다: 여기는 **여러 개를 켜는** 줄이라, 칩 하나를
+                  켤 때마다 첫 번째 켜진 칩으로 끌려가면 방금 누른 자리를 잃는다. */}
+              <ScrollStrip className="chips" remeasureKey={machines.length}>
                 {machines.map((m) => (
                   <button
                     key={m.id}
@@ -1038,7 +1170,7 @@ export default function ArcadeFinder() {
                     {m.shortName}
                   </button>
                 ))}
-              </div>
+              </ScrollStrip>
               {machineIds.length > 1 && (
                 <p className="muted small">선택한 기종을 모두 보유한 곳만 표시됩니다</p>
               )}
@@ -1058,6 +1190,14 @@ export default function ArcadeFinder() {
             </div>
 
             <div ref={listTopRef} />
+            {listError && (
+              <p className="warn pad" role="alert">
+                {listError}{' '}
+                <button type="button" className="btn btn-sm" onClick={() => void fetchArcades()}>
+                  다시 시도
+                </button>
+              </p>
+            )}
             <ArcadeList
               items={listed}
               loading={loading}
@@ -1070,11 +1210,8 @@ export default function ArcadeFinder() {
               onClearSelect={handleClearSelect}
               onEdit={startEdit}
               onDelete={handleDelete}
-              /*
-                화면 안에 아무것도 없으면 빈 자리로 둔다 (null = 아무것도 안 그림).
-                할 말이 있으면 아래 hint 가 한다 — "3곳이 화면 밖에 있습니다".
-              */
-              emptyMessage={null}
+              /* 왜 비었는지는 이유마다 다르다 — listEmptyState 가 만든다 */
+              emptyMessage={emptyState}
             />
 
             <Pagination
@@ -1150,10 +1287,6 @@ export default function ArcadeFinder() {
       */}
       <SidebarHandle open={sidebarOpen} onToggle={toggleSidebar} controls="arcade-sidebar" />
 
-      {/* 오락실 등록·수정 중에는 띄우지 않는다 — 폼 위에 겹쳐 앉는다 */}
-      {mode.kind === 'list' && (
-        <ChatBot onSearch={runSearch} extract={extract} initialOrder={order} />
-      )}
     </div>
   );
 }
@@ -1177,7 +1310,6 @@ function listHint({
   hasOrigin,
   truncated,
   searching,
-  loading,
 }: {
   canFavorite: boolean;
   /** 지금 그려진 줄 수 */
@@ -1189,20 +1321,10 @@ function listHint({
   truncated: boolean;
   /** 이름·주소 검색 중 (전국 검색 — 화면·반경 컷 없음) */
   searching: boolean;
-  loading: boolean;
 }): string | null {
-  // 검색이 전국에서 0곳 — 다음 행동은 지도 조작이 아니라 위의 지역 이동이다.
-  // (조회가 도는 동안에는 말하지 않는다 — 결과가 오기 전의 0은 0이 아니다)
-  if (searching && listedCount === 0 && !loading) {
-    return '이름·주소가 맞는 오락실이 없습니다. 지역 이름이라면 위 버튼이 그 주변을 보여 줍니다.';
-  }
-  // 화면 안이 비었는데 조건에 맞는 곳은 있다 — 가장 헷갈리는 상태다. 검색은
-  // 됐는데 목록이 비어 보이므로, 어디에 있는지부터 말해 준다.
-  if (listedCount === 0) {
-    return offscreen > 0
-      ? `조건에 맞는 ${offscreen}곳이 지금 화면 밖에 있습니다. 지도를 옮기거나 축소해 보세요.`
-      : null; // 정말 아무것도 없으면 빈 자리로 둔다
-  }
+  // 비어 있을 때의 말은 여기가 아니라 listEmptyState 가 한다 — 목록 자리에서
+  // 바로 보여야 하고, '필터 끄기' 같은 버튼이 함께 가야 하기 때문이다.
+  if (listedCount === 0) return null;
   if (truncated) {
     // 검색 중에는 화면 컷이 없으므로 "지도를 확대하라" 는 답이 아니다.
     return searching
@@ -1213,6 +1335,79 @@ function listHint({
   if (!hasOrigin) return "'내 위치' 를 켜면 가까운 순으로 정리됩니다.";
   if (!canFavorite) return '로그인하면 즐겨찾기한 곳이 목록 맨 위에 옵니다.';
   return null;
+}
+
+/**
+ * 목록이 **비었을 때** 그 자리에 그릴 것 — 왜 비었는지와 다음에 할 수 있는 일.
+ *
+ * 2026-09-13 UX 점검에서 가장 컸던 문제가 여기였다. 기종 필터를 누르면 목록이
+ * 통째로 사라지는데 화면에 뜨는 것은 "화면 안 0곳" 한 줄뿐이라, 크라우드소싱으로
+ * 채워지는 중이라는 사실을 알 길이 없었다 (= 고장으로 읽힌다). 이유별로 다른 말을
+ * 하고, 한 번에 할 수 있는 행동이 있으면 버튼으로 같이 준다.
+ */
+function listEmptyState({
+  loading,
+  searching,
+  offscreen,
+  machineNames,
+  matchedTotal,
+  onClearMachines,
+}: {
+  loading: boolean;
+  searching: boolean;
+  /** 조건에는 맞지만 화면 밖에 있는 곳 수 */
+  offscreen: number;
+  /** 켜 둔 기종 필터 이름 (없으면 빈 배열) */
+  machineNames: string[];
+  /** 지금 조건으로 서버가 준 전체 수 — 화면 밖까지 포함 */
+  matchedTotal: number;
+  onClearMachines: () => void;
+}): ReactNode {
+  // 조회가 도는 동안에는 말하지 않는다 — 결과가 오기 전의 0은 0이 아니다.
+  if (loading) return null;
+
+  // 이름·주소 검색이 전국에서 0곳. 다음 행동은 지도 조작이 아니라 지역 이동이다.
+  if (searching) {
+    return (
+      <p className="muted">
+        이름·주소가 맞는 오락실이 없습니다. 지역 이름이라면 위 버튼이 그 주변을 보여 줍니다.
+      </p>
+    );
+  }
+
+  // 기종 필터가 전국에서 0곳 — 가장 자주 만나는 빈 화면이다.
+  if (machineNames.length > 0 && matchedTotal === 0) {
+    // 이름 뒤에 곧바로 조사를 붙이지 않는다 — '펌프가' / '츄니즘이' 처럼 받침에 따라
+    // 달라지고, IIDX·DDR 같은 영문 표기는 규칙이 아예 서지 않는다. 뒤에 명사(오락실)를
+    // 두면 조사가 그쪽에 붙어 어떤 이름이 와도 문장이 맞는다.
+    const names = machineNames.join(' · ');
+    return (
+      <>
+        <p className="muted">
+          <strong>{names}</strong> 보유 오락실이 아직 없습니다.
+        </p>
+        <p className="muted small">
+          보유 기종은 다녀온 사람들의 제보로 채워집니다. 오락실을 열고 “이 게임 있어요” 를
+          눌러 주시면 가장 먼저 등록됩니다.
+        </p>
+        <button type="button" className="btn btn-sm" onClick={onClearMachines}>
+          기종 필터 끄기
+        </button>
+      </>
+    );
+  }
+
+  // 조건에 맞는 곳은 있는데 지금 화면에 없다 — 가장 헷갈리는 상태다.
+  if (offscreen > 0) {
+    return (
+      <p className="muted">
+        조건에 맞는 {offscreen}곳이 지금 화면 밖에 있습니다. 지도를 옮기거나 축소해 보세요.
+      </p>
+    );
+  }
+
+  // 필터도 검색도 없이 이 화면에 아무것도 없는 경우 (바다 한가운데 등).
+  return <p className="muted">이 화면에는 등록된 오락실이 없습니다. 지도를 옮기거나 축소해 보세요.</p>;
 }
 
 /**

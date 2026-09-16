@@ -9,6 +9,7 @@ import type {
 } from './board-types';
 import { attachmentIdsInBody, stripMarkers } from './board-content';
 import {
+  attachmentUrl,
   COMMENTS_PAGE_SIZE,
   NOTICE_CATEGORY,
   NOTICE_PIN_LIMIT,
@@ -98,14 +99,32 @@ const POST_SELECT = `
          m.short_name  AS machine_short_name,
          bc.label      AS category_label,
          pl.nickname   AS nickname,
-         (myl.player_id IS NOT NULL) AS my_like
+         (myl.player_id IS NOT NULL) AS my_like,
+         thumb.id      AS thumb_id,
+         thumb.mime    AS thumb_mime
   FROM posts p
   -- LEFT JOIN — 게임 없는 글(공지)이 목록에서 사라지지 않아야 한다. INNER JOIN 이면
   -- machine_id 가 NULL 인 행은 조용히 빠진다.
   LEFT JOIN machines m     ON m.id  = p.machine_id
   JOIN board_categories bc ON bc.code = p.category
   JOIN players pl          ON pl.id = p.player_id
-  LEFT JOIN post_likes myl ON myl.post_id = p.id AND myl.player_id = $1::int`;
+  LEFT JOIN post_likes myl ON myl.post_id = p.id AND myl.player_id = $1::int
+  -- 목록 썸네일 = 이 글의 첫 첨부 한 건.
+  --
+  -- post_images_post_idx (post_id, sort_order, id) 를 그대로 타는 LIMIT 1 이라
+  -- 행당 인덱스 탐색 한 번이고, 첨부가 1개든 5개든 비용이 같습니다. 아래 listPosts 의
+  -- '목록은 LIMIT 이 인덱스까지 내려간다' 는 성질도 그대로입니다 — 중첩 루프의 안쪽이라
+  -- 실제로 뽑히는 20여 행에 대해서만 돕니다.
+  --
+  -- 사진/영상을 가리지 않습니다 (board-types.ts PostThumbnail 참고). mime 을 조건에
+  -- 넣으면 인덱스가 아니라 글마다 첨부 전부를 훑는 필터가 됩니다.
+  LEFT JOIN LATERAL (
+    SELECT pi.id, pi.mime
+      FROM post_images pi
+     WHERE pi.post_id = p.id
+     ORDER BY pi.sort_order, pi.id
+     LIMIT 1
+  ) thumb ON true`;
 
 function toSummary(r: Record<string, unknown>): PostSummary {
   return {
@@ -118,6 +137,15 @@ function toSummary(r: Record<string, unknown>): PostSummary {
     nickname: r.nickname as string,
     title: r.title as string,
     excerpt: excerptOf(r.body as string),
+    // 첨부가 없으면 LATERAL 이 NULL 을 내므로 그대로 '썸네일 없음' 이 된다.
+    thumbnail:
+      r.thumb_id === null || r.thumb_id === undefined
+        ? null
+        : {
+            id: num(r.thumb_id),
+            url: attachmentUrl(num(r.thumb_id)),
+            mime: r.thumb_mime as string,
+          },
     commentCount: num(r.comment_count),
     likeCount: num(r.like_count),
     viewCount: num(r.view_count),
@@ -203,11 +231,17 @@ export async function listPosts(params: ListPostsParams): Promise<ListPostsResul
    */
   const tab = category === NOTICE_CATEGORY ? null : machineId;
 
-  // 정렬 키는 화이트리스트로만 SQL 에 들어간다 (문자열 보간 지점).
-  const ORDER: Record<PostSort, string> = {
-    recent: 'p.created_at DESC, p.id DESC',
-    popular: 'p.like_count DESC, p.comment_count DESC, p.created_at DESC',
+  /**
+   * 정렬 키. SQL 의 ORDER BY 와 아래 JS 재정렬이 **같은 표**를 읽습니다 — 두 곳에
+   * 따로 적으면 한쪽만 고쳐져 목록이 조용히 뒤섞입니다. 전부 내림차순이고,
+   * 문자열 보간 지점이므로 컬럼명은 이 화이트리스트에서만 옵니다.
+   */
+  const SORT_KEYS: Record<PostSort, string[]> = {
+    recent: ['created_at', 'id'],
+    popular: ['like_count', 'comment_count', 'created_at'],
   };
+  const NOTICE_KEYS = SORT_KEYS.recent; // 공지는 정렬 옵션과 무관하게 항상 최신순
+  const orderBy = (keys: string[]) => keys.map((k) => `p.${k} DESC`).join(', ');
 
   /**
    * 목록과 총계를 **따로** 가져옵니다.
@@ -225,32 +259,69 @@ export async function listPosts(params: ListPostsParams): Promise<ListPostsResul
    * 그래서 목록은 LIMIT 이 인덱스까지 내려가도록 되돌리고(0.2ms), 총계는 아래
    * countPosts 에서 캐시로 받습니다. 풀 슬롯을 아끼려던 원래 의도는 캐시가
    * 대신합니다 — 대부분의 요청은 총계 때문에 DB 를 치지 않습니다.
+   *
+   * **고정 공지는 목록과 한 왕복으로 가져옵니다** (UNION ALL, 2026-09-08).
+   *
+   * 공지는 필터를 안 타는 별도 목록이라 예전에는 쿼리를 따로 보냈습니다. 그런데
+   * 200 VU 측정에서 병목이 SQL 이 아니라 **풀 슬롯을 잡고 있는 시간**으로 확인됐습니다
+   * (PERFORMANCE.md) — 쿼리 하나가 실제로 실행되는 3ms 가 아니라, 슬롯을 잡은 채 노드
+   * 이벤트 루프 차례를 기다리는 20~50ms 만큼 슬롯을 점유합니다. 그래서 왕복 수가 곧
+   * 비용입니다. 공지 갈래는 `$9::boolean` 이 false 면 행을 내지 않으므로, 예전에
+   * 쿼리를 아예 보내지 않던 경우(pinNotices=false)와 결과가 같습니다.
+   *
+   * 총계까지 한 쿼리에 넣지 않는 이유는 바로 위 주석입니다 — 그쪽은 캐시가 맞습니다.
    */
-  const [{ rows }, total, notices] = await Promise.all([
+  const [{ rows }, total] = await Promise.all([
     db.query<Record<string, unknown>>(
-      `${POST_SELECT}
-       WHERE ($2::int  IS NULL OR p.machine_id = $2::int)
-         AND ($3::text IS NULL OR p.category   = $3::text)
-         AND ($6::text IS NULL
-              OR p.title ILIKE '%' || $6::text || '%'
-              OR p.body  ILIKE '%' || $6::text || '%')
-         AND ($7::int  IS NULL OR p.like_count >= $7::int)
-         AND ($8::text IS NULL OR p.category  <> $8::text)
-       ORDER BY ${ORDER[sort]}
-       LIMIT $4::int OFFSET $5::int`,
-      [playerId, tab, category, limit, offset, term, minLikes, excluded],
+      `SELECT page.*, false AS is_notice
+         FROM (${POST_SELECT}
+               WHERE ($2::int  IS NULL OR p.machine_id = $2::int)
+                 AND ($3::text IS NULL OR p.category   = $3::text)
+                 AND ($6::text IS NULL
+                      OR p.title ILIKE '%' || $6::text || '%'
+                      OR p.body  ILIKE '%' || $6::text || '%')
+                 AND ($7::int  IS NULL OR p.like_count >= $7::int)
+                 AND ($8::text IS NULL OR p.category  <> $8::text)
+               ORDER BY ${orderBy(SORT_KEYS[sort])}
+               LIMIT $4::int OFFSET $5::int) AS page
+       UNION ALL
+       SELECT notice.*, true AS is_notice
+         FROM (${POST_SELECT}
+               WHERE $9::boolean AND p.category = $10::text
+               ORDER BY ${orderBy(NOTICE_KEYS)}
+               LIMIT $11::int) AS notice`,
+      [playerId, tab, category, limit, offset, term, minLikes, excluded, pinNotices, NOTICE_CATEGORY, NOTICE_PIN_LIMIT],
     ),
     countPosts(tab, category, term, minLikes, excluded),
-    // 공지는 필터를 안 타는 별도 목록이라 합치지 않습니다 (위 pinNotices 주석 참고).
-    // 애초에 pinNotices 가 false 면 쿼리 자체가 나가지 않습니다.
-    pinNotices ? listNotices(playerId) : Promise.resolve([]),
   ]);
 
+  // UNION ALL 은 두 갈래의 행 순서를 보장하지 않습니다 — Append 가 순서대로 붙이는 것은
+  // 구현 사실일 뿐이고, 병렬 Append 가 걸리면 섞입니다. 갈래별로 SQL 과 같은 키로
+  // 다시 세웁니다. 합쳐서 많아야 20 + NOTICE_PIN_LIMIT 행이라 비용은 없습니다.
+  const pageRows = rows.filter((r) => !r.is_notice).sort(byKeysDesc(SORT_KEYS[sort]));
+  const noticeRows = rows.filter((r) => r.is_notice).sort(byKeysDesc(NOTICE_KEYS));
+
   return {
-    posts: rows.map(toSummary),
-    notices,
+    posts: pageRows.map(toSummary),
+    notices: noticeRows.map(toSummary),
     total,
-    hasMore: offset + rows.length < total,
+    hasMore: offset + pageRows.length < total,
+  };
+}
+
+/**
+ * 여러 키 내림차순 비교자. created_at 은 Date, id·like_count·comment_count 는 number 로
+ * 오는데, 둘 다 `<` `>` 로 비교됩니다 (Date 는 valueOf 를 거칩니다).
+ */
+function byKeysDesc(keys: string[]) {
+  return (a: Record<string, unknown>, b: Record<string, unknown>): number => {
+    for (const k of keys) {
+      const x = a[k] as number;
+      const y = b[k] as number;
+      if (x < y) return 1;
+      if (x > y) return -1;
+    }
+    return 0;
   };
 }
 
@@ -297,21 +368,37 @@ async function countPostsUncached(
   return num(rows[0]?.total ?? 0);
 }
 
+// ─── 홈 소식 ─────────────────────────────────────────────────
+
 /**
- * 고정 공지 — 최신 것부터 NOTICE_PIN_LIMIT 개.
+ * 홈 소식 줄에 세울 말머리 — **소식인 것만**.
  *
- * 게임 탭(machineId)도 정렬(sort)도 보지 않습니다. 공지는 어느 게시판에서 썼든
- * 커뮤니티 전체의 알림이고, 추천 수로 밀려나서도 안 됩니다. playerId 만 받는
- * 이유는 '내가 추천했는지' 표시가 일반 글과 같아야 하기 때문입니다.
+ * 자유·질문·공략은 뺍니다. 셋 다 사람들이 주고받는 이야기지, 새로 생긴 일이
+ * 아닙니다. 홈은 "그동안 뭐가 바뀌었나" 를 묻는 자리라 기준이 다릅니다.
+ *
+ * 순서는 화면 순서가 아니라 목록일 뿐입니다 — 정렬은 아래 쿼리가 최신순으로 합니다.
  */
-async function listNotices(playerId: number | null): Promise<PostSummary[]> {
+export const NEWS_CATEGORIES = [NOTICE_CATEGORY, 'contest', 'info'] as const;
+
+/**
+ * 홈 소식 — listPosts 를 쓰지 않고 따로 둡니다.
+ *
+ * listPosts 는 공지를 목록 위에 따로 고정하고, 게임 탭·검색·인기 기준선을 함께
+ * 다룹니다(위 주석들 참고). 홈은 그 어느 것도 필요 없고 **여러 말머리를 한 번에**
+ * 받아야 하는데, 그 조건을 listPosts 에 밀어 넣으면 커뮤니티 목록의 공지 고정
+ * 규칙과 얽힙니다. 읽기 전용에 조건이 하나뿐이라 따로 두는 쪽이 싸고 안전합니다.
+ *
+ * playerId 를 넘기지 않습니다 — 홈에는 추천 표시가 없고, 넣으면 사람마다 다른
+ * 응답이 되어 나중에 캐시를 걸 수 없습니다.
+ */
+export async function listNews(limit = 6): Promise<PostSummary[]> {
   const db = await getDb();
   const { rows } = await db.query<Record<string, unknown>>(
     `${POST_SELECT}
-     WHERE p.category = $2::text
-     ORDER BY p.created_at DESC, p.id DESC
-     LIMIT $3::int`,
-    [playerId, NOTICE_CATEGORY, NOTICE_PIN_LIMIT],
+      WHERE p.category = ANY($2::text[])
+      ORDER BY p.created_at DESC, p.id DESC
+      LIMIT $3::int`,
+    [null, [...NEWS_CATEGORIES], Math.min(Math.max(limit, 1), 20)],
   );
   return rows.map(toSummary);
 }
@@ -319,81 +406,117 @@ async function listNotices(playerId: number | null): Promise<PostSummary[]> {
 // ─── 글 상세 ─────────────────────────────────────────────────
 
 /**
- * 댓글 한 페이지.
+ * json_agg 로 실려 온 타임스탬프.
  *
- * 오래된 것부터(created_at ASC) 정렬합니다 — 대화 흐름이 위에서 아래로 읽혀야 하고,
- * 새 댓글이 항상 마지막 페이지에 붙어서 "쓰고 나면 그 페이지로 보내기"가 자연스럽습니다.
+ * 드라이버가 파싱해 주는 컬럼과 달리 json 안에서는 문자열로 옵니다
+ * (`2026-09-08T10:00:00+00:00`). 컬럼은 전부 TIMESTAMPTZ 이므로 오프셋이 붙어
+ * 있어 Date 로 다시 읽어도 어긋나지 않습니다 — 이 재파싱이 `iso()` 가 Date 에서
+ * 만들던 것과 **같은 문자열**을 보장합니다 (응답 형식이 바뀌면 안 됩니다).
  */
-export async function listComments(
-  postId: number,
-  limit = COMMENTS_PAGE_SIZE,
-  offset = 0,
-): Promise<PostComment[]> {
-  const db = await getDb();
-  const { rows } = await db.query<Record<string, unknown>>(
-    `SELECT c.id, c.post_id, c.player_id, c.body, c.created_at, c.updated_at, pl.nickname
-     FROM post_comments c
-     JOIN players pl ON pl.id = c.player_id
-     WHERE c.post_id = $1
-     ORDER BY c.created_at, c.id
-     LIMIT $2::int OFFSET $3::int`,
-    [postId, limit, offset],
-  );
-  return rows.map((r) => ({
-    id: num(r.id),
-    postId: num(r.post_id),
-    playerId: num(r.player_id),
-    nickname: r.nickname as string,
-    body: r.body as string,
-    createdAt: iso(r.created_at),
-    updatedAt: iso(r.updated_at),
-  }));
-}
-
-async function listAttachments(postId: number): Promise<PostAttachment[]> {
-  const db = await getDb();
-  const { rows } = await db.query<Record<string, unknown>>(
-    `SELECT id, bytes, mime FROM post_images
-     WHERE post_id = $1 ORDER BY sort_order, id`,
-    [postId],
-  );
-  return rows.map((r) => ({
-    id: num(r.id),
-    // 파일은 public/ 이 아니라 이 라우트로만 나간다 (lib/uploads.ts 참고).
-    url: `/api/uploads/${num(r.id)}`,
-    bytes: num(r.bytes),
-    // 사진인지 동영상인지를 가리는 값 — 화면이 <img>/<video> 를 이걸 보고 고른다.
-    mime: r.mime as string,
-  }));
+function isoFromJson(v: unknown): string {
+  return new Date(String(v)).toISOString();
 }
 
 /**
- * 글 상세. 댓글은 전부가 아니라 `commentOffset` 부터 한 페이지만 실립니다 —
- * 전체 개수는 캐시 컬럼(comment_count)에 있으므로 화면이 페이지 수를 계산할 수 있고,
- * 댓글 500개짜리 글이 500개를 다 내려보내지 않습니다.
+ * 글 상세 — 글·댓글·첨부·조회수 +1 을 **한 번의 왕복**으로.
+ *
+ * 댓글은 전부가 아니라 `commentOffset` 부터 한 페이지만 실립니다 — 전체 개수는
+ * 캐시 컬럼(comment_count)에 있으므로 화면이 페이지 수를 계산할 수 있고, 댓글
+ * 500개짜리 글이 500개를 다 내려보내지 않습니다.
+ *
+ * ─── 왜 한 쿼리인가 ───
+ * 예전에는 세 번 나눠 갔습니다: 조회수 UPDATE → 글 SELECT → (댓글 ∥ 첨부).
+ * 앞의 둘이 순차인 이유가 offset 보정 때문이었습니다 — 댓글 페이지를 당기려면
+ * comment_count 를 먼저 알아야 했습니다.
+ *
+ * 200 VU 측정에서 병목은 SQL 실행이 아니라 **풀 슬롯을 잡고 있는 시간**이었고
+ * (PERFORMANCE.md 2부), 그러면 왕복 수가 곧 비용입니다. offset 보정을 SQL 로
+ * 옮기면(`comment_offset` 식) 셋을 한 문장에 담을 수 있습니다.
+ *
+ * ⚠ 조회수는 `bumped` CTE 의 RETURNING 값을 씁니다. 데이터 변경 CTE 의 결과는
+ *   **같은 문장의 다른 부분에 보이지 않으므로**(스냅샷이 문장 시작 시점에 고정)
+ *   p.view_count 를 그냥 읽으면 올리기 전 값이 나옵니다. 나눠 보내던 때와 응답이
+ *   같아야 하므로 RETURNING 쪽을 우선합니다.
  */
 export async function getPost(
   postId: number,
   playerId: number | null,
   commentOffset = 0,
+  /** true 면 조회수 +1. 목록에서 상세를 열 때만 (수정·추천 후 재조회에는 안 붙임) */
+  countView = false,
 ): Promise<PostDetail | null> {
   const db = await getDb();
   const { rows } = await db.query<Record<string, unknown>>(
-    `${POST_SELECT} WHERE p.id = $2::int`,
-    [playerId, postId],
+    `WITH bumped AS (
+       UPDATE posts SET view_count = view_count + 1
+        WHERE id = $2::int AND $5::boolean
+        RETURNING id, view_count
+     ),
+     base AS (
+       SELECT src.*,
+              b.view_count AS view_count_bumped,
+              -- clampOffset 과 같은 계산. 정수 나눗셈이 내림이라 한 줄로 떨어진다:
+              -- 댓글 15개 · 페이지 10 이면 마지막 페이지 시작은 (14/10)*10 = 10.
+              LEAST(
+                GREATEST($3::int, 0),
+                (GREATEST(src.comment_count - 1, 0) / $4::int) * $4::int
+              ) AS comment_offset
+         FROM (${POST_SELECT} WHERE p.id = $2::int) src
+         LEFT JOIN bumped b ON b.id = src.id
+     )
+     SELECT base.*,
+       -- 갈래마다 json_agg 의 ORDER BY 를 다시 적는다. 서브쿼리의 ORDER BY 가
+       -- 집계 입력 순서로 이어지는 것은 구현 사실일 뿐이라, 순서를 결과에 못
+       -- 박으려면 집계 쪽에도 같은 키를 준다 (listPosts 의 UNION ALL 과 같은 이유).
+       COALESCE((
+         SELECT json_agg(c ORDER BY c.created_at, c.id)
+           FROM (SELECT pc.id, pc.post_id, pc.player_id, pc.body,
+                        pc.created_at, pc.updated_at, cpl.nickname
+                   FROM post_comments pc
+                   JOIN players cpl ON cpl.id = pc.player_id
+                  WHERE pc.post_id = $2::int
+                  ORDER BY pc.created_at, pc.id
+                  -- OFFSET 에는 이 질의 층의 컬럼을 쓸 수 없어 스칼라 서브쿼리로
+                  -- 받는다 (base 는 한 행이다).
+                  LIMIT $4::int OFFSET (SELECT comment_offset FROM base)) c
+       ), '[]'::json) AS comments,
+       COALESCE((
+         SELECT json_agg(a ORDER BY a.sort_order, a.id)
+           FROM (SELECT pi.id, pi.bytes, pi.mime, pi.sort_order
+                   FROM post_images pi
+                  WHERE pi.post_id = $2::int) a
+       ), '[]'::json) AS attachments
+       FROM base`,
+    [playerId, postId, commentOffset, COMMENTS_PAGE_SIZE, countView],
   );
   if (!rows[0]) return null;
 
   const r = rows[0];
-  const { excerpt: _excerpt, ...summary } = toSummary(r);
+  // thumbnail 은 상세에서 빼고 attachments 로 대신한다 (board-types.ts PostDetail 주석).
+  const { excerpt: _excerpt, thumbnail: _thumbnail, ...summary } = toSummary(r);
+  // 조회수를 올린 요청에서는 올린 뒤의 값이 따로 온다 (위 ⚠ 참고).
+  if (r.view_count_bumped !== null && r.view_count_bumped !== undefined) {
+    summary.viewCount = num(r.view_count_bumped);
+  }
 
-  // 글이 지워지거나 댓글이 줄어 offset 이 범위를 벗어나면 마지막 페이지로 당긴다.
-  const safeOffset = clampOffset(commentOffset, summary.commentCount, COMMENTS_PAGE_SIZE);
+  const comments = (r.comments as Record<string, unknown>[]).map((c) => ({
+    id: num(c.id),
+    postId: num(c.post_id),
+    playerId: num(c.player_id),
+    nickname: c.nickname as string,
+    body: c.body as string,
+    createdAt: isoFromJson(c.created_at),
+    updatedAt: isoFromJson(c.updated_at),
+  }));
 
-  const [comments, attachments] = await Promise.all([
-    listComments(postId, COMMENTS_PAGE_SIZE, safeOffset),
-    listAttachments(postId),
-  ]);
+  const attachments: PostAttachment[] = (r.attachments as Record<string, unknown>[]).map((a) => ({
+    id: num(a.id),
+    // 파일은 public/ 이 아니라 이 라우트로만 나간다 (lib/uploads.ts 참고).
+    url: attachmentUrl(num(a.id)),
+    bytes: num(a.bytes),
+    // 사진인지 동영상인지를 가리는 값 — 화면이 <img>/<video> 를 이걸 보고 고른다.
+    mime: a.mime as string,
+  }));
 
   return {
     ...summary,
@@ -402,7 +525,7 @@ export async function getPost(
     bodyDoc: docFromDb(r.body_doc),
     attachments,
     comments,
-    commentOffset: safeOffset,
+    commentOffset: num(r.comment_offset),
   };
 }
 
@@ -419,7 +542,7 @@ export function lastCommentOffset(commentCount: number): number {
 }
 
 /**
- * 조회수 +1.
+ * 조회수에 대하여 — 올리는 것은 getPost 의 `countView` 가 같은 왕복에서 합니다.
  *
  * 조회 로그를 남기지 않으므로 되돌릴 수 없는 누적 카운터입니다. 같은 사람이 새로
  * 고칠 때마다 오르는 것도 막지 않습니다 — 막으려면 (글, 사람, 시각) 을 저장해야 하고,
@@ -427,10 +550,6 @@ export function lastCommentOffset(commentCount: number): number {
  *
  * ⚠ dev 서버는 React Strict Mode 로 effect 를 두 번 실행하므로 개발 중에는 2씩 오릅니다.
  */
-export async function bumpView(postId: number): Promise<void> {
-  const db = await getDb();
-  await db.query(`UPDATE posts SET view_count = view_count + 1 WHERE id = $1`, [postId]);
-}
 
 // ─── 쓰기 ────────────────────────────────────────────────────
 
@@ -661,24 +780,33 @@ export async function deleteCommentAsAdmin(commentId: number): Promise<number | 
   return postId;
 }
 
-/** 추천 토글. 반환값은 토글 후 상태. */
-export async function toggleLike(
+/**
+ * 추천을 **원하는 상태로 맞춥니다.** 뒤집지 않습니다.
+ *
+ * 예전에는 `toggleLike` 였습니다 — DB 의 현재 상태를 보고 반대로 바꿨습니다.
+ * 그게 재시도에 취약합니다: 모바일에서 응답을 못 받고 재전송하거나 두 번 탭하면
+ * 두 번 뒤집혀 원래대로 돌아갑니다. 그 수가 인기글 정렬의 근거입니다.
+ *
+ * `setClear` · `setSpecial` 이 이미 같은 모양(원하는 상태를 받음)이라 결도 맞습니다.
+ * 두 번 불러도 결과가 같으므로 라우트를 PUT/DELETE 로 열 수 있습니다.
+ */
+export async function setLike(
   postId: number,
   playerId: number,
+  liked: boolean,
 ): Promise<{ liked: boolean }> {
   const db = await getDb();
-  const { rows } = await db.query<{ post_id: number }>(
-    `DELETE FROM post_likes WHERE post_id = $1 AND player_id = $2 RETURNING post_id`,
-    [postId, playerId],
-  );
-
-  const liked = rows.length === 0;
   if (liked) {
     await db.query(
       `INSERT INTO post_likes (post_id, player_id) VALUES ($1, $2)
        ON CONFLICT DO NOTHING`,
       [postId, playerId],
     );
+  } else {
+    await db.query(`DELETE FROM post_likes WHERE post_id = $1 AND player_id = $2`, [
+      postId,
+      playerId,
+    ]);
   }
   await recalc(postId);
   return { liked };

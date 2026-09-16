@@ -1,0 +1,15 @@
+# /etc/systemd/system/arcade-finder-backup.service — timer 가 부르는 1회성 작업
+[Unit]
+Description=오락실 파인더 백업 (DB 덤프 + 첨부)
+
+[Service]
+Type=oneshot
+User=arcade
+Group=arcade
+WorkingDirectory=/srv/arcade-finder/app/arcade-finder
+EnvironmentFile=/srv/arcade-finder/app/arcade-finder/.env.local
+Environment=BACKUP_DIR=/var/backups/arcade-finder
+Environment=KEEP_DAYS=14
+# 다른 장비로 복사하는 한 줄 (deploy/backup.sh 끝). 비워 두면 같은 디스크 안의 사본입니다.
+# Environment=OFFSITE=rclone copy /var/backups/arcade-finder remote:arcade-finder-backups --max-age 2d
+ExecStart=/usr/bin/env bash deploy/backup.sh

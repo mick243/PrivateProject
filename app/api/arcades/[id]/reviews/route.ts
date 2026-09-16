@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getArcade } from '@/lib/arcades';
+import { requirePlayer } from '@/lib/auth';
 import { deleteReview, listReviews, upsertReview } from '@/lib/reviews';
 import { formatIssues, reviewInputSchema } from '@/lib/validation';
 
@@ -26,10 +27,16 @@ export async function GET(_request: Request, ctx: Ctx) {
 /**
  * POST /api/arcades/:id/reviews — 리뷰 등록/수정 (1인 1리뷰라 UPSERT)
  * 평점 캐시가 갱신되므로 오락실도 함께 돌려줍니다.
+ *
+ * 누구의 리뷰인지는 세션이 정합니다 — 1인 1리뷰라 본문의 playerId 를 믿으면
+ * 그 한 줄을 남의 것으로 덮어쓸 수 있습니다.
  */
 export async function POST(request: Request, ctx: Ctx) {
   const arcadeId = parseId((await ctx.params).id);
   if (arcadeId === null) return BAD_ID();
+
+  const guard = await requirePlayer(request);
+  if (!guard.ok) return guard.response;
 
   let body: unknown;
   try {
@@ -50,24 +57,22 @@ export async function POST(request: Request, ctx: Ctx) {
     return NextResponse.json({ error: '오락실을 찾을 수 없습니다' }, { status: 404 });
   }
 
-  const review = await upsertReview({ ...parsed.data, arcadeId });
+  const review = await upsertReview({ ...parsed.data, arcadeId, playerId: guard.playerId });
   return NextResponse.json(
     { review, reviews: await listReviews(arcadeId), arcade: await getArcade(arcadeId) },
     { status: 201 },
   );
 }
 
-/** DELETE /api/arcades/:id/reviews?playerId=1 — 본인 리뷰 삭제 */
+/** DELETE /api/arcades/:id/reviews — 본인 리뷰 삭제 (누구인지는 세션이 정합니다) */
 export async function DELETE(request: Request, ctx: Ctx) {
   const arcadeId = parseId((await ctx.params).id);
   if (arcadeId === null) return BAD_ID();
 
-  const playerId = parseId(new URL(request.url).searchParams.get('playerId') ?? '');
-  if (playerId === null) {
-    return NextResponse.json({ error: 'playerId 가 필요합니다' }, { status: 400 });
-  }
+  const guard = await requirePlayer(request);
+  if (!guard.ok) return guard.response;
 
-  const deleted = await deleteReview(arcadeId, playerId);
+  const deleted = await deleteReview(arcadeId, guard.playerId);
   if (!deleted) {
     return NextResponse.json({ error: '삭제할 리뷰가 없습니다' }, { status: 404 });
   }

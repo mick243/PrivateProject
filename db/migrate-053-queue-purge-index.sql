@@ -1,0 +1,58 @@
+-- ============================================================
+-- 053 · 만료 대기 제보 정리를 인덱스로 (부분 인덱스 하나)
+--
+-- ─── 049 다음이 053 인 이유 ──────────────────────────────
+-- 050·051·052 는 `claude/mfa-jwt-token-status` 가 먼저 쓰고 있습니다
+-- (player-email · email-verification · login-failures). 이 파일은 원래 050 이었는데,
+-- 같은 번호가 두 가지를 가리키면 읽는 사람이 어느 쪽인지 알 수 없어 뒤로 물렸습니다.
+-- 저쪽의 login-failures 는 이 브랜치에도 같은 이름(052)으로 들어와 있습니다 — 한
+-- 파일이라 합쳐질 때 번호가 겹치지 않습니다.
+--
+-- 러너는 번호가 아니라 **파일 이름**으로 이력을 남기므로(schema_migrations.name),
+-- 번호에 빈칸이 있어도 동작에는 영향이 없습니다.
+--
+-- ─── 무엇이 문제였나 ─────────────────────────────────────
+-- `purgeExpiredQueueReports()` (lib/reports.ts) 는 스케줄러가 없어서 **읽을 때마다**
+-- 돕니다 — /live 피드(30초 폴링), 오락실 상세의 제보 목록, 제보 등록. 즉 읽기
+-- 요청 하나가 곧 DELETE 하나입니다.
+--
+-- 제보가 0건일 때는 공짜였습니다. 목표 규모(가입자 10,000 · DAU 3,000)로 1년치
+-- 25,680건을 채우고 재 보니 이렇게 나옵니다.
+--
+--   Seq Scan on machine_reports  (rows=291, Rows Removed by Filter: 25,389)
+--   Buffers: shared hit=398      Execution Time: 3.809 ms
+--
+-- 지울 것이 하나도 없는 평상시에도 **테이블 전체를 훑습니다.** 대기 제보는 4시간만
+-- 살아서 항상 전체의 1% 남짓인데, 나머지 99% 를 매번 읽고 버리는 셈입니다.
+-- 그리고 이 비용은 제보가 쌓일수록 커지기만 합니다.
+--
+-- ─── 왜 부분 인덱스인가 ──────────────────────────────────
+-- 조건이 `kind = 'queue' AND created_at <= 컷오프` 인데, 기존 인덱스로는 못 받습니다.
+--   · machine_reports_feed_idx (created_at DESC) — 오래된 쪽 전부가 조건에 걸려서
+--     25,000행을 훑고 kind 로 걸러야 합니다. 안 쓰는 편이 나은 수준입니다.
+--   · machine_reports_live_idx (arcade_id, machine_id, kind, …) — 선두 컬럼이
+--     arcade_id 라 전 오락실을 훑는 이 쿼리는 탈 수 없습니다.
+-- `WHERE kind = 'queue'` 부분 인덱스는 살아 있는 대기 제보만 담으므로 인덱스 자체가
+-- 작고(전체의 ~1%), 만료 컷오프가 그대로 범위 조건이 됩니다.
+--
+-- ─── 잰 값 ───────────────────────────────────────────────
+--   실행 시간   3.809 ms → 0.458 ms   (-88%)
+--   버퍼        398      → 5          (-99%)
+--   계획        Seq Scan → Bitmap Index Scan
+-- (데이터: load-test/seed-scale.sql · machine_reports 25,680행 중 대기 291행)
+--
+-- ─── 여러 번 실행해도 결과가 같습니다 ────────────────────
+-- CREATE INDEX IF NOT EXISTS.
+--
+-- 되돌리려면: DROP INDEX machine_reports_queue_ttl_idx;
+-- ============================================================
+
+-- 컬럼 순서가 (created_at) 하나인 이유: kind 는 WHERE 절로 빠져서 인덱스 안의
+-- 모든 행이 이미 'queue' 입니다. 키에 또 넣으면 크기만 커집니다.
+CREATE INDEX IF NOT EXISTS machine_reports_queue_ttl_idx
+  ON machine_reports (created_at)
+  WHERE kind = 'queue';
+
+-- 운영 DB 가 이미 커진 뒤에 적용한다면 CREATE INDEX 가 쓰기를 막습니다.
+-- 그때는 이 파일을 돌리지 말고 psql 에서 CONCURRENTLY 로 따로 만드세요
+-- (042 와 같은 이유 — CONCURRENTLY 는 트랜잭션 안에서 못 돕니다).

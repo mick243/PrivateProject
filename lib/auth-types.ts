@@ -40,13 +40,32 @@ export const MIN_PASSWORD_LENGTH = 8;
  *
  * `?next=` 는 주소창에서 누구나 고칠 수 있습니다. 그대로 믿고 이동하면
  * `/login?next=https://…` 한 줄로 우리 도메인에서 남의 사이트로 튕겨 보내는
- * 링크가 됩니다(오픈 리다이렉트). `//evil.com` 은 프로토콜 상대 URL 이라
- * 슬래시로 시작하는지만 봐서는 걸러지지 않으므로 따로 막습니다.
+ * 링크가 됩니다(오픈 리다이렉트).
  *
  * 화면(로그인 폼)과 서버(OAuth 콜백)가 같은 판단을 해야 해서 여기 둡니다 —
  * 한쪽만 고치면 다른 쪽이 그대로 뚫린 채 남습니다.
+ *
+ * ─── 왜 '슬래시로 시작하는가' 로는 모자라나 ───
+ * 예전 판정은 `/` 로 시작하고 `//` 가 아니면 통과였습니다. 그런데 브라우저와
+ * `new URL()` 은 **역슬래시를 슬래시로 취급**합니다. 그래서
+ *
+ *     safeNext('/\evil.com')            → 통과 (슬래시로 시작하고 // 가 아니다)
+ *     new URL('/\evil.com', 우리주소)   → https://evil.com/
+ *
+ * 가 되어, 카카오 로그인을 정상으로 마친 사람이 우리 도메인의 302 를 타고 남의
+ * 사이트에 착지했습니다 (2026-09-13 QA 에서 재현). 문자를 하나씩 막는 대신
+ * **URL 로 해석해 본 뒤 출처가 그대로인지** 봅니다 — 브라우저와 같은 파서를 쓰므로
+ * 이런 표기 차이가 더 나와도 같은 답을 냅니다.
  */
 export function safeNext(raw: string | null | undefined): string {
-  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/';
-  return raw;
+  if (!raw || !raw.startsWith('/')) return '/';
+  try {
+    // 출처가 있는 아무 기준 주소나 — 결과가 그 출처를 벗어나면 앱 밖으로 나가는 값이다.
+    const base = 'http://arcade.invalid';
+    const url = new URL(raw, base);
+    if (url.origin !== base) return '/';
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return '/';
+  }
 }

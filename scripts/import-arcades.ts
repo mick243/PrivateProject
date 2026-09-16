@@ -52,21 +52,14 @@ import {
   type ArcadePlace,
 } from '../lib/naver-local.ts';
 import { buildArcadeQueries, countRegions } from '../lib/kr-regions.ts';
+import { loadScriptEnv } from '../lib/script-env.ts';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 
-// ─── .env.local 최소 파싱 (scripts/init-db.mjs 와 같은 방식) ──────────
+// ─── .env.local (lib/script-env.ts — scripts/ 의 .ts 도구 공용) ────────
 const root = process.cwd();
-const envFile = path.join(root, '.env.local');
-if (fs.existsSync(envFile)) {
-  for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
-    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-    if (m && !process.env[m[1]]) {
-      process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
-    }
-  }
-}
+loadScriptEnv(root);
 
 // ─── 인자 ────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -386,11 +379,13 @@ await db.transaction(async (tx) => {
       [ref, p.name, p.address],
     );
 
-    // 업체가 등록한 홈페이지가 있으면 note 에 남깁니다 — 스키마에 따로 둘 칸이
-    // 없고, 영업시간을 확인할 때 지도 링크만큼 도움이 됩니다.
-    const note =
-      `네이버 지역 검색${p.category ? ` · ${p.category}` : ''}` +
-      (p.homepage ? ` · ${p.homepage}` : '');
+    // 홈페이지는 제 칸(arcades.homepage, migrate-055)으로 갑니다.
+    //
+    // 예전에는 출처·분류·주소를 `note` 에 이어 붙였는데, note 는 **사용자에게
+    // 보이는 한 줄 메모**라서 목록 카드마다 "네이버 지역 검색 · 스포츠,오락>오락실 ·
+    // https://…utm_source=qr" 이 그대로 찍혔습니다. 출처는 source/source_ref 가
+    // 이미 들고 있으므로 메모에 적을 이유가 없습니다.
+    const homepage = p.homepage ?? null;
 
     if (found[0]) {
       // 이름·주소·좌표만 갱신합니다. 영업시간과 기종은 사람이 채운 값일 수
@@ -399,19 +394,21 @@ await db.transaction(async (tx) => {
       await tx.query(
         `UPDATE arcades
             SET name = $2, address = $3, lat = $4, lng = $5,
-                source = 'naver', source_ref = $6, note = $7,
+                source = 'naver', source_ref = $6,
+                -- 사람이 적어 둔 홈페이지를 빈 값으로 덮지 않는다
+                homepage = COALESCE($7, arcades.homepage),
                 updated_at = now()
           WHERE id = $1`,
-        [found[0].id, p.name, p.address, p.lat, p.lng, ref, note],
+        [found[0].id, p.name, p.address, p.lat, p.lng, ref, homepage],
       );
       updated += 1;
     } else {
       await tx.query(
         `INSERT INTO arcades
            (name, address, lat, lng, open_time, close_time, is_24h, phone, note,
-            source, source_ref)
-         VALUES ($1, $2, $3, $4, NULL, NULL, FALSE, NULL, $5, 'naver', $6)`,
-        [p.name, p.address, p.lat, p.lng, note, ref],
+            homepage, source, source_ref)
+         VALUES ($1, $2, $3, $4, NULL, NULL, FALSE, NULL, NULL, $5, 'naver', $6)`,
+        [p.name, p.address, p.lat, p.lng, homepage, ref],
       );
       inserted += 1;
     }

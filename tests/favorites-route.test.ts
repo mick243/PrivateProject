@@ -15,6 +15,17 @@ import { createSessionToken } from '@/lib/auth';
 
 const calls: { fn: string; args: unknown[] }[] = [];
 
+/**
+ * 세션 판정이 이제 players 한 줄을 봅니다 — 서명이 맞아도 `token_epoch` 이
+ * 다르거나 계정이 없으면 로그인이 아닙니다 (lib/auth.ts getSession, H12).
+ * 이 파일이 보려는 건 신원이지 회수가 아니라서, 세대 0 으로 답하는 대역을 둡니다.
+ */
+vi.mock('@/lib/db', () => ({
+  getDb: async () => ({
+    query: async () => ({ rows: [{ nickname: '테스터', is_admin: false, token_epoch: 0 }] }),
+  }),
+}));
+
 vi.mock('@/lib/favorites', () => ({
   listFavoriteIds: vi.fn(async (...args: unknown[]) => {
     calls.push({ fn: 'list', args });
@@ -29,11 +40,11 @@ vi.mock('@/lib/favorites', () => ({
   }),
 }));
 
-const { GET, POST, DELETE } = await import('@/app/api/favorites/route');
+const { GET, PUT, DELETE } = await import('@/app/api/favorites/route');
 
 /** 로그인한 사람의 요청 — 쿠키는 실제 서명 토큰을 쓴다 */
 function signedIn(playerId: number, init?: RequestInit): Request {
-  const token = createSessionToken({ playerId, nickname: '테스터', isAdmin: false });
+  const token = createSessionToken(playerId, 0);
   return new Request('http://localhost/api/favorites', {
     ...init,
     headers: { ...(init?.headers ?? {}), cookie: `${SESSION_COOKIE}=${token}` },
@@ -64,34 +75,34 @@ describe('GET /api/favorites', () => {
   });
 });
 
-describe('POST /api/favorites — 담기', () => {
+describe('PUT /api/favorites — 담기', () => {
   const body = (payload: unknown) => ({
-    method: 'POST',
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 
   it('세션의 playerId 로 담고, 갱신된 목록을 돌려준다', async () => {
-    const res = await POST(signedIn(42, body({ arcadeId: 9 })));
+    const res = await PUT(signedIn(42, body({ arcadeId: 9 })));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ arcadeIds: [7, 3] });
     expect(calls[0]).toEqual({ fn: 'add', args: [42, 9] });
   });
 
   it('본문의 playerId 는 무시한다 — 남의 목록에 담을 수 없다', async () => {
-    await POST(signedIn(42, body({ arcadeId: 9, playerId: 999 })));
+    await PUT(signedIn(42, body({ arcadeId: 9, playerId: 999 })));
     expect(calls[0]).toEqual({ fn: 'add', args: [42, 9] });
   });
 
   it('비로그인은 401 · 아무것도 저장하지 않는다', async () => {
-    const res = await POST(anonymous(body({ arcadeId: 9 })));
+    const res = await PUT(anonymous(body({ arcadeId: 9 })));
     expect(res.status).toBe(401);
     expect(calls).toEqual([]);
   });
 
   it('arcadeId 가 없거나 이상하면 400', async () => {
     for (const bad of [undefined, 0, -3, 'abc', 1.5]) {
-      const res = await POST(signedIn(42, body({ arcadeId: bad })));
+      const res = await PUT(signedIn(42, body({ arcadeId: bad })));
       expect(res.status, String(bad)).toBe(400);
     }
     expect(calls).toEqual([]);
@@ -100,7 +111,7 @@ describe('POST /api/favorites — 담기', () => {
 
 describe('DELETE /api/favorites — 빼기', () => {
   it('쿼리스트링의 arcadeId 를 세션 주인에게서 뺀다', async () => {
-    const token = createSessionToken({ playerId: 42, nickname: '테스터', isAdmin: false });
+    const token = createSessionToken(42, 0);
     const res = await DELETE(
       new Request('http://localhost/api/favorites?arcadeId=9', {
         method: 'DELETE',
@@ -120,7 +131,7 @@ describe('DELETE /api/favorites — 빼기', () => {
   });
 
   it('arcadeId 가 없으면 400', async () => {
-    const token = createSessionToken({ playerId: 42, nickname: '테스터', isAdmin: false });
+    const token = createSessionToken(42, 0);
     const res = await DELETE(
       new Request('http://localhost/api/favorites', {
         method: 'DELETE',

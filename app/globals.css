@@ -1,14 +1,152 @@
+/*
+  ── 색 ────────────────────────────────────────────────────────
+  기본은 다크입니다. 라이트는 두 곳에서 켜집니다.
+
+    · `@media (prefers-color-scheme: light)` — OS 설정. JS 가 없어도 동작합니다.
+    · `:root[data-theme='light']`            — 사용자가 직접 고른 값
+                                               (components/ThemeToggle.tsx)
+
+  두 번째가 첫 번째를 이길 수 있어야 하므로 media 쪽에 `:not([data-theme='dark'])`
+  를 답니다 — OS 가 라이트인데 사용자가 다크를 고른 경우가 그 조건입니다.
+  같은 값을 두 번 적는 대신 한쪽을 var 로 참조하게 만들 수도 있지만, 그러면 색을
+  찾을 때 한 단계를 더 따라가야 해서 그냥 두 번 적습니다.
+
+  ── 어떤 색이 토큰이 되어야 하나 ──
+  `rgba(…, 0.16)` 같은 **틴트 배경은 토큰이 아닙니다.** 반투명이라 어떤 바탕 위에서든
+  그 바탕과 섞여서, 다크에서는 어둡게 라이트에서는 옅게 저절로 맞습니다. 토큰이 되어야
+  하는 건 바탕을 가정하고 박아 둔 색입니다 — 그 틴트 **위에 얹는 글자색**, 눌린 면,
+  떠 있는 판, 그림자, 덧대는 밝기.
+
+  `--accent` · `--accent-2` · `--danger` 는 배경으로도 글자로도 쓰입니다. 그래서
+  라이트에서는 '흰 바탕에서 글자로 읽히는' 진하기까지 내립니다 — 그 덕에 `color:
+  var(--accent-2)` 로 적힌 20여 곳을 한 곳도 건드리지 않아도 됩니다.
+*/
 :root {
+  /* 스크롤 막대·기본 폼 컨트롤 같은 브라우저 제공 UI 도 같이 따라오게 한다 */
+  color-scheme: dark;
+
   --bg: #0e1015;
   --panel: #161a22;
   --panel-2: #1d222c;
+  /*
+     홈 바로가기 카드의 설명 띠 (.home-card-cap).
+
+     카드에 테두리를 두지 않아 이 띠가 곧 카드 경계라, 공용 --panel-2 보다 한 단 더
+     벌려 둡니다. 다크는 더 밝게, 라이트는 더 어둡게 — 어느 쪽이든 **카드 배경에서
+     멀어지는** 방향입니다. 세 곳(:root · 라이트 미디어 · [data-theme=light])에 모두
+     두어야 시스템 설정과 토글 양쪽에서 맞습니다.
+  */
+  --card-cap: #2a3242;
   --line: #2a3040;
   --text: #e6e9f0;
   --muted: #8b93a7;
-  --accent: #6d5efc;
+  --accent: #356ee6;
   --accent-2: #22d3a6;
   --danger: #f2555a;
+  /* 주의를 끌되 위험은 아닌 것 (컨디션 3 · 서열표 3구간) */
+  --warn: #e2b93b;
+
+  /* 바탕보다 더 눌린 면 — 사진·영상·지도처럼 '안쪽' 으로 읽혀야 하는 자리 */
+  --sunken: #0b0d12;
+  /* 지도 위에 떠 있는 판. 뒤가 비쳐야 해서 알파가 있다 */
+  --panel-float: rgba(22, 26, 34, 0.95);
+  /* 어떤 면 위에든 한 겹 덧대는 밝기 (호버·눌림) */
+  --overlay: rgba(255, 255, 255, 0.12);
+  /* 지도 마커의 점을 배경에서 떼어내는 테두리 */
+  --marker-ring: rgba(11, 13, 18, 0.85);
+  --shadow-soft: rgba(0, 0, 0, 0.35);
+  --shadow: rgba(0, 0, 0, 0.45);
+  --shadow-strong: rgba(0, 0, 0, 0.55);
+
+  /* 꽉 찬 --accent-2 위에 얹는 글자 */
+  --on-accent-2: #06231b;
+  /* 옅은 틴트 위에 얹는 글자들 — 배경이 아니라 **글자**다 */
+  --text-accent: #a8c8ff;
+  --text-warn: #f0cf6a;
+  --text-danger: #ffb4b6;
+  --text-danger-strong: #ffd0d1;
+  /* 즐겨찾기 별 · 컬링을 꺼 둔 상태 표시 */
+  --star: #f5c451;
+  --text-hot: #ff9d5c;
+
   --radius: 10px;
+
+  /* 아래 가운데 이동 막대(.histbar)가 차지하는 세로 높이 = 막대 46px + 아래 여백 12px.
+     스크롤이 끝까지 내려갔을 때 마지막 줄(페이지 번호 등)이 막대에 가리지 않도록,
+     스크롤되는 칸들이 이만큼을 비워 둡니다. 막대 크기를 고치면 여기만 고치면 됩니다. */
+  --histbar-space: 58px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+  color-scheme: light;
+
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --panel-2: #eef0f4;
+  --card-cap: #e0e4ec;
+  --line: #dcdfe6;
+  --text: #1a1d24;
+  --muted: #5d6577;
+  /* 글자로도 쓰이므로 흰 바탕에서 읽히는 진하기까지 내린다 (위 설명 참고) */
+  --accent: #1d4ed8;
+  --accent-2: #0b7a5c;
+  --danger: #cf3339;
+  --warn: #a6780c;
+
+  --sunken: #e8eaf0;
+  --panel-float: rgba(255, 255, 255, 0.96);
+  --overlay: rgba(20, 24, 34, 0.08);
+  --marker-ring: rgba(255, 255, 255, 0.9);
+  /* 밝은 바탕에서 검정 그림자를 그대로 쓰면 때가 낀 것처럼 보인다 — 묽게, 그리고
+     완전한 검정이 아니라 바탕의 푸른기를 약간 섞는다 */
+  --shadow-soft: rgba(20, 24, 34, 0.1);
+  --shadow: rgba(20, 24, 34, 0.16);
+  --shadow-strong: rgba(20, 24, 34, 0.22);
+
+  --on-accent-2: #ffffff;
+  --text-accent: #1a44bd;
+  --text-warn: #8a6508;
+  --text-danger: #b32d33;
+  --text-danger-strong: #8f2024;
+  --star: #c8890a;
+  --text-hot: #c2500a;
+  }
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --panel-2: #eef0f4;
+  --card-cap: #e0e4ec;
+  --line: #dcdfe6;
+  --text: #1a1d24;
+  --muted: #5d6577;
+  /* 글자로도 쓰이므로 흰 바탕에서 읽히는 진하기까지 내린다 (위 설명 참고) */
+  --accent: #1d4ed8;
+  --accent-2: #0b7a5c;
+  --danger: #cf3339;
+  --warn: #a6780c;
+
+  --sunken: #e8eaf0;
+  --panel-float: rgba(255, 255, 255, 0.96);
+  --overlay: rgba(20, 24, 34, 0.08);
+  --marker-ring: rgba(255, 255, 255, 0.9);
+  /* 밝은 바탕에서 검정 그림자를 그대로 쓰면 때가 낀 것처럼 보인다 — 묽게, 그리고
+     완전한 검정이 아니라 바탕의 푸른기를 약간 섞는다 */
+  --shadow-soft: rgba(20, 24, 34, 0.1);
+  --shadow: rgba(20, 24, 34, 0.16);
+  --shadow-strong: rgba(20, 24, 34, 0.22);
+
+  --on-accent-2: #ffffff;
+  --text-accent: #1a44bd;
+  --text-warn: #8a6508;
+  --text-danger: #b32d33;
+  --text-danger-strong: #8f2024;
+  --star: #c8890a;
+  --text-hot: #c2500a;
 }
 
 * {
@@ -114,6 +252,9 @@ textarea {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   height: calc(100vh - 46px);
+  /* iOS 주소창이 접히고 펴지는 만큼을 반영한다 — 100vh 는 펼쳐진 높이로 고정이라
+     하단이 잘린다. dvh 를 모르는 브라우저는 위 줄을 그대로 쓴다. */
+  height: calc(100dvh - 46px);
   transition:
     grid-template-columns 180ms ease,
     grid-template-rows 180ms ease;
@@ -169,7 +310,7 @@ textarea {
   background: var(--panel);
   color: var(--muted);
   cursor: pointer;
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.35);
+  box-shadow: 2px 0 8px var(--shadow-soft);
   transition: left 180ms ease;
 }
 .sidebar-handle:hover {
@@ -219,10 +360,20 @@ textarea {
 }
 
 .search,
+/* `input:not([type])` — type 속성이 없는 칸(ArcadeForm 의 이름·주소)도 함께 잡는다.
+   예전에는 이 둘만 브라우저 기본 흰 칸으로 남아서 글자를 따로 검게 칠하는 규칙
+   (.input-on-light)이 있었는데, color-scheme 을 선언한 뒤로는 그 '기본 흰 칸' 자체가
+   테마를 따라 색이 바뀌므로 검은 글자가 어두운 칸 위에 얹히게 됩니다. 예외를 두는 대신
+   처음부터 같은 규칙에 넣습니다. */
+input:not([type]),
 input[type='text'],
 input[type='number'],
 input[type='time'],
 input[type='password'],
+/* 빠뜨리면 그 칸만 브라우저 기본 흰 바탕이 되고, 글자색은 body 에서 물려받은
+   밝은 회색이라 흰 바탕에 흰 글씨가 됩니다 (.input-on-light 주석과 같은 함정).
+   type 을 새로 쓸 때는 여기에 같이 적어야 합니다. */
+input[type='email'],
 select,
 textarea {
   width: 100%;
@@ -279,23 +430,105 @@ textarea:focus {
   color: #fff;
 }
 
+/* ══ 한 줄 스크롤 줄 (components/ScrollStrip.tsx) ══════════════
+   `.chips` · `.game-tabs` 처럼 이미 있는 줄에 **넘침 처리만** 덧입힙니다. 생김새는
+   그대로 두고 여기서는 줄바꿈을 막고, 넘치는 쪽에 화살표를 얹을 자리를 만듭니다.
+
+   .chips 보다 뒤에 있어야 합니다 — 같은 한 클래스끼리는 나중 것이 이기는데,
+   여기서 `.chips` 의 flex-wrap: wrap 을 덮어야 합니다. (사이드바 기종 필터만
+   이 줄을 쓰고, 커뮤니티 말머리·글쓰기 폼의 .chips 는 그대로 접힙니다.) */
+.scroll-strip {
+  /*
+    화살표가 비켜야 할 **아래 높이**. 줄 아래에 여백이나 경계선이 있으면 그만큼
+    빼야 화살표의 세로 가운데가 항목의 가운데와 맞습니다. 기본은 0 이고, 아래
+    여백이 있는 줄(.game-tabs-wrap)이 자기 값을 덮어씁니다.
+  */
+  --strip-pad: 0px;
+  position: relative;
+}
+.scroll-strip-track {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* 막대는 안 보이게 — 넘쳤다는 사실은 화살표가 알린다 */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* 구형 Edge/IE */
+}
+.scroll-strip-track::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+/* 줄이 하나뿐이므로 항목은 줄어들지도, 이름이 접히지도 않는다 */
+.scroll-strip-track > * {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* 넘치는 쪽에만 붙는다. 항목 위에 겹치므로(옆에 세우면 좁은 화면에서 줄이 그만큼
+   더 좁아진다) 뒤를 바탕색으로 덮어, 화살표 밑에서 글자가 반쯤 잘려 보이지 않게
+   한다 — 그래서 배경이 단색이 아니라 바탕색에서 투명으로 가는 띠다. */
+.scroll-strip-arrow {
+  position: absolute;
+  top: 0;
+  bottom: var(--strip-pad);
+  z-index: 1;
+  /* 글자를 세로 가운데로. 버튼의 기본 정렬에 맡기면 글꼴마다 조금씩 어긋난다. */
+  display: flex;
+  align-items: center;
+  width: 34px;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+.scroll-strip-arrow:hover {
+  color: var(--text);
+}
+.scroll-strip-arrow.is-left {
+  left: 0;
+  justify-content: flex-start;
+  background: linear-gradient(to right, var(--bg) 55%, transparent);
+}
+.scroll-strip-arrow.is-right {
+  right: 0;
+  justify-content: flex-end;
+  background: linear-gradient(to left, var(--bg) 55%, transparent);
+}
+/* 사이드바는 판(--panel) 위라 페이지 바탕이 아니라 판 색으로 덮어야 이어져 보인다 */
+.sidebar .scroll-strip-arrow.is-left {
+  background: linear-gradient(to right, var(--panel) 55%, transparent);
+}
+.sidebar .scroll-strip-arrow.is-right {
+  background: linear-gradient(to left, var(--panel) 55%, transparent);
+}
+
 /* ── 버튼 ───────────────────────────────────────────────── */
 .btn {
   padding: 7px 12px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
   background: var(--panel-2);
+  /*
+    링크로 만든 버튼(<a class="btn">)의 브라우저 기본 링크색을 여기서 지운다.
+    선택자가 아니라 **출처**로 이기는 것이라 `.btn` 한 클래스로 충분하다 — 작성자
+    스타일은 언제나 브라우저 기본 스타일을 이긴다. 예전에는 `a.btn` 에 흰색을 박아
+    지웠는데, 그 선택자가 `.btn-primary` 같은 변종보다 강해서 변종의 글자색을
+    가로채고(그래서 아래 OAuth 버튼들이 클래스를 둘씩 겹쳐야 했다) 다크를 전제한
+    흰색이라 라이트에서는 흰 버튼에 흰 글씨가 됐다.
+  */
+  color: inherit;
   cursor: pointer;
   white-space: nowrap;
 }
 /* 링크로 만든 버튼(네비의 로그인, 로그인 페이지의 취소·돌아가기).
-   <a> 는 밑줄과 브라우저 기본 링크색이 붙어 있어서, 손대지 않으면 바로 옆에
-   선 진짜 <button> 과 다른 물건으로 읽힙니다. */
+   <a> 는 밑줄과 줄 안에서의 배치가 <button> 과 달라서, 손대지 않으면 바로 옆에
+   선 진짜 <button> 과 다른 물건으로 읽힙니다. 글자색은 위 .btn 이 맡습니다 —
+   여기서 색을 정하면 .btn-primary 같은 변종을 가로챕니다. */
 a.btn {
   display: inline-flex;
   align-items: center;
   text-decoration: none;
-  color: #fff;
 }
 .btn:hover:not(:disabled) {
   border-color: var(--accent);
@@ -316,7 +549,7 @@ a.btn {
 .btn-on {
   background: var(--accent-2);
   border-color: var(--accent-2);
-  color: #06231b;
+  color: var(--on-accent-2);
 }
 .btn-danger {
   color: var(--danger);
@@ -387,7 +620,7 @@ a.btn {
 }
 .fav-btn.is-on {
   /* 담아 둔 곳은 한눈에 — 목록에서 별 하나만 보고 찾는다 */
-  color: #f5c451;
+  color: var(--star);
 }
 .fav-btn-lg {
   font-size: 19px;
@@ -447,8 +680,8 @@ a.btn {
   border-radius: 999px;
   font-size: 11px;
   white-space: nowrap;
-  background: rgba(109, 94, 252, 0.16);
-  color: #b9b1ff;
+  background: rgba(53, 110, 230, 0.16);
+  color: var(--text-accent);
 }
 .badge-etc {
   background: rgba(139, 147, 167, 0.16);
@@ -469,7 +702,7 @@ a.btn {
   background: var(--accent-2);
 }
 .cond-3 {
-  background: #e2b93b;
+  background: var(--warn);
 }
 .cond-2,
 .cond-1 {
@@ -502,13 +735,6 @@ a.btn {
   font-size: 12px;
   color: var(--muted);
 }
-/* 이름·주소 칸은 <input> 에 type 속성이 없어 위의 input[type='text'] 규칙에
-   걸리지 않습니다. 그래서 배경이 우리 어두운 판이 아니라 **브라우저 기본 흰색**
-   으로 남는데, 글자색은 body 에서 물려받은 밝은 회색(--text)이라 흰 바탕에
-   흰 글씨가 됩니다. 이 두 칸만 글자를 검게 둡니다. */
-.input-on-light {
-  color: #000;
-}
 
 .coord-row {
   display: flex;
@@ -537,7 +763,7 @@ a.btn {
   padding: 10px 12px 10px 28px;
   border-radius: var(--radius);
   background: rgba(242, 85, 90, 0.12);
-  color: #ffb4b6;
+  color: var(--text-danger);
   font-size: 12px;
 }
 /* 기본형 — 그냥 가로로 늘어선 버튼 줄. 뒤에 오는 내용을 밀어내며 자리를 차지한다. */
@@ -645,10 +871,10 @@ a.btn {
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 50%;
-  background: rgba(22, 26, 34, 0.95);
+  background: var(--panel-float);
   color: var(--muted);
   cursor: pointer;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 14px var(--shadow);
 }
 .locate-fab svg {
   width: 20px;
@@ -663,7 +889,7 @@ a.btn {
 .locate-fab.is-on {
   border-color: var(--accent-2);
   background: var(--accent-2);
-  color: #06231b;
+  color: var(--on-accent-2);
 }
 /* 첫 좌표를 기다리는 중. 실내에서는 몇 초 걸려서, 점멸이 없으면 눌렸는지 모릅니다 */
 .locate-fab.is-locating {
@@ -695,7 +921,7 @@ a.btn {
   padding: 10px 12px;
   border-radius: var(--radius);
   border: 1px solid var(--line);
-  background: rgba(22, 26, 34, 0.92);
+  background: var(--panel-float);
   color: var(--muted);
   font-size: 12px;
 }
@@ -712,7 +938,7 @@ a.btn {
   padding: 8px 14px;
   border-radius: 999px;
   background: var(--accent-2);
-  color: #06231b;
+  color: var(--on-accent-2);
   font-size: 12px;
   font-weight: 600;
 }
@@ -830,8 +1056,8 @@ a.btn {
 .mk-on {
   padding: 4px 9px 4px 6px;
   border: 1px solid var(--line);
-  background: rgba(22, 26, 34, 0.95);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  background: var(--panel-float);
+  box-shadow: 0 2px 10px var(--shadow);
   z-index: 8;
 }
 .mk:hover .mk-label,
@@ -852,7 +1078,7 @@ a.btn {
 .mk-pick {
   border-color: var(--accent-2);
   background: var(--accent-2);
-  color: #06231b;
+  color: var(--on-accent-2);
   z-index: 6;
 }
 
@@ -862,8 +1088,8 @@ a.btn {
 .mk-pick {
   padding: 4px 9px 4px 6px;
   border: 1px solid var(--line);
-  background: rgba(22, 26, 34, 0.95);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  background: var(--panel-float);
+  box-shadow: 0 2px 10px var(--shadow);
 }
 .mk-me .mk-label,
 .mk-pick .mk-label {
@@ -881,7 +1107,7 @@ a.btn {
 .mk:not(:hover):not(.mk-on):not(.mk-me):not(.mk-pick) .mk-dot {
   width: 9px;
   height: 9px;
-  box-shadow: 0 0 0 1.5px rgba(11, 13, 18, 0.85);
+  box-shadow: 0 0 0 1.5px var(--marker-ring);
 }
 .mk-on .mk-dot,
 .mk-pick .mk-dot {
@@ -890,7 +1116,7 @@ a.btn {
 .mk-count {
   padding: 0 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--overlay);
   font-size: 10px;
 }
 
@@ -899,12 +1125,16 @@ a.btn {
   display: grid;
   grid-template-columns: 1fr 380px;
   height: calc(100vh - 46px);
+  /* iOS 주소창이 접히고 펴지는 만큼을 반영한다 — 100vh 는 펼쳐진 높이로 고정이라
+     하단이 잘린다. dvh 를 모르는 브라우저는 위 줄을 그대로 쓴다. */
+  height: calc(100dvh - 46px);
 }
 .tier-main {
   display: flex;
   flex-direction: column;
   min-width: 0;
   overflow-y: auto;
+  padding-bottom: var(--histbar-space);
 }
 .tier-side {
   border-left: 1px solid var(--line);
@@ -941,14 +1171,17 @@ a.btn {
   gap: 8px;
   align-items: center;
 }
+/* 헤더는 좌우로 벌어지는 flex 이고(.tier-head) 좁아지면 이 줄이 아래로 접힌다.
+   그때 줄이 부모보다 넓어지지 않고 **안에서** 밀리도록 폭을 묶어 둔다 —
+   min-width: 0 이 없으면 내용 크기만큼 버티면서 헤더를 가로로 넘치게 한다. */
+.tier-head .scroll-strip {
+  min-width: 0;
+  max-width: 100%;
+}
+/* 이 줄은 판(--panel) 위가 아니라 페이지 바탕 위이므로 화살표 띠는 공용 기본값
+   (--bg)이 맞다. 사이드바만 판 색으로 덮는다 (위 .sidebar 규칙). */
 .tier-controls select {
   width: auto;
-}
-/* 여기서는 세그먼트가 셀렉트와 한 줄에 나란히 선다. 공용 .seg 의 아래 여백을
-   그대로 두면 그만큼 위로 밀려 옆 셀렉트와 중심선이 어긋난다.
-   (.feed-filters · .board-filters 도 같은 이유로 아래쪽에서 여백을 지운다) */
-.tier-controls .seg {
-  margin-bottom: 0;
 }
 
 .seg {
@@ -1013,14 +1246,18 @@ a.btn {
    순위는 TierBoardView 가 매깁니다 (rankClass). */
 .tier-r1 .tier-label { border-left-color: #ff4d6d; }
 .tier-r2 .tier-label { border-left-color: #ff8b3d; }
-.tier-r3 .tier-label { border-left-color: #e2b93b; }
+.tier-r3 .tier-label { border-left-color: var(--warn); }
 .tier-r4 .tier-label { border-left-color: #6ac46a; }
 .tier-r5 .tier-label { border-left-color: #35b6d6; }
 .tier-r6 .tier-label { border-left-color: #5a8cf0; }
 /* 파랑과 회색 사이 — 8단인 사볼에서만 쓰입니다(펌프는 7단이라 이 칸을 건너뜁니다).
-   개인차의 var(--accent) #6d5efc 와 헷갈리지 않게 채도를 낮춰 둡니다. */
+   채도를 낮춰 둔 것은 개인차(.tier-unique, var(--accent))와 헷갈리지 않게 하려는
+   것이었습니다.
+   ⚠ 그 전제가 약해졌습니다 — accent 가 보라에서 파랑(#356ee6)으로 바뀌면서, 이
+     칸과 바로 위 .tier-r6(#5a8cf0)이 개인차와 같은 계열이 됐습니다. 서열표에서
+     둘을 나란히 보고 구분이 어려우면 r6·r7 을 파랑에서 더 떼어 놓아야 합니다. */
 .tier-r7 .tier-label { border-left-color: #6b7bb8; }
-.tier-rlast .tier-label { border-left-color: #8b93a7; }
+.tier-rlast .tier-label { border-left-color: var(--muted); }
 .tier-unique    .tier-label { border-left-color: var(--accent); }
 /* 특수패턴 — 등급이 아니라 표시라서 개인차와 같은 계열로 두되 색을 구분한다 */
 .tier-special   .tier-label { border-left-color: var(--accent-2); }
@@ -1071,7 +1308,7 @@ a.btn {
   font-size: 10.5px;
   padding: 1px 5px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--overlay);
   font-variant-numeric: tabular-nums;
 }
 .clear-mark {
@@ -1084,6 +1321,13 @@ a.btn {
 
 .tier-foot {
   padding: 14px 20px 28px;
+}
+/* 등급이 비었을 때만 서는 한 문단. 아래 설명글과 붙지 않게 한 줄 띄우고, 부탁하는
+   말이라 주변 설명보다 조금 또렷하게 둔다 (muted 는 footer 에서 상속된다). */
+.tier-foot-empty {
+  margin: 0 0 10px;
+  color: var(--text);
+  line-height: 1.6;
 }
 
 /* ── 채보 상세 ──────────────────────────────────────────── */
@@ -1205,8 +1449,8 @@ a.btn {
   margin: 0;
   padding: 8px 10px;
   border-radius: var(--radius);
-  background: rgba(109, 94, 252, 0.12);
-  color: #b9b1ff;
+  background: rgba(53, 110, 230, 0.12);
+  color: var(--text-accent);
   font-size: 12px;
 }
 
@@ -1256,9 +1500,16 @@ a.btn {
     grid-template-columns: 1fr;
     grid-template-rows: 1fr auto;
   }
+  /* 이 폭에서는 두 칸이 위아래로 쌓인다 — 이동 막대와 겹치는 쪽이 .tier-main 에서
+     .tier-side 로 바뀌므로, 비워 두는 자리도 같이 옮긴다. 넓은 폭에서 .tier-side 는
+     오른쪽 칸이라 가운데 막대와 겹치지 않는다. */
+  .tier-main {
+    padding-bottom: 0;
+  }
   .tier-side {
     border-left: none;
     border-top: 1px solid var(--line);
+    padding-bottom: var(--histbar-space);
   }
 }
 
@@ -1266,7 +1517,8 @@ a.btn {
 .board-page {
   max-width: 900px;
   margin: 0 auto;
-  padding: 22px 20px 48px;
+  /* 아래 여백에 이동 막대 자리를 더한다 (--histbar-space) */
+  padding: 22px 20px calc(48px + var(--histbar-space));
 }
 .board-head {
   display: flex;
@@ -1282,38 +1534,45 @@ a.btn {
   margin: 4px 0 0;
 }
 
-/* ── 게임 탭 ────────────────────────────────────────────── */
+/* ── 게임 탭 ──────────────────────────────────────────────
+   한 줄 스크롤·화살표는 .scroll-strip 이 맡는다(위 공용 블록). 여기 남는 것은
+   이 줄만의 생김새 — 아래 여백과 경계선, 그리고 화살표를 탭 크기에 맞춰 키운 것. */
+.game-tabs-wrap {
+  /* 아래 여백을 한 곳에만 적는다 — 여백과 화살표가 따로 적히면 한쪽만 바뀌어
+     화살표가 탭보다 아래로 처진다. */
+  --tabs-pad: 10px;
+  /* 화살표는 여백에 경계선 1px 까지 비켜야 세로 가운데가 탭의 가운데와 맞고,
+     경계선도 끊기지 않는다. .scroll-strip 의 기본값 0 을 덮는다. */
+  --strip-pad: calc(var(--tabs-pad) + 1px);
+  margin: 16px 0 12px;
+}
 .game-tabs {
   display: flex;
-  flex-wrap: wrap;
   gap: 4px;
-  margin: 16px 0 12px;
-  padding-bottom: 10px;
+  padding-bottom: var(--tabs-pad);
   border-bottom: 1px solid var(--line);
 }
+/* 글 목록 위의 큰 줄이라 화살표도 그만큼 키운다 (사이드바 칩 줄은 공용 기본값). */
+.game-tabs-wrap .scroll-strip-arrow {
+  width: 44px;
+  font-size: 24px;
+}
 @media (max-width: 720px) {
-  /* 모바일 폭에서는 줄바꿈으로 높이가 늘어나는 대신 한 줄로 두고 옆으로
-     스크롤한다 — 탭이 많은 기종 목록이 세로 공간을 다 먹는 것을 막는다. */
-  .game-tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    /* 스크롤은 되지만 막대는 안 보이게 — 지원하는 브라우저별로 다 넣는다. */
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* 구형 Edge/IE */
-  }
-  .game-tabs::-webkit-scrollbar {
-    display: none; /* Chrome/Safari */
-  }
-  .game-tab {
-    flex: none;
-    white-space: nowrap;
+  /* 터치는 손가락으로 밀어 넘기므로 여기서 화살표는 조작 수단이라기보다 '옆에 더
+     있다' 는 표시다. 좁은 폭에서 크게 두면 가려지는 탭만 늘어난다. */
+  .game-tabs-wrap .scroll-strip-arrow {
+    width: 30px;
+    font-size: 17px;
   }
 }
+
 .game-tab {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
+  /* 줄이 한 줄뿐이므로 탭은 절대 줄어들지 않고 이름도 접히지 않는다 */
+  flex: none;
+  white-space: nowrap;
   padding: 6px 12px;
   border: 1px solid transparent;
   border-radius: 999px;
@@ -1344,10 +1603,20 @@ a.btn {
    같은 자리에서 시작해야 어긋나 보이지 않는다. */
 .board-filters {
   display: flex;
-  flex-wrap: wrap;
+  /* 접지 않는다 — 말머리 칩 줄이 스크롤 줄이라(components/ScrollStrip.tsx) 좁아지면
+     접히는 대신 옆으로 밀린다. 접게 두면 칩이 아니라 이 줄 전체가 두 줄이 되어
+     정렬 버튼이 아래로 떨어진다. */
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   margin: 14px 0 16px;
+}
+/* 밀리는 것은 칩 줄뿐이고 정렬 버튼(.board-sort)은 줄 끝에 남는다.
+   min-width: 0 이 없으면 flex 아이템의 기본 최소 폭이 '내용 크기' 라서 줄이
+   줄어들지 않고 정렬 버튼을 화면 밖으로 밀어낸다. */
+.board-filters .scroll-strip {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ── 목록 검색창 (/live 제보 피드 · 커뮤니티 공용) ─────────
@@ -1483,16 +1752,16 @@ a.btn {
   color: var(--accent-2);
 }
 .cat-info {
-  background: rgba(109, 94, 252, 0.16);
-  color: #b9b1ff;
+  background: rgba(53, 110, 230, 0.16);
+  color: var(--text-accent);
 }
 .cat-ask {
   background: rgba(226, 185, 59, 0.16);
-  color: #f0cf6a;
+  color: var(--text-warn);
 }
 .cat-contest {
   background: rgba(242, 85, 90, 0.14);
-  color: #ffb4b6;
+  color: var(--text-danger);
 }
 /* 공지는 다른 말머리와 축이 다르다 (관리자 글 · 목록 고정) — 유일하게 채운 칩 */
 .cat-notice {
@@ -1532,6 +1801,54 @@ a.btn {
   margin: 10px 0;
   border-radius: 2px;
   background: var(--line);
+}
+/* ── 목록 썸네일 ────────────────────────────────────────────
+   글자 칸과 썸네일 칸. 첨부가 없는 글은 썸네일 요소 자체가 없어서 글자가 폭을 다
+   쓴다 — 빈 자리를 남겨 두면 첨부 없는 글이 대부분인 게시판에서 오른쪽이 통째로
+   비어 보인다 (components/PostList.tsx). */
+.post-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+/* min-width: 0 이 없으면 제목의 말줄임(.post-row-head h3)이 먹지 않는다 — flex
+   아이템의 기본 최소 폭이 '내용 크기' 라서, 긴 제목이 줄어드는 대신 썸네일을
+   오른쪽으로 밀어낸다. */
+.post-row-body {
+  flex: 1;
+  min-width: 0;
+}
+/*
+  가로세로를 고정한다. 비율대로 두면 세로로 긴 사진 한 장이 그 줄만 두 배 높이로
+  키워서, 목록을 훑는 눈이 줄마다 걸린다.
+
+  ⚠ 이 값은 lib/board-types.ts 의 THUMBNAIL_SIZE 와 짝이다 — 그쪽은 next/image 에
+    주는 원본 크기 힌트(어느 크기로 줄여 받을지)이고 여기는 실제로 그리는 크기다.
+    한쪽만 바꾸면 화면에 그리는 크기보다 크거나 작은 파일을 받아 온다.
+*/
+.post-thumb {
+  flex: none;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  object-fit: cover;
+  /* 로드 전/깨졌을 때 빈 구멍이 아니라 판으로 보이게 */
+  background: var(--panel-2);
+}
+/* 동영상은 파일을 받지 않고 재생 표시만 둔다 (PostList.tsx 의 PostThumb 주석) */
+.post-thumb-video {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 18px;
+}
+@media (max-width: 720px) {
+  /* 좁은 화면에서는 제목이 한 줄에 담기는 쪽이 우선이다 */
+  .post-thumb {
+    width: 56px;
+    height: 56px;
+  }
 }
 .post-row-head {
   display: flex;
@@ -1587,6 +1904,51 @@ a.btn {
 .post-detail-head p {
   margin: 6px 0 0;
 }
+
+/* ── 아직 안 온 자리 (본문 · 댓글) ────────────────────────────
+   상세는 목록이 준 요약으로 **먼저** 그려지고(components/PostDetailView.tsx
+   shellOf), 서버에서 와야 아는 것만 이 상자로 남는다. 스피너 하나로 화면 전체를
+   가리지 않는 이유: 제목·글쓴이·추천 수는 이미 알고 있고, 그걸 감추면 사용자는
+   자기가 누른 글이 열린 것인지조차 알 수 없다.
+
+   높이를 미리 잡아 두는 것이 핵심이다 — 상자가 없으면 본문이 도착하는 순간
+   아래 내용(추천 버튼 · 댓글)이 밀려 내려가면서 화면이 한 번 튄다. */
+.post-skeleton {
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.post-skeleton span {
+  height: 12px;
+  border-radius: 4px;
+  background: var(--line);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+/* 마지막 줄만 짧게 — 문단의 끝처럼 보여야 '글자가 올 자리' 로 읽힌다 */
+.post-skeleton span:last-child {
+  width: 62%;
+}
+.post-skeleton span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.post-skeleton span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .post-skeleton span {
+    animation: none;
+  }
+}
 .post-body {
   padding: 16px 0;
   font-size: 13.5px;
@@ -1605,7 +1967,7 @@ a.btn {
   margin: 10px 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #0b0d12;
+  background: var(--sunken);
 }
 
 /* ── 서식 있는 본문 (읽기 · 편집 공용) ─────────────────────── */
@@ -1716,7 +2078,7 @@ a.btn {
 }
 /* 편집 중 선택된 칸 · 열 너비 손잡이 */
 .rt-content .selectedCell {
-  background: rgba(109, 94, 252, 0.18);
+  background: rgba(53, 110, 230, 0.18);
 }
 .rt-content .column-resize-handle {
   position: absolute;
@@ -1772,7 +2134,7 @@ a.btn {
   aspect-ratio: 16 / 9;
   border: 0;
   border-radius: var(--radius);
-  background: #0b0d12;
+  background: var(--sunken);
 }
 
 /* ── 편집기 (Tiptap) ───────────────────────────────────────── */
@@ -1873,7 +2235,7 @@ a.btn {
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 .rt-swatch {
   width: 20px;
@@ -1931,7 +2293,7 @@ a.btn {
   margin: 10px 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #0b0d12;
+  background: var(--sunken);
 }
 /* 이미지·영상처럼 통째로 선택되는 노드 */
 .rt-content .ProseMirror-selectednode {
@@ -2072,7 +2434,7 @@ a.btn {
   margin: 8px 0;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #0b0d12;
+  background: var(--sunken);
   cursor: grab;
 }
 .editor-area img:active {
@@ -2122,7 +2484,7 @@ a.btn {
     padding: 8px;
     border-bottom: 1px solid var(--line);
     background: var(--panel);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+    box-shadow: 0 12px 30px var(--shadow);
   }
   .topnav-links.is-open {
     display: flex;
@@ -2168,6 +2530,37 @@ a.btn {
   align-items: center;
   gap: 10px;
 }
+
+/* 색 테마 전환 (components/ThemeToggle.tsx). 네비의 다른 것들과 달리 글자가 아니라
+   기호 하나뿐이라, 눌리는 자리가 어디까지인지 보이도록 정사각으로 잡는다. */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+.theme-toggle:hover {
+  border-color: var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+}
+@media (max-width: 720px) {
+  /* 드로어에서는 이 줄이 폭을 다 쓰므로(.topnav-right 가 세로로 쌓인다) 기호 하나가
+     가운데 덩그러니 놓이지 않게 왼쪽에 붙인다 — 옆의 플레이어 칸과 줄이 맞는다. */
+  .theme-toggle {
+    align-self: flex-start;
+  }
+}
 .player-picker {
   display: flex;
   align-items: center;
@@ -2198,8 +2591,8 @@ a.btn {
 .admin-tag {
   padding: 1px 6px;
   border-radius: 999px;
-  background: rgba(109, 94, 252, 0.2);
-  color: #b9b1ff;
+  background: rgba(53, 110, 230, 0.2);
+  color: var(--text-accent);
   font-style: normal;
   font-size: 11px;
   font-weight: 700;
@@ -2213,7 +2606,9 @@ a.btn {
   align-items: center;
   justify-content: center;
   min-height: calc(100vh - 46px);
-  padding: 24px 16px;
+  min-height: calc(100dvh - 46px);
+  /* 카드가 가운데 정렬이라, 아래만 비우면 그만큼 위로 올라간다 — 막대와 겹치지 않는다 */
+  padding: 24px 16px calc(24px + var(--histbar-space));
 }
 .login-card {
   width: 100%;
@@ -2302,10 +2697,13 @@ a.btn {
 }
 
 /*
- * 클래스를 겹쳐 쓰는 이유: a.btn 이 color: #fff 를 걸어 두는데(링크 기본색을
- * 지우려고), 그 선택자가 클래스 하나짜리보다 강해서 흰 배경에 흰 글씨가 된다.
- * .btn.btn-oauth-* 로 클래스를 둘 겹치면 그보다 앞선다.
- * 카카오·네이버 아이콘은 currentColor 라서 글자색이 곧 로고색이기도 하다.
+ * 클래스를 겹쳐 쓰는(.btn.btn-oauth-*) 이유는 이제 없습니다 — a.btn 이 글자색을
+ * 가로채던 문제가 .btn 의 `color: inherit` 으로 사라졌습니다. 그대로 두는 것은
+ * 지금 모양이 맞기 때문이고, 한 클래스로 줄여도 동작은 같습니다.
+ *
+ * 아래 색들은 각 서비스의 브랜드 색이라 **테마를 따라 바뀌면 안 됩니다.** 라이트/다크
+ * 어느 쪽에서도 같은 값이어야 사용자가 아는 그 버튼으로 보입니다.
+ * 카카오·네이버 아이콘은 currentColor 라서 글자색이 곧 로고색이기도 합니다.
  */
 .btn.btn-oauth-google {
   background: #fff;
@@ -2339,7 +2737,7 @@ a.btn {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-2);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 12px 30px var(--shadow);
 }
 .auth-pop .form-actions {
   margin: 0;
@@ -2536,15 +2934,15 @@ a.btn {
 }
 .wait-mid {
   background: rgba(226, 185, 59, 0.16);
-  color: #f0cf6a;
+  color: var(--text-warn);
 }
 .wait-high {
   background: rgba(242, 85, 90, 0.14);
-  color: #ffb4b6;
+  color: var(--text-danger);
 }
 .wait-full {
   background: rgba(242, 85, 90, 0.24);
-  color: #ffd0d1;
+  color: var(--text-danger-strong);
 }
 
 .cond-live {
@@ -2568,12 +2966,12 @@ a.btn {
 }
 .cond-live.cond-3 {
   border-color: rgba(226, 185, 59, 0.5);
-  color: #f0cf6a;
+  color: var(--text-warn);
 }
 .cond-live.cond-2,
 .cond-live.cond-1 {
   border-color: rgba(242, 85, 90, 0.5);
-  color: #ffb4b6;
+  color: var(--text-danger);
 }
 
 /* 목록 행의 대기 요약 */
@@ -2597,7 +2995,7 @@ a.btn {
 .feed-page {
   max-width: 900px;
   margin: 0 auto;
-  padding: 22px 20px 40px;
+  padding: 22px 20px calc(40px + var(--histbar-space));
 }
 .feed-head {
   display: flex;
@@ -2670,7 +3068,7 @@ a.btn {
   border-color: var(--accent);
 }
 .feed-machine {
-  color: #b9b1ff;
+  color: var(--text-accent);
   font-size: 12px;
 }
 /* 기종 이름에 붙는 '2호기' — 기종보다 한 단계 약하게 */
@@ -2702,12 +3100,12 @@ a.btn {
   color: var(--muted);
 }
 .kind-queue {
-  background: rgba(109, 94, 252, 0.16);
-  color: #b9b1ff;
+  background: rgba(53, 110, 230, 0.16);
+  color: var(--text-accent);
 }
 .kind-condition {
   background: rgba(226, 185, 59, 0.14);
-  color: #f0cf6a;
+  color: var(--text-warn);
 }
 .kind-presence {
   background: rgba(34, 211, 166, 0.14);
@@ -2715,7 +3113,7 @@ a.btn {
 }
 .kind-absence {
   background: rgba(242, 85, 90, 0.14);
-  color: #ffb4b6;
+  color: var(--text-danger);
 }
 
 /* ── 별점 ───────────────────────────────────────────────── */
@@ -2730,7 +3128,7 @@ a.btn {
   font-style: normal;
 }
 .star.is-on {
-  color: #f0cf6a;
+  color: var(--text-warn);
 }
 .stars.is-input .star {
   padding: 0 1px;
@@ -2809,6 +3207,13 @@ a.btn {
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 4px;
+}
+/* 평가 폼의 태그 줄은 ScrollStrip 안에 있어 접지 않는다.
+   `.scroll-strip-track` 의 nowrap 이 이 규칙보다 **위에** 있어서(명시도가 같다)
+   그냥 두면 위의 wrap 이 이긴다 — 사이드바 칩 줄(.chips)은 반대로 위에 있어
+   덧붙일 것이 없었다. */
+.scroll-strip-track.tag-row {
+  flex-wrap: nowrap;
 }
 .tag {
   padding: 1px 7px;
@@ -2991,8 +3396,8 @@ a.btn {
 .mk-ranked {
   padding: 4px 9px 4px 6px;
   border: 1px solid var(--accent);
-  background: rgba(22, 26, 34, 0.95);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  background: var(--panel-float);
+  box-shadow: 0 2px 10px var(--shadow);
   z-index: 7;
 }
 .mk-rank {
@@ -3030,7 +3435,7 @@ a.btn {
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 6px 20px var(--shadow);
 }
 .chat-fab:hover {
   filter: brightness(1.1);
@@ -3053,10 +3458,11 @@ a.btn {
   max-width: calc(100vw - 40px);
   height: 520px;
   max-height: calc(100vh - 140px);
+  max-height: calc(100dvh - 140px);
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--panel);
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 16px 44px var(--shadow-strong);
   overflow: hidden;
 }
 .chat-head {
@@ -3105,7 +3511,7 @@ a.btn {
 .chat-bubble.is-failed {
   background: rgba(242, 85, 90, 0.14);
   border: 1px solid var(--danger);
-  color: #ffb4b6;
+  color: var(--text-danger);
 }
 
 .chat-typing {
@@ -3239,7 +3645,7 @@ a.btn {
 }
 .warn {
   margin: 0;
-  color: #ffb4b6;
+  color: var(--text-danger);
   font-size: 12px;
 }
 
@@ -3315,7 +3721,7 @@ a.btn {
     border: 1px solid var(--line);
     border-top: none;
     border-radius: 0 0 8px 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 2px 8px var(--shadow-soft);
     transition: top 180ms ease;
   }
   .sidebar-handle svg {
@@ -3340,7 +3746,7 @@ a.btn {
   backdrop-filter: blur(6px);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 24px var(--shadow-soft);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -3358,7 +3764,7 @@ a.btn {
 }
 /* 컬링을 끈 상태는 "지금 일부러 느리게 두고 있다" 는 뜻이라 눈에 띄어야 합니다 */
 .perf-mode-off {
-  color: #ff9d5c;
+  color: var(--text-hot);
 }
 .perf-now {
   display: grid;
@@ -3440,4 +3846,1091 @@ a.btn {
     width: 210px;
     font-size: 11px;
   }
+}
+
+
+/* ── 법적 고지 (이용약관 · 개인정보처리방침) ─────────────── */
+.topnav-legal {
+  display: flex;
+  gap: 10px;
+  margin-left: 8px;
+  font-size: 11px;
+}
+.topnav-legal a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.topnav-legal a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.legal-page {
+  display: flex;
+  justify-content: center;
+  padding: 24px 16px 48px;
+}
+.legal {
+  width: 100%;
+  max-width: 720px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  line-height: 1.7;
+}
+.legal h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+.legal h2 {
+  margin: 24px 0 8px;
+  font-size: 15px;
+  color: var(--accent-2);
+}
+.legal p,
+.legal ul {
+  margin: 0 0 10px;
+}
+.legal ul {
+  padding-left: 20px;
+}
+.legal table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 8px 0 12px;
+}
+.legal th,
+.legal td {
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.legal th {
+  background: var(--panel-2);
+}
+.legal a {
+  color: var(--accent-2);
+}
+.legal code {
+  font-size: 12px;
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.legal-links {
+  margin-top: 28px;
+  color: var(--muted);
+}
+.consent {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.consent input {
+  margin-top: 3px;
+  flex: none;
+}
+.consent a {
+  color: var(--accent-2);
+}
+/* /account 아래쪽 구역 — 탈퇴(.danger-zone)와 같은 모양이되 경고색이 아니다.
+   "다른 기기에서 로그아웃" 은 되돌릴 수 없는 일이 아니라 잠그는 쪽 동작이다. */
+.account-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+}
+.account-section h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--fg);
+}
+.danger-zone {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+}
+.danger-zone h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--danger);
+}
+.btn-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn-danger:hover:not(:disabled) {
+  background: rgba(242, 85, 90, 0.12);
+}
+
+/* ── 관리자 페이지 (/admin/emoticons) ──────────────────────
+   /account 의 login-card 보다 넓은 한 장짜리 화면. 표는 좁은 화면에서 가로 스크롤 —
+   미리보기·이름·동작 열을 줄바꿈으로 겹치게 두는 것보다 낫다. */
+.admin-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.admin-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.admin-head h1 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+.admin-head .eyebrow {
+  margin: 0 0 2px;
+  letter-spacing: 0.08em;
+}
+.admin-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 16px;
+}
+.admin-card h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+.emoticon-upload-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+.emoticon-upload-row input[type='text'] {
+  flex: 1 1 180px;
+}
+.admin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.admin-toolbar .seg {
+  margin-bottom: 0;
+}
+.admin-search {
+  display: flex;
+  gap: 6px;
+  flex: 1 1 200px;
+}
+.admin-search input {
+  flex: 1;
+  min-width: 0;
+}
+.admin-count {
+  margin-left: auto;
+}
+.admin-table-wrap {
+  overflow-x: auto;
+}
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.admin-table th,
+.admin-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.admin-table th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 12px;
+}
+.admin-table tr.is-gone td {
+  opacity: 0.55;
+}
+.admin-table tr.is-gone td.admin-actions {
+  opacity: 1;
+}
+.admin-thumb {
+  display: block;
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.admin-id {
+  font-weight: 400;
+}
+.admin-inline-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.admin-inline-form input {
+  width: 160px;
+}
+.admin-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(70, 200, 120, 0.15);
+  color: #3fb26a;
+  font-size: 12px;
+}
+.admin-badge.is-gone {
+  background: rgba(242, 85, 90, 0.12);
+  color: var(--danger);
+}
+.admin-actions {
+  text-align: right;
+}
+.admin-actions .btn + .btn {
+  margin-left: 6px;
+}
+.account-admin h2 {
+  color: var(--accent);
+}
+@media (max-width: 600px) {
+  .admin-head {
+    flex-direction: column;
+  }
+}
+
+
+/* ── 설치형 웹앱(PWA) ─────────────────────────────────────── */
+/* 홈 화면 앱으로 열리면 상단 네비가 상태바 뒤로 들어간다 — 노치만큼 내린다 */
+@media (display-mode: standalone) {
+  .topnav {
+    padding-top: env(safe-area-inset-top);
+    height: calc(46px + env(safe-area-inset-top));
+  }
+  .layout,
+  .login-page {
+    min-height: calc(100vh - 46px - env(safe-area-inset-top));
+    min-height: calc(100dvh - 46px - env(safe-area-inset-top));
+  }
+}
+.pwa-banner {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+}
+.pwa-banner-icon {
+  font-size: 20px;
+  flex: none;
+}
+.pwa-banner-text {
+  flex: 1;
+  line-height: 1.4;
+}
+.pwa-banner-close {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.pwa-banner-close:hover {
+  color: var(--text);
+}
+@media (min-width: 720px) {
+  .pwa-banner {
+    left: auto;
+    max-width: 420px;
+  }
+}
+
+
+/* ── 목록이 비었을 때 (ArcadeList emptyMessage / ArcadeFinder listEmptyState) ──
+   왜 비었는지와 다음에 할 일이 함께 들어오므로 문단 + 버튼의 간격을 잡아 준다. */
+.list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.list-empty p {
+  margin: 0;
+}
+.list-empty strong {
+  color: var(--text);
+}
+
+
+/* ── 손가락으로 누르는 화면 (2026-09-13 UX 점검) ────────────────────────
+   실제 375px 기기에서 재 보니 **탭 가능한 요소 78개가 높이 40px 미만**이었고,
+   기종 칩은 28px, 햄버거는 32px 이었다. WCAG 2.5.8 의 최소가 24px, 애플·구글
+   권고가 44px 이다. 마우스로는 28px 이 충분하므로 포인터가 '거친'(손가락) 기기
+   에서만 키운다 — 데스크톱의 밀도를 그대로 두려는 것이다. */
+@media (pointer: coarse) {
+  .chip,
+  .btn-sm,
+  .page-btn,
+  .seg button {
+    min-height: 40px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  .chip {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .fav-btn {
+    min-width: 40px;
+    min-height: 40px;
+    font-size: 18px;
+  }
+  .topnav-burger {
+    width: 40px;
+    height: 40px;
+  }
+  /*
+     손잡이는 얇은 띠가 디자인이다. 예전에는 min-height: 44px 로 눌릴 높이를 만들었는데,
+     모바일에서 손잡이가 가로로 눕기 때문에(20px 높이 → 44px) 지도 위에 64×44 검은
+     덩어리가 걸렸다. 보이는 띠는 그대로 두고 **누를 수 있는 범위만** 투명하게 넓힌다 —
+     아래 지도 마커(.mk)에 쓴 것과 같은 방법이다.
+
+     사방 12px 이라 좁은 쪽이 어느 방향이든 20 + 24 = 44px 가 된다
+     (가로 손잡이는 높이가, 세로 손잡이는 폭이 좁은 쪽이다 — 예전 min-height 는
+     세로 손잡이의 20px 폭에는 아무 효과가 없었다).
+
+     .sidebar-handle 이 position: absolute 라 이 가상요소의 기준 상자가 이미 된다 —
+     position 을 여기서 다시 주면 손잡이 위치가 틀어진다.
+  */
+  .sidebar-handle::after {
+    content: '';
+    position: absolute;
+    inset: -12px;
+  }
+  .sidebar select,
+  .sidebar input[type='text'],
+  .sidebar input:not([type]) {
+    min-height: 40px;
+  }
+  /*
+     지도 마커는 점 하나가 7px 이다 (500개가 깔리는 화면이라 점이 커지면 얼룩이 된다).
+     보이는 크기는 그대로 두고 **누를 수 있는 범위만** 투명하게 넓힌다 — 손가락으로
+     찍는 기기에서만. 실제 측정에서 마커의 탭 높이가 9px 이었다.
+  */
+  .mk {
+    position: relative;
+  }
+  .mk::after {
+    content: '';
+    position: absolute;
+    inset: -14px;
+  }
+  .topnav-legal a {
+    display: inline-block;
+    padding: 8px 0;
+  }
+}
+
+/* ── 챗봇 버튼이 상세 패널을 가리지 않게 ────────────────────────────────
+   모바일(세로 스택)에서는 상세가 화면 아래 절반을 차지하는데, 고정된 챗봇 버튼이
+   그 위에 겹쳐 제보·리뷰 영역을 덮고 있었다. 상세가 열려 있는 동안에는 버튼을
+   숨긴다 — 그 화면에서 할 일은 제보이지 챗봇이 아니고, 닫으면 바로 돌아온다. */
+@media (max-width: 860px) {
+  .layout.has-detail .chat-fab {
+    display: none;
+  }
+}
+
+/* 안전 영역(노치·홈 인디케이터) 만큼 띄운다 — 설치형 앱에서 특히 */
+.chat-fab,
+.locate-fab {
+  margin-bottom: env(safe-area-inset-bottom);
+}
+
+/* ── 챗봇 로그인 안내 (ChatBot chat-gate) ──────────────────────────────
+   입력창 바로 위 — 다 쓰고 보낸 뒤가 아니라 쓰기 전에 보여야 한다. */
+.chat-gate {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.chat-gate a {
+  color: var(--accent-2);
+}
+.chat-gate strong {
+  color: var(--text);
+}
+
+/* 목록 카드의 외부 링크 · 상세의 영업시간 줄 */
+.ext-link {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.ext-link a {
+  color: var(--accent-2);
+}
+.detail-facts {
+  margin-top: 2px;
+}
+.detail-facts a {
+  color: var(--accent-2);
+}
+
+
+/* ── 목록 줄의 제목 버튼 (접근성 P1) ────────────────────────────────────
+   보이는 것은 제목 그대로, 실제로는 키보드로 갈 수 있는 버튼이다. 줄 전체를
+   <button> 으로 감싸면 안쪽의 즐겨찾기·수정 버튼이 중첩되므로 제목만 버튼이다. */
+.row-title {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.row-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ─── 홈 (app/page.tsx) ──────────────────────────────────────
+   파인더는 화면을 꽉 채우는 3단이라 스크롤이 없지만, 홈은 읽고 내려가는 화면이라
+   규칙이 다릅니다. 파인더 쪽 레이아웃 변수를 쓰지 않고 여기서 따로 잡습니다.
+   ─────────────────────────────────────────────────────────── */
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding-bottom: 56px;
+}
+
+/* 배너는 화면 폭을 꽉 쓰고, 그 아래 내용만 가운데로 모은다 */
+.home-body,
+.home-news-empty {
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+  padding-inline: 16px;
+}
+.home-news-empty {
+  padding-block: 32px 0;
+}
+.home-news-empty h1 {
+  font-size: 20px;
+  margin: 0 0 8px;
+}
+
+/* ── 소식 배너 ──────────────────────────────────────────────
+   넘기는 동작은 scroll-snap 에 맡깁니다 (components/NewsHero.tsx 주석 참고).
+   손으로 만든 드래그보다 폰의 관성 스크롤·키보드·스크린리더가 그대로 삽니다. */
+.news-hero {
+  position: relative;
+  /* 참고한 배너처럼 가로로 넓고 낮게. vw 를 섞어 좁은 화면에서 너무 높아지지 않게 한다 */
+  height: clamp(220px, 26vw, 320px);
+}
+.news-hero-track {
+  display: flex;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  /* 스크롤 막대를 숨긴다 — 배경 사진 위에 회색 줄이 걸리면 지저분하다 */
+  scrollbar-width: none;
+}
+.news-hero-track::-webkit-scrollbar {
+  display: none;
+}
+.news-hero-slide {
+  flex: 0 0 100%;
+  height: 100%;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: center;
+  /* background 는 인라인 style 로 온다 (글마다 사진/색이 다르다) */
+}
+.news-hero-body {
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+  padding-inline: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* 배경이 어두우므로 글자는 항상 밝은 쪽. 테마가 바뀌어도 이 규칙은 그대로다 */
+  color: #f2f5fa;
+}
+.news-hero-kicker {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0;
+}
+.news-hero-title {
+  margin: 0;
+  font-size: clamp(22px, 3.4vw, 34px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  text-wrap: balance;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+.news-hero-title a {
+  color: inherit;
+  text-decoration: none;
+}
+.news-hero-title a:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.news-hero-title a:focus-visible {
+  outline: 2px solid #f2f5fa;
+  outline-offset: 4px;
+}
+.news-hero-excerpt {
+  margin: 0;
+  max-width: 54ch;
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(242, 245, 250, 0.82);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+  /* 두 줄까지 — 배너 높이가 고정이라 넘치면 글자가 잘린다 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 화살표 — 마우스에만 보입니다 (components/NewsHero.tsx 주석 참고).
+   손가락은 밀면 그만이고, 좁은 화면에서 제목 위에 단추가 겹치면 읽기만 나빠집니다. */
+.news-hero-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(242, 245, 250, 0.28);
+  border-radius: 50%;
+  background: rgba(10, 14, 22, 0.35);
+  color: #f2f5fa;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.news-hero-arrow.is-prev {
+  left: 16px;
+}
+.news-hero-arrow.is-next {
+  right: 16px;
+}
+.news-hero-arrow:hover {
+  background: rgba(10, 14, 22, 0.62);
+  border-color: rgba(242, 245, 250, 0.55);
+}
+.news-hero-arrow:focus-visible {
+  outline: 2px solid #f2f5fa;
+  outline-offset: 3px;
+}
+@media (pointer: fine) {
+  .news-hero-arrow {
+    display: flex;
+  }
+}
+
+/* 참고한 배너의 짧은 막대 표시 */
+.news-hero-dots {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 18px;
+  width: 100%;
+  max-width: 940px;
+  padding-inline: 24px;
+  display: flex;
+  gap: 8px;
+}
+.news-hero-dots button {
+  width: 34px;
+  height: 3px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: rgba(242, 245, 250, 0.32);
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+.news-hero-dots button.is-on {
+  background: #f2f5fa;
+}
+/* 막대가 3px 이라 손가락으로 못 누른다 — 보이는 크기는 두고 누를 범위만 넓힌다
+   (지도 마커 .mk 와 같은 방법) */
+@media (pointer: coarse) {
+  .news-hero-dots button {
+    position: relative;
+  }
+  .news-hero-dots button::after {
+    content: '';
+    position: absolute;
+    inset: -14px -4px;
+  }
+}
+.news-hero-dots button:focus-visible {
+  outline: 2px solid #f2f5fa;
+  outline-offset: 4px;
+}
+
+/* ── 바로 가기 카드 ─────────────────────────────────────────
+   상단 네비와 같은 목적지를, 처음 온 사람이 설명과 함께 고를 수 있게 폅니다. */
+.home-sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.home-sec-head h2 {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+.home-more {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--text-accent);
+  text-decoration: none;
+}
+.home-more:hover {
+  text-decoration: underline;
+}
+
+.home-cards {
+  display: grid;
+  /*
+     auto-fit 은 빈 트랙을 접고 남은 트랙이 1fr 로 폭을 나눠 가집니다. 그래서 카드가
+     넷이면 넓은 화면에서 4열, 네 장이 최소폭으로도 안 들어가는 폭에서는 2열이 됩니다.
+     최소폭을 150px 로 둔 이유가 이것입니다 — 190px 이면 폰(375px)에서 1열로 떨어져
+     5:4 비주얼이 통째로 세로로 쌓이면서 화면이 한없이 길어집니다.
+  */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+/* 세로형 카드 — 위는 비주얼, 아래는 어두운 띠에 이름과 한 줄 설명.
+   테두리를 두르지 않고 **모서리를 둥글려 잘라내는** 한 덩어리로 둡니다. */
+.home-card {
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel);
+  text-decoration: none;
+  color: inherit;
+  box-shadow: 0 1px 2px var(--shadow-soft);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.home-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px var(--shadow);
+}
+.home-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.home-card-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 참고한 카드처럼 비주얼이 카드의 대부분을 차지한다 */
+  aspect-ratio: 5 / 4;
+  /* 배경은 인라인 style 로 온다 (목적지마다 다르다) */
+  color: rgba(242, 245, 250, 0.5);
+}
+.home-card:hover .home-card-visual {
+  color: rgba(242, 245, 250, 0.78);
+}
+
+.home-card-cap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 13px 13px;
+  /*
+     공용 --panel-2 가 아니라 전용 --card-cap 입니다 (정의는 테마 토큰 세 곳).
+
+     카드에 테두리를 두지 않아(위 .home-card 주석) 이 띠가 곧 카드 경계입니다.
+     처음엔 --sunken 이었는데, 그 값이 두 테마에서 반대로 놓여 있었습니다 —
+     라이트 #e8eaf0 은 배경(#f5f6f8)보다 어두워 띠로 읽히지만, 다크 #0b0d12 는
+     배경(#0e1015)보다 **더 어두워** 묻혔습니다.
+
+     --panel-2 로 옮겨 양쪽 다 보이게 한 뒤, 대비를 한 단 더 벌린 값입니다.
+     다크는 더 밝게(#2a3242), 라이트는 더 어둡게(#e0e4ec) — 어느 쪽이든 카드
+     배경에서 **멀어지는** 방향입니다. --panel-2 를 직접 건드리지 않는 이유는
+     그 토큰을 이 파일에서 40곳 넘게 쓰기 때문입니다.
+  */
+  background: var(--card-cap);
+}
+.home-card-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+/* 제목 앞의 작은 표식 — 참고한 카드의 점 */
+.home-card-label::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--accent);
+  flex: none;
+}
+.home-card-desc {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  /* 두 줄로 묶어 둔다 — 한 장만 세 줄이 되면 그 카드만 키가 커서 줄이 들쭉날쭉해진다 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: calc(2 * 1.45em);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-card,
+  .news-hero-dots button,
+  .news-hero-arrow {
+    transition: none;
+  }
+  .home-card:hover {
+    transform: none;
+  }
+  .news-hero-track {
+    scroll-behavior: auto;
+  }
+}
+
+/* 브랜드가 링크가 되었으므로 밑줄을 끊는다 (span 이던 시절엔 없던 규칙) */
+.topnav-brand {
+  text-decoration: none;
+}
+
+/* 화면에서는 감추고 스크린리더에는 읽히는 글 — 캐러셀처럼 시각적으로는 자명하지만
+   구조상 제목이 있어야 하는 자리에 씁니다 (components/NewsHero.tsx). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+/* ══ 이동 막대 (화면 아래 가운데) ═════════════════════════
+   components/HistoryBar.tsx — 뒤로 · 앞으로 · 새로고침.
+
+   왼쪽 아래(.locate-fab)와 오른쪽 아래(.chat-fab)가 이미 차 있어서 가운데에
+   둡니다. 좁은 폭에서도 셋이 겹치지 않습니다 — 320px 에서 막대는 대략
+   90~230px, 챗봇 버튼은 248~300px 자리입니다. */
+.histbar {
+  position: fixed;
+  left: 50%;
+  /* 아이폰 홈 인디케이터 위로 올려 둡니다 (없는 기기에서는 0) */
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  /* 지도·본문 위에 떠 있으므로 살짝 비칩니다 — 아래가 완전히 가려지지 않게 */
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+.histbar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.histbar button:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text);
+}
+/* 갈 곳이 없을 때만 잠깁니다. 판단할 수 없는 브라우저에서는 잠기지 않습니다
+   (components/HistoryBar.tsx 의 can === null) */
+.histbar button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.histbar svg {
+  width: 18px;
+  height: 18px;
+}
+.histbar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--line);
+}
+
+/* ─── 보유 기종 추정 (AI) ───────────────────────────────────
+   확정 목록과 **다르게** 보여야 합니다. 같은 모양으로 두면 제보로 확인된 기종과
+   기계가 찾아낸 것이 구분되지 않습니다 (components/ArcadeDetailPanel.tsx).
+   그래서 테두리를 점선으로 두고 배경을 한 단 낮춥니다 — "아직 확정 아님" 을
+   색이 아니라 **형태**로 말합니다(색만으로 말하면 색을 못 보는 사람에게 사라집니다). */
+.guess-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--sunken);
+}
+.guess-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.guess-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+.guess-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.guess-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.guess-list strong {
+  font-size: 13.5px;
+}
+
+/* "AI 로 기종 찾기" 단추 줄 (components/ArcadeDetailPanel.tsx) */
+.guess-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+/* AI 칸(단추 줄·추정 상자)과 바로 아래 기종 목록을 떼어 놓습니다. 맞붙어 있으면
+   첫 줄이 위 칸에 딸린 것처럼 읽힙니다 — 위는 '기계가 찾은 것', 아래는 '제보로
+   확정된 것' 이라 성격이 다릅니다. 둘 중 무엇이 마지막이든 같은 간격이 되도록
+   두 짝 모두 겁니다 (상자가 있으면 단추 줄은 목록과 맞닿지 않습니다). */
+.guess-actions + .live-list,
+.guess-box + .live-list {
+  margin-top: 16px;
+}
+
+/* 세로로 쌓이는 폭에서는 상세가 화면의 절반뿐이라 같은 간격이 더 크게 먹힙니다.
+   **기본 규칙 뒤에** 둬야 합니다 — 특이도가 같아서 나중에 쓴 쪽이 이깁니다. */
+@media (max-width: 860px) {
+  .guess-actions + .live-list,
+  .guess-box + .live-list {
+    margin-top: 12px;
+  }
+}
+
+/* ── 이모티콘 ─────────────────────────────────────────────
+   관리자가 올린 그림을 댓글·리뷰·채보 평가에 넣습니다.
+   본문에는 [[emo:N]] 로 들어가고 화면이 그 자리를 그림으로 바꿉니다
+   (components/EmoticonText.tsx, db/migrate-062-emoticons.sql). */
+
+/* 본문에 박힌 그림. 글줄 높이를 밀어내지 않게 높이를 고정하고 폭은 비율대로 둡니다 */
+.emoticon {
+  height: 28px;
+  width: auto;
+  max-width: 120px;
+  vertical-align: middle;
+  /* 글자 사이에 끼면 붙어 보입니다 */
+  margin: 0 2px;
+  border-radius: 4px;
+}
+/* 지운 이모티콘 자리 — [[emo:3]] 이라는 내부 표기가 그대로 보이지 않게 */
+.emoticon-gone {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.emoticon-picker {
+  position: relative;
+  display: inline-flex;
+}
+.emoticon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  color: var(--muted);
+}
+.emoticon-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+/*
+  고르는 칸은 단추 **위로** 엽니다.
+
+  세 화면 모두 이 폼이 스크롤되는 칸 안에 있습니다. 아래로 열면 position:absolute
+  가 컨테이너의 scrollHeight 를 늘리지 않아 overflow 에 잘립니다. 위쪽에는 늘
+  본문 칸이 있어 자리가 있습니다.
+*/
+.emoticon-panel {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 10px 28px var(--shadow);
+}
+.emoticon-empty {
+  margin: 4px 0;
+}
+.emoticon-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 6px;
+  max-height: 210px;
+  overflow-y: auto;
+}
+.emoticon-grid li {
+  position: relative;
+}
+.emoticon-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 56px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  cursor: pointer;
+}
+.emoticon-cell:hover {
+  border-color: var(--accent);
+}
+.emoticon-cell img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+/* 관리자만 보이는 빼기 단추 */
+.emoticon-del {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.emoticon-del:hover:not(:disabled) {
+  color: var(--text-danger);
+  border-color: var(--danger);
+}
+
+.emoticon-add {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.emoticon-add p {
+  margin: 0;
+}
+.emoticon-add input[type='file'] {
+  font-size: 11px;
+  max-width: 100%;
+}
+.emoticon-add-row {
+  display: flex;
+  gap: 6px;
+}
+.emoticon-add-row input[type='text'] {
+  flex: 1;
+  min-width: 0;
+}
+.emoticon-error {
+  margin: 8px 0 0;
 }

@@ -10,7 +10,9 @@ import {
 import type {
   ChartDetail,
   ChartSummary,
+  GameDifficulty,
   GameMode,
+  GameVersion,
   Player,
   TierBoard,
   TierGame,
@@ -91,18 +93,34 @@ async function listGamesUncached(): Promise<TierGame[]> {
               SELECT json_agg(json_build_object('code', mm.code, 'label', mm.label)
                               ORDER BY mm.sort_order)
               FROM machine_modes mm WHERE mm.machine_id = m.id
-            ), '[]'::json) AS modes
+            ), '[]'::json) AS modes,
+            -- 버전을 구분하지 않는 게임은 빈 배열 → 화면이 선택기를 안 그린다.
+            COALESCE((
+              SELECT json_agg(json_build_object('id', gv.id, 'code', gv.code, 'label', gv.label)
+                              ORDER BY gv.sort_order)
+              FROM game_versions gv WHERE gv.machine_id = m.id
+            ), '[]'::json) AS versions,
+            -- 난이도 축이 없는 게임은 빈 배열 → 칩에 대괄호가 붙지 않는다.
+            COALESCE((
+              SELECT json_agg(json_build_object('code', md.code, 'label', md.label)
+                              ORDER BY md.sort_order)
+              FROM machine_difficulties md WHERE md.machine_id = m.id
+            ), '[]'::json) AS difficulties
      FROM machines m
      JOIN tier_settings ts ON ts.machine_id = m.id
      ORDER BY m.id`,
   );
+
+  const parse = <T,>(v: unknown): T => (typeof v === 'string' ? JSON.parse(v) : v) as T;
 
   return rows.map((r) => ({
     machineId: num(r.id)!,
     name: r.name as string,
     shortName: r.short_name as string,
     chartCount: num(r.chart_count)!,
-    modes: (typeof r.modes === 'string' ? JSON.parse(r.modes) : r.modes) as GameMode[],
+    modes: parse<GameMode[]>(r.modes),
+    versions: parse<GameVersion[]>(r.versions),
+    difficulties: parse<GameDifficulty[]>(r.difficulties),
   }));
 }
 
@@ -131,8 +149,28 @@ function modeLabelOf(game: TierGame, mode: string | null): string | null {
   return game.modes.find((m) => m.code === mode)?.label ?? mode;
 }
 
-/** 서열표를 만들 수 있는 (모드, 레벨) 조합 */
-async function listLevelsUncached(machineId: number): Promise<TierLevelOption[]> {
+/** 버전 id → 표기. 버전을 구분하지 않는 게임은 null 이 들어온다. */
+function versionLabelOf(game: TierGame, versionId: number | null): string | null {
+  if (versionId === null) return null;
+  return game.versions.find((v) => v.id === versionId)?.label ?? null;
+}
+
+/** 난이도 코드 → 표기. 난이도 축이 없는 채보는 null 이 들어온다. */
+function difficultyLabelOf(game: TierGame, difficulty: string | null): string | null {
+  if (difficulty === null) return null;
+  return game.difficulties.find((d) => d.code === difficulty)?.label ?? difficulty;
+}
+
+/**
+ * 서열표를 만들 수 있는 (모드, 레벨) 조합.
+ *
+ * `versionId` 가 null 이면 버전으로 좁히지 않는다 — 버전을 구분하지 않는
+ * 게임(펌프·사볼)의 채보는 version_id 가 NULL 이라 애초에 좁힐 것이 없다.
+ */
+async function listLevelsUncached(
+  machineId: number,
+  versionId: number | null,
+): Promise<TierLevelOption[]> {
   const db = await getDb();
 
   // 난이도 축인 게임(사볼)은 레벨만으로 보드가 정해지므로 (모드, 레벨) 로 쪼개지 않는다.
@@ -142,14 +180,15 @@ async function listLevelsUncached(machineId: number): Promise<TierLevelOption[]>
       `SELECT c.level, COUNT(*)::int AS chart_count
          FROM charts c
          JOIN songs s ON s.id = c.song_id
-        WHERE s.machine_id = $1
+        WHERE s.machine_id = $1 AND ($2::int IS NULL OR c.version_id = $2::int)
         GROUP BY c.level
+        -- 난이도 미상(NULL)은 목록 끝으로 — ASC 의 기본이 NULLS LAST 다.
         ORDER BY c.level`,
-      [machineId],
+      [machineId, versionId],
     );
     return rows.map((r) => ({
       mode: null,
-      level: num(r.level)!,
+      level: num(r.level),
       chartCount: num(r.chart_count)!,
     }));
   }
@@ -161,14 +200,14 @@ async function listLevelsUncached(machineId: number): Promise<TierLevelOption[]>
      FROM charts c
      JOIN songs s ON s.id = c.song_id
      LEFT JOIN machine_modes mm ON mm.machine_id = s.machine_id AND mm.code = c.mode
-     WHERE s.machine_id = $1
+     WHERE s.machine_id = $1 AND ($2::int IS NULL OR c.version_id = $2::int)
      GROUP BY c.mode, c.level, mm.sort_order
      ORDER BY mm.sort_order NULLS LAST, c.mode, c.level`,
-    [machineId],
+    [machineId, versionId],
   );
   return rows.map((r) => ({
     mode: r.mode as string,
-    level: num(r.level)!,
+    level: num(r.level),
     chartCount: num(r.chart_count)!,
   }));
 }
@@ -176,24 +215,30 @@ async function listLevelsUncached(machineId: number): Promise<TierLevelOption[]>
 const listLevelsCached = cacheReference(listLevelsUncached, 'tier-levels');
 
 /**
- * 그 게임에서 서열표를 만들 수 있는 (모드, 레벨) 조합.
+ * 그 게임·그 버전에서 서열표를 만들 수 있는 (모드, 레벨) 조합.
  *
  * 기본값을 캐시 바깥에서 채워 넘긴다 — Next 는 인자를 그대로 캐시 키에 넣으므로
  * `listLevels()` 와 `listLevels(DEFAULT_MACHINE_ID)` 를 그냥 두면 같은 데이터가
- * 서로 다른 키로 두 벌 쌓인다.
+ * 서로 다른 키로 두 벌 쌓인다. `versionId` 도 같은 이유로 항상 채워 넘긴다.
  */
-export function listLevels(machineId = DEFAULT_MACHINE_ID): Promise<TierLevelOption[]> {
-  return listLevelsCached(machineId);
+export function listLevels(
+  machineId = DEFAULT_MACHINE_ID,
+  versionId: number | null = null,
+): Promise<TierLevelOption[]> {
+  return listLevelsCached(machineId, versionId);
 }
 
 const CHART_SELECT = `
-  SELECT c.id, s.title, s.artist, s.machine_id, c.mode, c.level,
+  SELECT c.id, s.title, s.artist, s.machine_id, c.mode, c.difficulty, c.level,
          c.vote_count, c.avg_vote, c.convergence, c.tier_code, c.special_count,
          (cr.player_id IS NOT NULL) AS my_clear,
          dv.value AS my_vote,
          (sm.player_id IS NOT NULL) AS my_special
   FROM charts c
   JOIN songs s ON s.id = c.song_id
+  -- 난이도는 쉬운 순으로 세워야 한다 (코드 알파벳순이면 4D 가 EZ 보다 앞).
+  -- 등록되지 않은 코드는 뒤로 밀되 목록에서 빼지는 않는다 — listLevels 와 같은 규칙.
+  LEFT JOIN machine_difficulties md ON md.machine_id = s.machine_id AND md.code = c.difficulty
   LEFT JOIN clear_records    cr ON cr.chart_id = c.id AND cr.player_id = $1::int
   LEFT JOIN difficulty_votes dv ON dv.chart_id = c.id AND dv.player_id = $1::int
   LEFT JOIN special_marks    sm ON sm.chart_id = c.id AND sm.player_id = $1::int`;
@@ -204,7 +249,8 @@ function toSummary(r: Record<string, unknown>): ChartSummary {
     title: r.title as string,
     artist: (r.artist as string) ?? null,
     mode: (r.mode as string) ?? null,
-    level: num(r.level)!,
+    difficulty: (r.difficulty as string) ?? null,
+    level: num(r.level),
     voteCount: num(r.vote_count)!,
     avgVote: num(r.avg_vote),
     convergence: num(r.convergence),
@@ -218,12 +264,15 @@ function toSummary(r: Record<string, unknown>): ChartSummary {
 
 export async function getTierBoard(params: {
   machineId?: number;
+  /** null = 버전을 구분하지 않는 게임 → 그 기종의 채보를 전부 담는다 */
+  versionId?: number | null;
   /** null = 난이도 축인 게임 → 그 레벨의 모든 난이도를 한 보드에 담는다 */
   mode: string | null;
-  level: number;
+  /** null = 난이도 미상 채보들의 보드 (tier-types UNKNOWN_LEVEL) */
+  level: number | null;
   playerId: number | null;
 }): Promise<TierBoard> {
-  const { machineId = DEFAULT_MACHINE_ID, mode, level, playerId } = params;
+  const { machineId = DEFAULT_MACHINE_ID, versionId = null, mode, level, playerId } = params;
   const db = await getDb();
 
   const [settings, grades, game] = await Promise.all([
@@ -234,7 +283,16 @@ export async function getTierBoard(params: {
 
   const { rows } = await db.query<Record<string, unknown>>(
     `${CHART_SELECT}
-     WHERE s.machine_id = $2 AND ($3::text IS NULL OR c.mode = $3::text) AND c.level = $4
+     WHERE s.machine_id = $2 AND ($3::text IS NULL OR c.mode = $3::text)
+       -- 레벨이 NULL 인 채보(난이도 미상)도 자기 보드를 가져야 한다 — 'c.level = NULL'
+       -- 은 아무것도 고르지 못하므로 NULL 쪽 가지를 따로 붙인다.
+       --
+       -- 더 짧은 'IS NOT DISTINCT FROM' 을 쓰지 않은 이유는 **인덱스**다. 그쪽은
+       -- charts_lookup_idx(mode, level) 를 못 타서 펌프 S15 조회가 seq scan 이 된다
+       -- (실측 284버퍼 · 0.83ms vs 이 형태 63버퍼 · 0.47ms). 아래 OR 는 $4 가 값일 때
+       -- 뒷가지가 상수 false 로 접혀 비트맵 인덱스 스캔이 그대로 남는다.
+       AND (c.level = $4::int OR ($4::int IS NULL AND c.level IS NULL))
+       AND ($5::int IS NULL OR c.version_id = $5::int)
      -- 화면에 보이는 값(소수점 2자리)으로 줄을 세운다. 원본 평균으로 정렬하면
      -- 같은 '0.26' 끼리도 순서가 갈려 이유를 알 수 없는 배열이 된다.
      -- 등급 칸은 이 순서를 그대로 물려받으므로 왼쪽 위가 가장 높고
@@ -249,11 +307,15 @@ export async function getTierBoard(params: {
      ORDER BY ROUND(c.avg_vote, 2) DESC NULLS LAST,
               CASE WHEN c.avg_vote IS NULL THEN NULL ELSE c.id END ASC NULLS LAST,
               s.title ASC,
-              -- 한 레벨에 여러 난이도가 섞이는 게임(사볼)에서 제목까지 같을 때
-              -- 순서가 흔들리지 않게 난이도 코드를 마지막 기준으로 둔다.
+              -- 한 레벨에 여러 난이도가 섞이는 게임에서 제목까지 같을 때 순서가
+              -- 흔들리지 않게 난이도를 마지막 기준으로 둔다. 실제로 그런 곡이 있다 —
+              -- EZ2DJ SE 의 'Quake in Kyoto' 스트리트 NM 6 / RE 6 (migrate-060).
               -- 미표기(NULL)는 뒤로 — 아는 난이도를 먼저 보여준다.
+              md.sort_order ASC NULLS LAST,
+              c.difficulty ASC NULLS LAST,
+              -- 사볼은 난이도가 mode 에 들어 있다 (migrate-045).
               c.mode ASC NULLS LAST`,
-    [playerId, machineId, mode, level],
+    [playerId, machineId, mode, level, versionId],
   );
   const charts = rows.map(toSummary);
 
@@ -292,6 +354,8 @@ export async function getTierBoard(params: {
   return {
     settings,
     game,
+    versionId,
+    versionLabel: versionLabelOf(game, versionId),
     mode,
     // 난이도 축인 게임은 보드가 한 난이도의 것이 아니므로 라벨도 없다.
     modeLabel: mode === null ? null : modeLabelOf(game, mode),
@@ -337,17 +401,11 @@ export async function getChartDetail(
     machineId,
     machineName: game.name,
     modeLabel: modeLabelOf(game, summary.mode),
+    difficultyLabel: difficultyLabelOf(game, summary.difficulty),
     comments,
   };
 }
 
-export async function listPlayers(): Promise<Player[]> {
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number; nickname: string }>(
-    `SELECT id, nickname FROM players ORDER BY id`,
-  );
-  return rows.map((r) => ({ id: num(r.id)!, nickname: r.nickname }));
-}
 
 /** 투표 반영 후 반드시 호출. 캐시 컬럼(avg/convergence/tier_code)을 갱신한다. */
 async function recalc(chartId: number): Promise<void> {

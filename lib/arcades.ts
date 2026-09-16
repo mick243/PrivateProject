@@ -1,6 +1,6 @@
 import { cacheReference } from './cache';
 import { getDb, type Queryable } from './db';
-import type { Arcade, ArcadeInput, ArcadeMachine, Machine } from './types';
+import type { Arcade, ArcadeInput, ArcadeMachine, Machine, MachineGuess } from './types';
 
 /**
  * 오락실 1건 + 보유 기종 목록을 뽑는 공통 SELECT 조각.
@@ -16,56 +16,92 @@ import type { Arcade, ArcadeInput, ArcadeMachine, Machine } from './types';
  * cabinet_condition 은 등록값까지 종합한 결과라 기체마다 항상 한 행 있다.
  * 등록값도 제보도 없을 때만 value 가 null 이고, 그때만 "정보 없음" 이다.
  */
-const MACHINES_SUBQUERY = `
-  COALESCE((
-    SELECT json_agg(
-             json_build_object(
-               'id',           m.id,
-               'name',         m.name,
-               'shortName',    m.short_name,
-               'category',     m.category,
-               'cabinetCount', cab.cabinet_count,
-               'cabinets',     cab.cabinets,
+/**
+ * 보유 기종·기체를 오락실별로 묶어 주는 CTE 두 개.
+ *
+ * ─── 왜 상관 서브쿼리를 버렸나 ───────────────────────────────
+ * 예전에는 `MACHINES_SUBQUERY` 라는 상관 서브쿼리 하나였고, 그게 **오락실마다
+ * 한 번씩** 돌았습니다. 안에서 `machine_live` · `cabinet_condition` 두 뷰를
+ * 건드리는데, 그 뷰들은 `machine_reports` **전체**를 집계합니다. 결과적으로
+ * 전체 집계가 939번 재평가됐습니다.
+ *
+ * 목표 규모 데이터로 재면 이렇습니다 (오락실 939 · 기체 5,644 · 제보 25,619).
+ *
+ *   기존(상관 서브쿼리)  실행 36.0ms · 버퍼 44,042
+ *   지금(CTE 집계)       실행 20.0ms · **버퍼 163**   ← 270분의 1
+ *
+ * 남은 20ms 는 JSON 을 만드는 값이라 이 방향으로는 더 줄지 않습니다.
+ *
+ * ─── 왜 하나로 두고 필터를 받나 ─────────────────────────────
+ * 목록(listArcades)과 단일 조회(getArcade)가 같은 모양을 씁니다. 단일 조회에서
+ * 전체를 집계하면 손해라 `arcadeFilter` 로 좁히고, 목록에서는 NULL 을 줘서
+ * 전부 집계합니다. **정의를 둘로 나누지 않는 이유**는 이 프로젝트가 이미
+ * 겪은 함정입니다 — 같은 규칙을 두 곳에 적으면 한쪽만 고쳐지고, 그러면
+ * 목록과 상세가 다른 오락실을 보여 줍니다.
+ *
+ * ─── 좁히지 않으면 필터 검색이 느려집니다 ───────────────────
+ * 집계를 한 번만 하는 것이 **결과가 많을 때** 이깁니다. 반경 검색처럼 30곳만
+ * 남는 경우에 전체(기체 5,644)를 집계하면 오히려 손해입니다 — 처음 이 CTE 를
+ * 넣었을 때 반경 검색이 8ms → 26ms 로 **3배 느려졌습니다.**
+ *
+ * 그래서 `scope` 로 **바깥에서 고른 오락실만** 집계합니다. 목록은 `base` CTE 를,
+ * 단일 조회는 파라미터를 줍니다. 전체 목록이면 scope 가 939곳이라 전부 집계하고,
+ * 좁혀졌으면 그만큼만 집계합니다.
+ *
+ * `scope` 는 SQL 조각을 만들지만 **사용자 입력이 들어오는 자리가 아닙니다** —
+ * 파라미터 자리나 CTE 이름만 넣습니다.
+ */
+function machinesCte(scope: (arcadeIdColumn: string) => string): string {
+  const only = scope;
+  return `
+    cab_agg AS (
+      SELECT c.arcade_id, c.machine_id,
+             COUNT(c.id)::int AS cabinet_count,
+             json_agg(json_build_object(
+               'id',        c.id,
+               'cabinetNo', c.cabinet_no,
+               'condition', c.condition,
+               -- 등록값도 제보도 없으면 value 가 null 이고, 그때는 표시할 게
+               -- 없으므로 객체 자체를 내보내지 않는다.
+               'conditionSummary', CASE WHEN cc.value IS NULL THEN NULL ELSE json_build_object(
+                 'value',      cc.value,
+                 'reports',    COALESCE(cc.reports, 0),
+                 'reportedAt', cc.reported_at
+               ) END)
+               ORDER BY c.cabinet_no) AS cabinets
+      FROM arcade_cabinets c
+      LEFT JOIN cabinet_condition cc ON cc.cabinet_id = c.id
+      WHERE ${only('c.arcade_id')}
+      GROUP BY c.arcade_id, c.machine_id
+    ),
+    mach_agg AS (
+      SELECT am.arcade_id,
+             json_agg(json_build_object(
+               'id',        m.id,
+               'name',      m.name,
+               'shortName', m.short_name,
+               'category',  m.category,
+               -- 기체가 0대인 기종도 있습니다. 예전 LATERAL 은 집계라 늘 한 행을
+               -- 냈지만(count 0 · '[]'), GROUP BY 는 행 자체가 없으므로 여기서 메꿉니다.
+               'cabinetCount', COALESCE(cab.cabinet_count, 0),
+               'cabinets',     COALESCE(cab.cabinets, '[]'::json),
                'live', CASE WHEN ml.machine_id IS NULL THEN NULL ELSE json_build_object(
                  'waitCount',      ml.wait_count,
                  'waitReports',    COALESCE(ml.wait_reports, 0),
                  'waitReportedAt', ml.wait_reported_at
-               ) END
-             )
-             ORDER BY CASE m.category WHEN 'rhythm' THEN 0 ELSE 1 END, m.sort_order, m.id
-           )
-    FROM arcade_machines am
-    JOIN machines m ON m.id = am.machine_id
-    LEFT JOIN machine_live ml
-      ON ml.arcade_id = am.arcade_id AND ml.machine_id = am.machine_id
-    -- 기체는 기종 안에 중첩된 배열로. 평평하게 내보내고 화면에서 묶으면
-    -- 목록·상세·지도가 각자 다르게 묶을 여지가 생긴다.
-    CROSS JOIN LATERAL (
-      SELECT COUNT(c.id)::int AS cabinet_count,
-             COALESCE(
-               json_agg(
-                 json_build_object(
-                   'id',        c.id,
-                   'cabinetNo', c.cabinet_no,
-                   'condition', c.condition,
-                   -- 등록값도 제보도 없으면 value 가 null 이고, 그때는 표시할 게
-                   -- 없으므로 객체 자체를 내보내지 않는다.
-                   'conditionSummary', CASE WHEN cc.value IS NULL THEN NULL ELSE json_build_object(
-                     'value',      cc.value,
-                     'reports',    COALESCE(cc.reports, 0),
-                     'reportedAt', cc.reported_at
-                   ) END
-                 )
-                 ORDER BY c.cabinet_no
-               ),
-               '[]'::json
-             ) AS cabinets
-      FROM arcade_cabinets c
-      LEFT JOIN cabinet_condition cc ON cc.cabinet_id = c.id
-      WHERE c.arcade_id = am.arcade_id AND c.machine_id = am.machine_id
-    ) cab
-    WHERE am.arcade_id = b.id
-  ), '[]'::json) AS machines`;
+               ) END)
+               ORDER BY CASE m.category WHEN 'rhythm' THEN 0 ELSE 1 END, m.sort_order, m.id) AS machines
+      FROM arcade_machines am
+      JOIN machines m ON m.id = am.machine_id
+      LEFT JOIN machine_live ml ON ml.arcade_id = am.arcade_id AND ml.machine_id = am.machine_id
+      LEFT JOIN cab_agg cab ON cab.arcade_id = am.arcade_id AND cab.machine_id = am.machine_id
+      WHERE ${only('am.arcade_id')}
+      GROUP BY am.arcade_id
+    )`;
+}
+
+/** 오락실 한 행에 붙는 기종 배열. 기종이 없으면 `[]` */
+const MACHINES_COLUMN = "COALESCE(ma.machines, '[]'::json) AS machines";
 
 interface ArcadeRow {
   id: number;
@@ -78,6 +114,7 @@ interface ArcadeRow {
   is_24h: boolean;
   phone: string | null;
   note: string | null;
+  homepage: string | null;
   distance_km: number | null;
   rating_avg: number | string | null;
   review_count: number;
@@ -101,6 +138,7 @@ function toArcade(row: ArcadeRow): Arcade {
     is24h: row.is_24h,
     phone: row.phone,
     note: row.note,
+    homepage: row.homepage ?? null,
     machines,
     distanceKm: row.distance_km === null ? null : Number(row.distance_km),
     // NUMERIC 은 드라이버에 따라 문자열로 올라온다.
@@ -144,7 +182,7 @@ export async function listArcades(params: ListArcadesParams): Promise<Arcade[]> 
   // 좌표가 오면 haversine 으로 거리(km)를 계산해 함께 반환한다.
   // PostGIS 도입 시 이 CTE 를 ST_Distance / ST_DWithin 으로 교체하면 인덱스를 탄다.
   const sql = `
-    WITH base AS (
+    WITH scored AS (
       SELECT
         a.*,
         CASE WHEN $1::float8 IS NULL OR $2::float8 IS NULL THEN NULL ELSE
@@ -168,11 +206,24 @@ export async function listArcades(params: ListArcadesParams): Promise<Arcade[]> 
               GROUP BY am.arcade_id
               HAVING COUNT(DISTINCT am.machine_id) = array_length($4::int[], 1)
             ))
-    )
-    SELECT b.*, ${MACHINES_SUBQUERY}
+    ),
+    -- 반경 필터를 **집계 앞으로** 당깁니다. 예전에는 맨 바깥 WHERE 에 있어서
+    -- 30곳만 남는 반경 검색에서도 base 가 939곳이었고, 그 상태로 집계를 좁히면
+    -- 아무것도 안 좁혀집니다 (실제로 반경 검색이 3배 느려졌습니다).
+    base AS (
+      SELECT * FROM scored s
+      WHERE $5::float8 IS NULL OR s.distance_km IS NULL OR s.distance_km <= $5::float8
+    ),
+    ${machinesCte((col) => `${col} IN (SELECT id FROM base)`)}
+    SELECT b.*, ${MACHINES_COLUMN}
     FROM base b
-    WHERE $5::float8 IS NULL OR b.distance_km IS NULL OR b.distance_km <= $5::float8
-    ORDER BY b.distance_km ASC NULLS LAST, b.name ASC`;
+    LEFT JOIN mach_agg ma ON ma.arcade_id = b.id
+    -- id 로 마지막 순위를 못 박습니다. **같은 이름이 267곳(66종류)** 있는데
+    -- (88오락실 ×2 · 게임랜드 ×4 …) 타이브레이커가 없으면 동명 사이의 순서가
+    -- 실행계획에 따라 달라집니다. 사이드바가 10곳씩 페이지를 나누므로, 그때
+    -- 같은 곳이 두 페이지에 나오거나 사라질 수 있습니다.
+    -- (CTE 로 바꾸면서 실제로 순서가 바뀌어 드러난 문제입니다.)
+    ORDER BY b.distance_km ASC NULLS LAST, b.name ASC, b.id ASC`;
 
   const { rows } = await db.query<ArcadeRow>(sql, [
     lat,
@@ -188,8 +239,13 @@ export async function listArcades(params: ListArcadesParams): Promise<Arcade[]> 
 export async function getArcade(id: number): Promise<Arcade | null> {
   const db = await getDb();
   const { rows } = await db.query<ArcadeRow>(
-    `SELECT b.*, NULL::float8 AS distance_km, ${MACHINES_SUBQUERY}
-     FROM arcades b WHERE b.id = $1`,
+    // 목록과 **같은** 집계를 쓰되 그 오락실로 좁힙니다 ($1). 전부 집계하면
+    // 한 곳을 보려고 5,644개 기체를 훑습니다.
+    `WITH ${machinesCte((col) => `${col} = $1::int`)}
+     SELECT b.*, NULL::float8 AS distance_km, ${MACHINES_COLUMN}
+     FROM arcades b
+     LEFT JOIN mach_agg ma ON ma.arcade_id = b.id
+     WHERE b.id = $1`,
     [id],
   );
   return rows[0] ? toArcade(rows[0]) : null;
@@ -346,3 +402,53 @@ async function listMachinesUncached(): Promise<Machine[]> {
  * 앱에서 machines 를 쓰는 경로가 없어 캐시해 둔다 — 자세한 근거는 lib/cache.ts.
  */
 export const listMachines = cacheReference(listMachinesUncached, 'machines');
+
+// ─── 보유 기종 추정 (AI) ─────────────────────────────────────
+
+/**
+ * 이 오락실의 **추정** 기종. 확정(arcade_machines)과 섞지 않습니다.
+ *
+ * 목록 쿼리에 얹지 않고 따로 두는 이유: 추정은 상세를 열었을 때만 필요한데,
+ * 목록 쿼리는 939곳을 집계하는 성능 민감한 자리입니다(PERFORMANCE.md 4부).
+ * 거기에 조인을 하나 더 얹으면 상세를 안 여는 대다수가 그 값을 치릅니다.
+ *
+ * 이미 확정된 기종은 빼고 돌려줍니다 — 사람이 확인한 것을 "추정" 으로 다시
+ * 물으면 화면이 스스로를 의심하는 꼴이 됩니다.
+ */
+/**
+ * 이 오락실을 **한 번이라도 검색해 봤는지**. 거르기 전의 날것을 셉니다.
+ *
+ * listMachineGuesses 로는 이 판단을 할 수 없습니다 — 찾은 것이 전부 이미 확정된
+ * 기종이면 빈 배열이 돌아오고, 그러면 "아직 안 해 봤다" 로 읽혀 같은 곳을
+ * 몇 번이고 다시 검색하게 됩니다. 검색은 요청마다 돈이 나갑니다.
+ */
+export async function countMachineGuesses(arcadeId: number): Promise<number> {
+  const db = await getDb();
+  const { rows } = await db.query<{ n: number | string }>(
+    `SELECT count(*)::int AS n FROM arcade_machine_guesses WHERE arcade_id = $1::int`,
+    [arcadeId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+export async function listMachineGuesses(arcadeId: number): Promise<MachineGuess[]> {
+  const db = await getDb();
+  const { rows } = await db.query<Record<string, unknown>>(
+    `SELECT g.machine_id, m.name, m.short_name, g.evidence
+       FROM arcade_machine_guesses g
+       JOIN machines m ON m.id = g.machine_id
+      WHERE g.arcade_id = $1::int
+        AND NOT EXISTS (
+              SELECT 1 FROM arcade_machines am
+               WHERE am.arcade_id = g.arcade_id AND am.machine_id = g.machine_id
+            )
+      ORDER BY m.id`,
+    [arcadeId],
+  );
+  return rows.map((r) => ({
+    machineId: Number(r.machine_id),
+    name: r.name as string,
+    shortName: (r.short_name as string | null) ?? null,
+    evidence: r.evidence as string,
+  }));
+}

@@ -4,6 +4,7 @@ import {
   changeNickname,
   clearLoginFailures,
   clearSessionCookie,
+  deleteAccount,
   getSession,
   loginLockRemainingMs,
   noteLoginFailure,
@@ -33,7 +34,7 @@ const lockKey = (playerId: number) => `account:${playerId}`;
 
 /** GET — 화면을 그리는 데 필요한 것: 지금 이름과 "비밀번호가 있는가" */
 export async function GET(request: Request) {
-  const session = getSession(request);
+  const session = await getSession(request);
   if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
 
   const status = await accountStatus(session.playerId);
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
 
 /** PUT — `{currentPassword?, nickname?, newPassword?}` → 변경 + 세션 쿠키 재발급 */
 export async function PUT(request: Request) {
-  const session = getSession(request);
+  const session = await getSession(request);
   if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
 
   let body: unknown;
@@ -75,7 +76,7 @@ export async function PUT(request: Request) {
   // 비밀번호가 있는 계정은 반드시 현재 비밀번호로 본인 확인.
   if (status.hasPassword) {
     const key = lockKey(session.playerId);
-    const lockedMs = loginLockRemainingMs(key);
+    const lockedMs = await loginLockRemainingMs(key);
     if (lockedMs > 0) {
       return NextResponse.json(
         { error: `시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요` },
@@ -86,10 +87,10 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: '현재 비밀번호를 입력해 주세요' }, { status: 400 });
     }
     if (!(await verifyPlayerPassword(session.playerId, parsed.data.currentPassword))) {
-      noteLoginFailure(key);
+      await noteLoginFailure(key);
       return NextResponse.json({ error: '비밀번호가 올바르지 않습니다' }, { status: 403 });
     }
-    clearLoginFailures(key);
+    await clearLoginFailures(key);
   }
 
   // 닉네임 → 비밀번호 순서. 닉네임이 반려되면(409) 아무것도 바뀌지 않은 상태로
@@ -116,5 +117,65 @@ export async function PUT(request: Request) {
   }
 
   // 닉네임이 바뀌었을 수 있으므로 세션 쿠키를 새 이름으로 다시 서명합니다.
-  return setSessionCookie(NextResponse.json({ user }), user);
+  return setSessionCookie(NextResponse.json({ user }), user.playerId);
+}
+
+/**
+ * DELETE — 탈퇴 `{currentPassword?}`.
+ *
+ * 비밀번호가 있는 계정은 비밀번호로, 소셜만 있는 계정은 세션만으로 확인합니다
+ * (PUT 과 같은 규칙 — 대조할 것이 없습니다). 관리자 계정은 여기서 지울 수 없습니다
+ * (env 가 근거인 계정이라 다음 로그인에 다시 생깁니다 — lib/auth.ts ensureAdminAccount).
+ *
+ * 무엇이 함께 지워지는지는 lib/auth.ts deleteAccount 와 /privacy 2항에 적혀 있습니다.
+ */
+export async function DELETE(request: Request) {
+  const session = await getSession(request);
+  if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
+
+  let body: unknown = {};
+  try {
+    const text = await request.text();
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
+  }
+  const raw = (body as { currentPassword?: unknown }).currentPassword;
+  const currentPassword = typeof raw === 'string' ? raw : null;
+
+  const status = await accountStatus(session.playerId);
+  if (!status) {
+    return clearSessionCookie(NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }));
+  }
+  if (status.isAdmin) {
+    return NextResponse.json(
+      { error: '관리자 계정은 탈퇴할 수 없습니다. 설정(ADMIN_PASSWORD)에서 계정을 정리해 주세요' },
+      { status: 403 },
+    );
+  }
+
+  if (status.hasPassword) {
+    const key = lockKey(session.playerId);
+    const lockedMs = await loginLockRemainingMs(key);
+    if (lockedMs > 0) {
+      return NextResponse.json(
+        { error: `시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요` },
+        { status: 429 },
+      );
+    }
+    if (!currentPassword) {
+      return NextResponse.json({ error: '현재 비밀번호를 입력해 주세요' }, { status: 400 });
+    }
+    if (!(await verifyPlayerPassword(session.playerId, currentPassword))) {
+      await noteLoginFailure(key);
+      return NextResponse.json({ error: '비밀번호가 올바르지 않습니다' }, { status: 403 });
+    }
+    await clearLoginFailures(key);
+  }
+
+  const deleted = await deleteAccount(session.playerId);
+  if (!deleted) {
+    return clearSessionCookie(NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }));
+  }
+  return clearSessionCookie(new NextResponse(null, { status: 204 }));
 }

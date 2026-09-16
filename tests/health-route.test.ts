@@ -43,7 +43,7 @@ describe('GET /api/health', () => {
     expect(body.checks.db_primary).toBe('ok');
   });
 
-  it('PostgreSQL → PGlite 폴백 중 → 200 이지만 degraded, db_primary 는 fail', async () => {
+  it('PostgreSQL → PGlite 폴백 중 → 503 degraded, db_primary 는 fail — 프록시가 트래픽을 빼도록', async () => {
     status = {
       driver: 'pglite',
       fallbackReason: 'connect ECONNREFUSED 127.0.0.1:5432 (ECONNREFUSED)',
@@ -51,8 +51,9 @@ describe('GET /api/health', () => {
     };
     const res = await GET();
     const body = await res.json();
-    // 서비스는 되고 있으므로 프로브가 "다운" 으로 보면 안 된다
-    expect(res.status).toBe(200);
+    // 화면은 되지만 이 인스턴스가 쓰는 것은 정본에 남지 않는다 — 프록시가
+    // 200 만 보고 트래픽을 보내면 안 되므로 503 이다. 상태 문구는 그대로 degraded.
+    expect(res.status).toBe(503);
     expect(body.status).toBe('degraded');
     expect(body.checks).toEqual({ db: 'ok', db_primary: 'fail' });
     expect(body.db).toEqual({ driver: 'pglite', fallback: true, fallbackAt: '2026-09-07T00:00:00.000Z' });

@@ -2,7 +2,7 @@ import { Suspense } from 'react';
 import SignupForm from '@/components/SignupForm';
 
 export const metadata = {
-  title: '회원가입 — 오락실 파인더',
+  title: '회원가입',
   description: '아이디·비밀번호 또는 소셜 계정으로 가입',
 };
 

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import {
   authenticate,
   clearLoginFailures,
+  accountKey,
   clientKey,
   configuredAdminPassword,
   ensureAdminAccount,
@@ -22,14 +23,6 @@ export const dynamic = 'force-dynamic';
  * 나누면 닉네임이 존재하는지가 밖에서 확인됩니다.
  */
 export async function POST(request: Request) {
-  const key = clientKey(request);
-  const lockedFor = loginLockRemainingMs(key);
-  if (lockedFor > 0) {
-    return NextResponse.json(
-      { error: `로그인 시도가 많습니다. ${Math.ceil(lockedFor / 60000)}분 후 다시 시도해 주세요` },
-      { status: 429 },
-    );
-  }
 
   let body: unknown;
   try {
@@ -46,6 +39,28 @@ export async function POST(request: Request) {
     );
   }
 
+  /**
+   * 시도 제한은 **계정 단위가 주**입니다.
+   *
+   * 예전에는 `X-Forwarded-For` 첫 홉을 키로 썼는데, 그 헤더는 클라이언트가
+   * 마음대로 보낼 수 있어서 **헤더만 바꾸면 잠금이 풀렸습니다** — 제한이
+   * 사실상 없던 것과 같습니다. 표적(계정)은 위조할 수 없으므로 그쪽으로 셉니다.
+   *
+   * IP 는 **신뢰하는 프록시가 있을 때만** 함께 셉니다(`TRUSTED_PROXY_HOPS`).
+   * 여러 계정을 훑는 공격은 계정 키로는 안 걸리기 때문입니다.
+   */
+  const keys = [accountKey(parsed.data.nickname), clientKey(request)].filter(
+    (k): k is string => k !== null,
+  );
+  // 이제 DB 를 보므로 await 합니다. 키가 둘이라 병렬로 — 순서가 없습니다.
+  const lockedFor = Math.max(0, ...(await Promise.all(keys.map(loginLockRemainingMs))));
+  if (lockedFor > 0) {
+    return NextResponse.json(
+      { error: `로그인 시도가 많습니다. ${Math.ceil(lockedFor / 60000)}분 후 다시 시도해 주세요` },
+      { status: 429 },
+    );
+  }
+
   if (!configuredAdminPassword()) {
     return NextResponse.json(
       { error: 'ADMIN_PASSWORD 가 설정되지 않아 로그인할 수 없습니다' },
@@ -59,13 +74,13 @@ export async function POST(request: Request) {
 
   const user = await authenticate(parsed.data.nickname, parsed.data.password);
   if (!user) {
-    noteLoginFailure(key);
+    await Promise.all(keys.map(noteLoginFailure));
     return NextResponse.json(
       { error: '아이디 또는 비밀번호가 올바르지 않습니다' },
       { status: 401 },
     );
   }
 
-  clearLoginFailures(key);
-  return setSessionCookie(NextResponse.json({ user }), user);
+  await Promise.all(keys.map(clearLoginFailures));
+  return setSessionCookie(NextResponse.json({ user }), user.playerId);
 }

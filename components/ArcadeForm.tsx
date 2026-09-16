@@ -159,7 +159,6 @@ export default function ArcadeForm({
       <label className="field">
         <span>이름 *</span>
         <input
-          className="input-on-light"
           value={name}
           onChange={(e) => setName(e.target.value)}
           maxLength={100}
@@ -170,7 +169,6 @@ export default function ArcadeForm({
       <label className="field">
         <span>주소 *</span>
         <input
-          className="input-on-light"
           value={address}
           onChange={(e) => setAddress(e.target.value)}
           maxLength={200}

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { appOrigin } from './app-url';
 import { openPayload, sealPayload } from './auth';
 import type { OAuthProviderId } from './oauth-types';
 
@@ -164,22 +165,11 @@ export function isOAuthConfigured(provider: OAuthProviderId): boolean {
 /**
  * 콜백 주소. 제공자 콘솔에 **글자 하나까지 똑같이** 등록해야 합니다.
  *
- * 요청 헤더에서 유추하는 건 마지막 수단입니다 — 프록시 뒤에서는 Host 가 내부
- * 주소일 수 있고, 그러면 등록해 둔 주소와 달라 토큰 교환이 실패합니다. 운영에서는
- * APP_URL 을 못박아 두세요.
+ * 앞부분(앱의 바깥 주소)은 인증 메일의 링크와 **같은 곳**에서 옵니다 —
+ * lib/app-url.ts. 둘이 따로 짐작하면 한쪽만 조용히 어긋납니다.
  */
 export function redirectUri(request: Request, provider: OAuthProviderId): string {
-  const configured = process.env.APP_URL?.trim() || process.env.NEXT_PUBLIC_APP_URL?.trim();
-  const base = configured || requestOrigin(request);
-  return `${base.replace(/\/+$/, '')}/api/auth/oauth/${provider}/callback`;
-}
-
-function requestOrigin(request: Request): string {
-  const proto = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
-  const host = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
-    ?? request.headers.get('host');
-  if (host) return `${proto || 'http'}://${host}`;
-  return new URL(request.url).origin;
+  return `${appOrigin(request)}/api/auth/oauth/${provider}/callback`;
 }
 
 // ─── state (+ PKCE) ──────────────────────────────────────────

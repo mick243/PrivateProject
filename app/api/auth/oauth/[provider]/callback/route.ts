@@ -90,7 +90,10 @@ export async function GET(request: Request, ctx: Ctx) {
     // 않은 표시(nickname_pending)가 남아 다음 로그인에 다시 묻습니다.
     const landing = needsNickname ? `/welcome?next=${encodeURIComponent(next)}` : next;
 
-    const res = setSessionCookie(NextResponse.redirect(new URL(landing, request.url)), user);
+    const res = await setSessionCookie(
+      NextResponse.redirect(new URL(landing, request.url)),
+      user.playerId,
+    );
     res.cookies.set(OAUTH_STATE_COOKIE, '', { path: '/', maxAge: 0 });
     return res;
   } catch (err) {

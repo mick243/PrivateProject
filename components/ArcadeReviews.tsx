@@ -1,9 +1,13 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useCallback, useEffect, useState } from 'react';
 import { timeAgo, type ArcadeReview } from '@/lib/community-types';
 import type { Arcade } from '@/lib/types';
 import { usePlayerId } from '@/lib/use-player';
+import EmoticonPicker from './EmoticonPicker';
+import EmoticonText from './EmoticonText';
 import StarRating from './StarRating';
 
 interface Props {
@@ -21,8 +25,14 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const data = await fetch(`/api/arcades/${arcade.id}/reviews`).then((r) => r.json());
-    setReviews((data.reviews as ArcadeReview[]) ?? []);
+    try {
+      const res = await fetch(`/api/arcades/${arcade.id}/reviews`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? '리뷰를 불러오지 못했습니다');
+      setReviews((data.reviews as ArcadeReview[]) ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '리뷰를 불러오지 못했습니다');
+    }
   }, [arcade.id]);
 
   useEffect(() => {
@@ -37,6 +47,11 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
     setError(null);
   }, [mine?.id, mine?.rating, mine?.body]);
 
+  /** 고른 이모티콘을 본문 끝에 붙인다. 화면 maxLength 는 타이핑만 막으므로 여기서도 본다 */
+  const addEmoticon = (token: string) => {
+    setBody((v) => (v.length + token.length > 1000 ? v : v + token));
+  };
+
   const save = async () => {
     if (!playerId || rating === 0) return;
     setBusy(true);
@@ -45,7 +60,7 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
       const res = await fetch(`/api/arcades/${arcade.id}/reviews`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerId, rating, body: body.trim() }),
+        body: JSON.stringify({ rating, body: body.trim() }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -65,9 +80,7 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
     if (!playerId) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/arcades/${arcade.id}/reviews?playerId=${playerId}`, {
-        method: 'DELETE',
-      });
+      const res = await fetch(`/api/arcades/${arcade.id}/reviews`, { method: 'DELETE' });
       const data = await res.json();
       if (res.ok) {
         setReviews(data.reviews as ArcadeReview[]);
@@ -94,7 +107,9 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
       </h3>
 
       {!playerId ? (
-        <p className="muted small">로그인하면 리뷰를 남길 수 있습니다.</p>
+        <p className="muted small">
+          <Link href="/login?next=%2Ffinder">로그인</Link>하면 리뷰를 남길 수 있습니다.
+        </p>
       ) : (
         <div className="review-form">
           <div className="review-form-head">
@@ -117,6 +132,7 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
             >
               {mine ? '수정' : '등록'}
             </button>
+            <EmoticonPicker disabled={busy} onPick={addEmoticon} />
             {mine && (
               <button
                 type="button"
@@ -143,7 +159,11 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
                 <strong>{r.nickname}</strong>
                 <span className="muted small">{timeAgo(r.updatedAt)}</span>
               </div>
-              {r.body && <p className="review-body">{r.body}</p>}
+              {r.body && (
+                <p className="review-body">
+                  <EmoticonText text={r.body} />
+                </p>
+              )}
             </li>
           ))}
         </ul>

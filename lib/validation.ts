@@ -7,8 +7,18 @@ import {
   MAX_ATTACHMENTS_PER_POST,
   POSTS_PAGE_SIZE,
 } from './board-types';
-import { CHART_TAGS } from './community-types';
+import { CHART_TAGS, REPORT_COMMENT_MAX } from './community-types';
 import { normalizeDoc, toPlainText } from './rich-text';
+
+/**
+ * **`playerId` 는 어느 스키마에도 없습니다.**
+ *
+ * "누가 하는가" 는 요청이 말하는 것이 아니라 서명된 세션 쿠키가 말합니다
+ * (lib/auth.ts requirePlayer). 여기서 받아 주면 숫자 하나만 바꿔 남의 이름으로
+ * 글·리뷰·평가를 남길 수 있고, 스키마가 통과시킨 값이라 라우트는 그것을
+ * 검증된 값으로 취급합니다. 받지 않는 것이 가장 확실한 차단입니다 — 섞어
+ * 보내도 zod 가 조용히 버립니다.
+ */
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -19,6 +29,16 @@ const optionalText = z
   .transform((v) => (v === '' ? null : v))
   .nullable()
   .default(null);
+
+/** optionalText 에 길이 상한을 더한 것. '' → null 은 그대로 */
+const boundedOptionalText = (max: number, subject: string) =>
+  z
+    .string()
+    .trim()
+    .max(max, `${subject} ${max}자까지 쓸 수 있습니다`)
+    .transform((v) => (v === '' ? null : v))
+    .nullable()
+    .default(null);
 
 const timeField = optionalText.refine(
   (v) => v === null || TIME_RE.test(v),
@@ -110,9 +130,39 @@ function nicknameField(topic: string, locative: string) {
   );
 }
 
+/**
+ * 가입할 때 받는 이메일 한 칸.
+ *
+ * **소문자로 맞춰 저장합니다.** 도메인은 원래 대소문자를 가리지 않고, 로컬
+ * 파트를 가리는 제공자는 현실에 없습니다. 맞춰 두지 않으면 `A@x.com` 과
+ * `a@x.com` 이 서로 다른 계정이 되어, 비밀번호 찾기가 "어느 쪽으로 보낼지"
+ * 정할 수 없게 됩니다 (DB 도 lower(email) 로 한 번 더 막습니다 —
+ * db/migrate-050-player-email.sql).
+ *
+ * 길이 상한 254 는 주소 하나가 가질 수 있는 최대 길이입니다(RFC 5321).
+ * 모양 검사는 zod 에 맡깁니다 — 정규식을 직접 쓰면 반드시 실재하는 주소를
+ * 틀렸다고 하게 됩니다. 어차피 **모양이 맞는 것과 받는 사람이 있는 것은
+ * 다른 문제**이고, 그건 인증 메일만 답할 수 있습니다.
+ */
+const emailField = z
+  // 칸이 아예 없을 때도 우리 문장으로 답합니다 — 옵션 없이 두면 zod 의 기본
+  // 영문 메시지("expected string, received undefined")가 화면까지 그대로 나갑니다.
+  .string({ error: '이메일을 입력해 주세요' })
+  .trim()
+  .min(1, '이메일을 입력해 주세요')
+  .max(254, '이메일이 너무 깁니다')
+  .transform((v) => v.toLowerCase())
+  .pipe(z.email('이메일 형식이 올바르지 않습니다'));
+
 export const signupInputSchema = z
   .object({
     nickname: nicknameField('아이디는', '아이디에'),
+    /**
+     * 비밀번호를 잊었을 때 돌려줄 유일한 길입니다. 소셜 가입에는 이 칸이
+     * 없습니다 — 그쪽 신원은 제공자가 보증하고, 이메일은 참고용 사본으로
+     * player_identities 에 따로 남습니다 (lib/auth.ts linkOAuthAccount).
+     */
+    email: emailField,
     password: z
       .string()
       .min(MIN_PASSWORD_LENGTH, `비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다`)
@@ -120,6 +170,11 @@ export const signupInputSchema = z
     // 화면에서도 같은 검사를 하지만, 여기서 빠뜨리면 브라우저를 거치지 않는
     // 요청이 확인 없이 통과합니다.
     passwordConfirm: z.string(),
+    // 약관·개인정보처리방침 동의 + 만 14세 이상 확인. 화면의 체크박스 하나가 이 값이고,
+    // 브라우저를 거치지 않는 요청이 체크 없이 가입하지 못하게 서버가 다시 봅니다.
+    termsAccepted: z.literal(true, {
+      error: '이용약관과 개인정보처리방침에 동의해야 가입할 수 있습니다',
+    }),
   })
   .refine((v) => v.password === v.passwordConfirm, {
     message: '비밀번호가 서로 다릅니다',
@@ -188,12 +243,14 @@ export const reportInputSchema = z
     machineId: z.number().int().positive(),
     /** 컨디션 제보가 가리키는 기체. 나머지 종류에서는 무시됩니다 */
     cabinetId: z.number().int().positive().nullable().default(null),
-    /** null = 익명 제보. 익명은 있어요/없어졌어요 임계값에 세지 않습니다 */
-    playerId: z.number().int().positive().nullable().default(null),
+    // 익명 여부(playerId = null)는 세션이 있는지로 정해집니다 — 제보만은
+    // 로그인 없이도 되므로 라우트가 401 대신 null 을 넣습니다.
     kind: z.enum(['presence', 'absence', 'queue', 'condition']),
     waitCount: z.number().int().min(0).max(99).nullable().default(null),
     condition: z.number().int().min(1).max(5).nullable().default(null),
-    comment: optionalText,
+    // 화면에 한 줄로 보이는 메모입니다. 상한이 없으면 TEXT 컬럼에 무제한으로
+    // 들어가고, 그 문장이 /live 피드와 챗봇 프롬프트(lib/chat-tools.ts)에 실립니다.
+    comment: boundedOptionalText(REPORT_COMMENT_MAX, '메모는'),
   })
   // 종류와 무관한 필드가 섞여 들어오면 DB CHECK 에서 걸린다. 그 전에 여기서
   // 뜻이 통하는 메시지로 돌려주고, 남는 값은 잘라낸다.
@@ -231,14 +288,12 @@ export const reportInputSchema = z
 
 // ─── 오락실 리뷰 ─────────────────────────────────────────────
 export const reviewInputSchema = z.object({
-  playerId: z.number().int().positive(),
   rating: z.number().int().min(1, '평점은 1~5 입니다').max(5, '평점은 1~5 입니다'),
   body: z.string().trim().max(1000).transform((v) => (v === '' ? null : v)).nullable().default(null),
 });
 
 // ─── 채보 평가 ───────────────────────────────────────────────
 export const commentInputSchema = z.object({
-  playerId: z.number().int().positive(),
   body: z.string().trim().min(2, '평가 내용을 입력해 주세요').max(1000),
   // 자유 입력을 막는 이유는 lib/community-types.ts CHART_TAGS 주석 참고.
   tags: z.array(z.enum(CHART_TAGS)).max(4, '태그는 4개까지 고를 수 있습니다').default([]),
@@ -263,7 +318,6 @@ export const postInputSchema = z
      */
     machineId: z.number().int().positive().nullable().default(null),
     category: z.string().trim().min(1, '말머리를 골라주세요').max(20),
-    playerId: z.number().int().positive(),
     title: z.string().trim().min(2, '제목을 입력해 주세요').max(120),
     /**
      * 평문 본문. 서식 있는 글에서는 아래 transform 이 문서에서 다시 만들므로
@@ -290,7 +344,6 @@ export const postInputSchema = z
       // 탭이라 게임 값이 화면에 쓰이지 않고, 남겨 두면 탭 글 수만 부풀린다.
       machineId: isNotice(v.category) ? null : v.machineId,
       category: v.category,
-      playerId: v.playerId,
       title: v.title,
       body,
       bodyDoc,
@@ -323,7 +376,6 @@ export const postInputSchema = z
   });
 
 export const postCommentInputSchema = z.object({
-  playerId: z.number().int().positive(),
   body: z.string().trim().min(1, '댓글을 입력해 주세요').max(2000),
 });
 
@@ -362,7 +414,8 @@ export function parsePostQuery(searchParams: URLSearchParams) {
     machineId: int('machineId'),
     category: searchParams.get('category')?.trim() || null,
     sort: isPostSort(rawSort) ? rawSort : ('recent' as const),
-    playerId: int('playerId'),
+    // playerId(= 내 추천 여부 표시용)는 쿼리스트링이 아니라 세션에서 옵니다.
+    // 라우트가 붙입니다 — 받아 주면 남이 무엇을 추천했는지 훑을 수 있습니다.
     q: searchTerm(searchParams),
     limit: Math.min(int('limit') ?? POSTS_PAGE_SIZE, 100),
     offset: Number.isInteger(rawOffset) && rawOffset > 0 ? rawOffset : 0,

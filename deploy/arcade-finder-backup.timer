@@ -1,0 +1,13 @@
+# /etc/systemd/system/arcade-finder-backup.timer
+#   systemctl enable --now arcade-finder-backup.timer
+#   systemctl list-timers arcade-finder-backup.timer
+[Unit]
+Description=오락실 파인더 백업 — 매일 04:00
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
+import { json } from '@/lib/http';
+import { badJson, handle, invalid } from '@/lib/api-errors';
 import { createArcade, listArcades } from '@/lib/arcades';
 import { requireAdmin } from '@/lib/auth';
-import { arcadeInputSchema, formatIssues, parseListQuery } from '@/lib/validation';
+import { arcadeInputSchema, parseListQuery } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,10 +14,11 @@ export const dynamic = 'force-dynamic';
  *   &machines=1,3  선택 기종을 모두 보유한 곳만
  *   &lat=&lng=&radius=  반경(km) 검색 + 거리 정렬
  */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const { searchParams } = new URL(request.url);
   const arcades = await listArcades(parseListQuery(searchParams));
-  return NextResponse.json({ arcades });
+  // 목록 전체를 한 번에 내보내는 자리라 앱에서 가장 큰 응답입니다 — 압축은 lib/http.ts.
+  return json(request, { arcades });
 }
 
 /**
@@ -25,7 +28,7 @@ export async function GET(request: Request) {
  * 얹히는 제보(있어요/없어졌어요/대기/컨디션)와 리뷰로 굴러갑니다 — 이름·주소·
  * 좌표는 한 번 틀리면 지도에서 엉뚱한 곳이 되고, 되돌릴 사람이 없습니다.
  */
-export async function POST(request: Request) {
+async function onPost(request: Request) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
@@ -33,17 +36,21 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
+    return badJson();
   }
 
   const parsed = arcadeInputSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: '입력값이 올바르지 않습니다', details: formatIssues(parsed.error) },
-      { status: 400 },
-    );
+    return invalid(parsed.error);
   }
 
   const arcade = await createArcade(parsed.data);
   return NextResponse.json({ arcade }, { status: 201 });
 }
+
+/**
+ * 핸들러에서 빠져나온 예외를 JSON 500 으로 바꿉니다 (lib/api-errors.ts handle).
+ * 감싸지 않으면 본문 없는 500 이 나가고, 클라이언트의 `res.json()` 이 거기서 던집니다.
+ */
+export const GET = handle(onGet);
+export const POST = handle(onPost);

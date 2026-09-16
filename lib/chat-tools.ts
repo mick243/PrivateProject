@@ -121,7 +121,9 @@ export async function searchReports(args: ReportSearchArgs): Promise<unknown> {
       kind: r.kind,
       waitCount: r.waitCount ?? undefined,
       condition: r.condition ?? undefined,
-      comment: r.comment ?? undefined,
+      // 사용자가 쓴 문장이 모델 프롬프트에 들어가는 자리입니다. 길이를 자르고
+      // "누가 쓴 것" 임을 표시해, 메모 안의 지시문이 시스템 규칙처럼 읽히지 않게 합니다.
+      comment: r.comment ? `[사용자 메모] ${r.comment.slice(0, 200)}` : undefined,
       by: r.nickname ?? '익명',
       at: r.createdAt,
     })),

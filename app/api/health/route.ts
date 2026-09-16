@@ -14,7 +14,10 @@ export const dynamic = 'force-dynamic';
  *
  * 응답 코드
  *   200 healthy    DB 응답 정상, 의도한 엔진으로 동작 (DATABASE_URL 없는 개발 기본값의 PGlite 포함)
- *   200 degraded   DB 응답은 되지만 PostgreSQL → PGlite 폴백 중. 서비스는 되므로 200 이다
+ *   503 degraded   DB 응답은 되지만 PostgreSQL → PGlite 폴백 중. **트래픽을 받으면 안 된다** —
+ *                  이 인스턴스가 쓰는 글·제보는 정본에 남지 않는다. 예전에는 "화면은
+ *                  되니까" 200 이었는데, 그러면 클러스터 프록시(scripts/start-cluster.mjs)가
+ *                  200 만 보고 사본에 쓰는 인스턴스로 요청을 계속 보낸다 (2026-09-13 QA)
  *   503 unhealthy  DB 조회 실패 — 로드밸런서·프로브가 내리도록
  *
  * `checks` 의 값은 'ok' | 'fail' 만 쓴다. Pulse 프로브가 항목마다 `check.<이름>` 지표(1/0)로
@@ -50,7 +53,7 @@ export async function GET() {
       latency_ms: Date.now() - startedAt,
     },
     {
-      status: overall === 'unhealthy' ? 503 : 200,
+      status: overall === 'healthy' ? 200 : 503,
       // 프록시·CDN 이 상태 응답을 캐시하면 죽은 뒤에도 한동안 "healthy" 가 나간다
       headers: { 'cache-control': 'no-store' },
     },

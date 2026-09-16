@@ -74,6 +74,8 @@ export interface PostSummary {
   title: string;
   /** 목록용 본문 미리보기 (서버에서 잘라 보냄 — 전문을 목록에 실으면 응답이 커진다) */
   excerpt: string;
+  /** 첫 번째 첨부. 첨부가 없는 글은 null — 목록 행은 그때 썸네일 자리를 아예 비웁니다 */
+  thumbnail: PostThumbnail | null;
   commentCount: number;
   likeCount: number;
   viewCount: number;
@@ -113,7 +115,50 @@ export function isVideo(mime: string): boolean {
   return mime.startsWith('video/');
 }
 
-export interface PostDetail extends Omit<PostSummary, 'excerpt'> {
+/**
+ * 첨부 파일 주소. 파일은 `public/` 이 아니라 이 라우트로만 나갑니다
+ * (app/api/uploads/[id] · lib/uploads.ts 의 머리말 참고).
+ *
+ * 목록 썸네일과 상세 첨부가 같은 주소를 만들어야 브라우저 캐시가 한 번만 받습니다 —
+ * 두 곳에서 따로 문자열을 조립하면 한쪽만 바뀌어도 조용히 갈라집니다.
+ */
+export function attachmentUrl(id: number): string {
+  return `/api/uploads/${id}`;
+}
+
+/**
+ * 목록 행에 붙는 썸네일 — 그 글의 **첫 번째** 첨부입니다.
+ *
+ * 사진만 골라 오지 않는 이유: 영상을 먼저 올린 글이 목록에서 첨부 없는 글로 보입니다.
+ * 글쓴이가 맨 앞에 둔 것이 그 글의 얼굴이라고 봅니다.
+ *
+ * 동영상이면 `mime` 이 `video/*` 입니다. 그때 화면은 **파일을 받지 않고** 재생 표시만
+ * 그립니다 — 첨부는 원본 그대로 저장되므로(썸네일 파일이 없습니다) 목록에서 영상을
+ * 건드리면 한 화면에 수십 MB 가 내려옵니다 (PERFORMANCE.md 1순위 항목).
+ */
+export interface PostThumbnail {
+  id: number;
+  url: string;
+  mime: string;
+}
+
+/**
+ * 목록 썸네일 한 변의 픽셀 — next/image 에 주는 **원본 크기 힌트**입니다. 이 값으로
+ * 어느 크기까지 줄여 받을지가 정해집니다.
+ *
+ * 실제로 그리는 크기는 CSS(`app/globals.css` 의 `.post-thumb`)가 정하고, 두 값은
+ * 같아야 합니다 — 한쪽만 바꾸면 그리는 크기와 다른 크기의 파일을 받아 옵니다.
+ * (좁은 화면에서 CSS 가 56px 로 줄이는 것은 그대로 둡니다. 힌트보다 작게 그리는
+ * 것은 낭비가 아니라 여유입니다.)
+ */
+export const THUMBNAIL_SIZE = 72;
+
+/**
+ * `thumbnail` 도 뺍니다 — 상세에는 `attachments` 에 첨부 전부가 있고, 그중 첫 번째가
+ * 곧 썸네일입니다. 둘을 다 두면 "어느 쪽을 봐야 하나" 가 생기고 값이 갈릴 여지만
+ * 남습니다.
+ */
+export interface PostDetail extends Omit<PostSummary, 'excerpt' | 'thumbnail'> {
   /** machineId 와 함께 null 일 수 있습니다 (게임 없는 공지) */
   machineName: string | null;
   /** 평문 본문. 서식 있는 글에서도 채워집니다 (bodyDoc 의 평문 투영본) */

@@ -166,6 +166,9 @@ export function waitLevel(count: number, cabinetCount?: number | null): WaitLeve
  * 상한은 화면이 아니라 이 상수가 정합니다 — DB(machine_reports.wait_count)는
  * 0~99 까지 받으므로, 더 늘리고 싶으면 여기만 고치면 됩니다.
  */
+/** 제보 한 줄 메모 상한 — 화면(maxLength)과 서버(zod)가 같은 값을 봅니다 */
+export const REPORT_COMMENT_MAX = 300;
+
 export const WAIT_MAX = 12;
 
 /**
@@ -259,22 +262,29 @@ const COMMON_CHART_TAGS = [
   '후살',
 ] as const;
 
+/** EZ2AC · EZ2DJ 공용 — 두 기종이 같은 시리즈라 목록도 같습니다. */
+const EZ2_CHART_TAGS = ['트릴', '스크래치', '페달', '겹놋', ...COMMON_CHART_TAGS] as const;
+
 /**
  * **게임마다 목록이 다릅니다.** 무엇으로 어려운지가 게임마다 달라서입니다.
  *
- *   펌프 — 발판을 밟는 몸동작 (떨기 · 틀기 · 체중이동 · 체력)
- *   사볼 — 손으로 건반과 노브를 다루는 것 (지력 · 건반 · 노브 · 트릴)
+ *   펌프   — 발판을 밟는 몸동작 (떨기 · 틀기 · 겹발 · 체중이동 · 체력)
+ *   사볼   — 손으로 건반과 노브를 다루는 것 (지력 · 건반 · 노브 · 트릴)
+ *   EZ2 계열 — 건반에 턴테이블과 페달이 더 붙습니다 (트릴 · 스크래치 · 페달 · 겹놋)
  *
  * 사볼에서 지력·건반·노브를 맨 앞(1·2·3)에 두는 이유: 이 셋은 다른 태그와
  * 성격이 다릅니다. 나머지가 "이런 패턴이 나온다" 라면 이 셋은 **"무엇이 어려운
  * 채보인가" 를 가르는 축**이라, 커뮤니티 난이도표도 이 축으로 곡을 먼저 나눕니다.
  */
 export const CHART_TAGS_BY_MACHINE: Record<number, readonly string[]> = {
-  // 펌프 잇 업 — 지금까지의 목록 그대로
+  // 펌프 잇 업
+  //   겹발 — 두 발판을 한 번에 밟는 동시밟기. EZ2 계열의 '겹놋'(손 동시치기)과
+  //          같은 자리이고, 발로 하는 쪽이라 이름이 다릅니다.
   1: [
     '폭타',
     '떨기',
     '틀기',
+    '겹발',
     '연타',
     '체중이동',
     '체력',
@@ -287,6 +297,14 @@ export const CHART_TAGS_BY_MACHINE: Record<number, readonly string[]> = {
   ],
   // 사운드 볼텍스 — 발판 용어(떨기·틀기·체중이동·체력)를 빼고 손 쪽 용어로.
   3: ['지력', '건반', '노브', '트릴', ...COMMON_CHART_TAGS],
+  // EZ2AC · EZ2DJ — 같은 시리즈라 같은 목록입니다. 이 게임에서 사람들이 "무엇이
+  // 어렵다" 고 말할 때 쓰는 것은 건반 위의 손만이 아니라 **턴테이블과 페달**입니다.
+  //   스크래치 — 턴테이블 노트
+  //   페달     — 발로 밟는 노트 (다른 기종에는 없는 축이라 따로 둡니다)
+  //   겹놋     — 여러 건반을 한 번에 눌러야 하는 동시치기
+  //   트릴     — 사볼과 같은 뜻이라 같은 말을 씁니다 (표기가 갈리면 집계가 깨집니다)
+  2: EZ2_CHART_TAGS,
+  10: EZ2_CHART_TAGS,
 };
 
 /** 그 게임에서 고를 수 있는 태그. 등록되지 않은 게임은 공통 태그만. */
@@ -307,6 +325,7 @@ export const CHART_TAGS = [
   '폭타',
   '떨기',
   '틀기',
+  '겹발',
   '연타',
   '체중이동',
   '체력',
@@ -320,6 +339,9 @@ export const CHART_TAGS = [
   '건반',
   '노브',
   '트릴',
+  '스크래치',
+  '페달',
+  '겹놋',
 ] as const;
 
 export type ChartTag = (typeof CHART_TAGS)[number];
@@ -341,3 +363,60 @@ export interface ChartComment {
   createdAt: string;
   updatedAt: string;
 }
+
+// ─── 이모티콘 ────────────────────────────────────────────────
+
+/**
+ * 관리자가 등록한 그림 이모티콘 (db/migrate-062-emoticons.sql).
+ *
+ * 본문에는 `[[emo:id]]` 로 들어가고, 화면이 그 자리를 그림으로 바꿉니다
+ * (components/EmoticonText.tsx). 이름이 아니라 id 로 가리키는 이유는 이름을
+ * 바꿔도 옛 댓글이 깨지지 않아야 하기 때문입니다.
+ */
+export interface Emoticon {
+  id: number;
+  name: string;
+  /** `/api/emoticons/:id/image` — 내용 해시가 파일명이라 영구 캐시됩니다 */
+  url: string;
+}
+
+/** 이모티콘 이름 상한. 고르는 칸에 한 줄로 들어가야 합니다 */
+export const EMOTICON_NAME_MAX = 20;
+
+/**
+ * 이모티콘 한 장의 상한.
+ *
+ * 첨부 사진(5MB)보다 좁힙니다 — 이모티콘은 댓글 한 줄에 여러 개가 박히고 목록
+ * 화면에서 한꺼번에 뜹니다. 5MB gif 가 열 개면 그 화면은 못 씁니다.
+ */
+export const EMOTICON_MAX_BYTES = 2 * 1024 * 1024;
+
+/** 등록을 받는 형식. 사용자에게 보여 줄 문구와 서버 검사가 같은 목록을 봅니다 */
+export const EMOTICON_EXTS = ['jpg', 'png', 'gif'] as const;
+
+/** 본문에 박히는 마커. 글 본문 첨부의 `[[image:N]]` 과 같은 방식입니다 */
+export const emoticonToken = (id: number): string => `[[emo:${id}]]`;
+
+/** 마커를 찾는 정규식. `split` 에 쓰므로 캡처 그룹이 있습니다 */
+export const EMOTICON_TOKEN_RE = /\[\[emo:(\d+)\]\]/g;
+
+// ─── 관리 페이지 (/admin/emoticons) ─────────────────────────
+
+/** 관리 목록이 보는 한 줄. 고르는 칸의 Emoticon 보다 넓습니다 */
+export interface EmoticonAdminRow extends Emoticon {
+  mime: string;
+  bytes: number;
+  /** 올린 관리자 닉네임. 계정이 사라졌으면 null */
+  createdBy: string | null;
+  createdAt: string;
+  /** 목록에서 뺀 시각. NULL 이면 살아 있는 것 */
+  deletedAt: string | null;
+}
+
+/** 관리 목록의 상태 필터 */
+export const EMOTICON_STATUSES = ['live', 'deleted', 'all'] as const;
+export type EmoticonStatus = (typeof EMOTICON_STATUSES)[number];
+
+/** 관리 목록 한 페이지. 미리보기 그림이 줄마다 뜨므로 게시판보다 작게 */
+export const EMOTICON_ADMIN_PAGE_SIZE = 24;
+export const EMOTICON_ADMIN_PAGE_SIZE_MAX = 100;

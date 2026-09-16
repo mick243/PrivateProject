@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic';
  * 시도 제한 키는 PUT 과 같습니다 — 이 라우트로 우회 대입하는 것을 막습니다.
  */
 export async function POST(request: Request) {
-  const session = getSession(request);
+  const session = await getSession(request);
   if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
 
   let body: unknown;
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
   }
 
   const key = `account:${session.playerId}`;
-  const lockedMs = loginLockRemainingMs(key);
+  const lockedMs = await loginLockRemainingMs(key);
   if (lockedMs > 0) {
     return NextResponse.json(
       { error: `시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요` },
@@ -48,10 +48,10 @@ export async function POST(request: Request) {
   }
 
   if (!(await verifyPlayerPassword(session.playerId, parsed.data.password))) {
-    noteLoginFailure(key);
+    await noteLoginFailure(key);
     return NextResponse.json({ error: '비밀번호가 올바르지 않습니다' }, { status: 403 });
   }
 
-  clearLoginFailures(key);
+  await clearLoginFailures(key);
   return NextResponse.json({ ok: true });
 }

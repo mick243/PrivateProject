@@ -1,7 +1,9 @@
 node_modules/
 .next/
 .pglite/
-/uploads/
+# uploads/ 는 **추적합니다.** 첨부가 `process.cwd()/uploads` 에 있어서, 무시하면
+# 워크트리마다 파일이 없어 글의 사진·영상이 404 가 됩니다 (lib/uploads.ts).
+# ⚠ 바이너리가 이력에 영구히 남습니다 — 큰 영상을 올릴 거면 S3/R2 로 옮기세요.
 # DB 덤프 (pg_dump). 파괴적 작업 전에 떠 두는 복구용 — 커밋하면 안 됩니다
 backups/
 .env.local
@@ -14,3 +16,6 @@ coverage/
 
 # npm run games:localdata 가 뽑아낸 인허가 목록 (원본은 공공데이터포털에 있음)
 localdata/
+
+# 매일 도는 소식 동기화가 남기는 기록 (scripts/sync-piu-news.cmd)
+logs/

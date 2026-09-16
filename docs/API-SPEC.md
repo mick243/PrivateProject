@@ -3,6 +3,54 @@
 > 작성일: 2026-08-25 · 라우트 28개 / 핸들러 40개 (기획서 집계와 일치)
 > 출처: `app/api/` 전 라우트 전수 조사, [오락실파인더_기획서.html](../../오락실파인더_기획서.html)
 
+## 에러 응답 계약 (2026-09-11 정규화)
+
+실패 응답은 **어떤 경로로 나가도** 이 모양입니다. 클라이언트가 전부 이걸 전제로 씁니다.
+
+```ts
+const data = await res.json();
+if (!res.ok) setError(data.error ?? '기본 문구');
+```
+
+```json
+{ "error": "사람이 읽는 한 문장" }
+{ "error": "입력값이 올바르지 않습니다", "details": ["nickname: 2자 이상이어야 합니다"] }
+```
+
+| 상태 | 언제 | 만드는 곳 |
+|---|---|---|
+| 400 | 경로 id 가 잘못됨 | `badId()` |
+| 400 | 본문이 JSON 이 아님 | `badJson()` |
+| 400 | 스키마 위반 (+`details`) | `invalid(parsed.error)` |
+| 401 | 세션이 없음 | `needLogin()` |
+| 404 | 대상이 없음 | `notFound('오락실을 찾을 수 없습니다')` |
+| 409 | 상태가 어긋남 (중복 리뷰 등) | `fail(409, '…')` |
+| 500 | 그 밖의 모든 예외 | `handle()` 이 자동으로 |
+
+전부 `lib/api-errors.ts` 에 있습니다. 라우트마다 다시 쓰지 마세요 — 정규화 전에는
+`'잘못된 id 입니다'` 13곳 · `'JSON 본문을 파싱할 수 없습니다'` 19곳 ·
+`'입력값이 올바르지 않습니다'` 17곳 · `'로그인이 필요합니다'` 11곳이었고,
+`parseId` 가 7곳에 재정의돼 있었습니다.
+
+### 500 은 원인을 말하지 않습니다
+
+본문은 늘 같은 문구이고 실제 원인은 **서버 로그로만** 갑니다. 스택·SQL·연결 문자열이
+화면으로 새면 그게 정찰 자료입니다. 사용자가 고칠 수 있는 잘못(입력값·권한·중복)만
+구체적으로 말합니다.
+
+### ⚠ 아직 다 적용되지 않았습니다
+
+`handle()` 과 공용 헬퍼는 **라우트 7개**(`arcades` · `arcades/:id` ·
+`arcades/:id/reports` · `posts` · `posts/:id` · `reports` · `tier`)에만 적용했습니다.
+나머지는 `mfa-jwt-token-status` 브랜치가 같은 파일들을 수정 중이라, 지금 손대면
+충돌만 만듭니다 — **그 병합 뒤에 한 번에** 하세요. 기계적인 작업입니다.
+
+감싸지 않은 라우트는 예외가 났을 때 **본문 없는 500** 을 내고, 그러면 클라이언트의
+`res.json()` 이 거기서 던져 화면이 이유를 못 보여 줍니다(실측으로 확인한 동작입니다).
+
+---
+
+
 ## 0. 공통 규약
 
 - 모든 라우트: `runtime = 'nodejs'`, `dynamic = 'force-dynamic'` (예외: `/api/uploads/[id]`는 runtime만, `/api/chat`은 `maxDuration = 120` 추가)
@@ -10,7 +58,8 @@
 - zod 검증 실패 → `400 {error: '입력값이 올바르지 않습니다', details: string[]}` (`/api/account*`는 `{error: details[0]}`)
 - 경로 id 불량 → `400 {error: '잘못된 id 입니다'}`
 - **관리자 게이트**: `requireAdmin(request)` — 세션 쿠키를 읽고 DB에서 `is_admin`을 **재조회**(권한 회수 즉시 반영). 관리자-또는-소유자 판정은 `isAdminRequest(request)`.
-- 인증: 서명된 세션 쿠키 `arcade_session` (scrypt 해시, `sealPayload` 서명 토큰). 알려진 한계 — 게시판 소유자 판정이 아직 클라이언트가 보낸 `playerId`를 신뢰함(기획서 "아직 닫히지 않았습니다" 절, 관리자 경로만 세션 근거).
+- 인증: 서명된 세션 쿠키 `arcade_session` (scrypt 해시, `sealPayload` 서명 토큰).
+- **신원은 오직 세션**: 쓰기는 `requirePlayer(request)`(비로그인 `401 {error: '로그인이 필요합니다'}`), 개인 표시가 섞인 읽기는 `sessionPlayerId(request)`(비로그인 = `null`). **본문·쿼리의 `playerId` 는 어디서도 읽지 않습니다** — 스키마에 없어 zod 가 버립니다(`lib/validation.ts` 머리말). 제보만 로그인 없이 받고 그때 `playerId = null` 입니다.
 
 ---
 
@@ -39,7 +88,7 @@
 `?limit`(기본 30, 상한 200). `200 {reports: MachineReport[]}`.
 
 ### `POST /api/arcades/[id]/reports`
-본문 `reportInputSchema`: `{playerId?, kind: 'presence'|'absence'|'queue'|'condition', machineId, cabinetId?, waitCount?, condition?, comment?}` — 종류별 필수 필드는 스키마+DB CHECK 이중 강제.
+본문 `reportInputSchema`: `{kind: 'presence'|'absence'|'queue'|'condition', machineId, cabinetId?, waitCount?, condition?, comment?}` — 종류별 필수 필드는 스키마+DB CHECK 이중 강제.
 
 | 상태 | 의미 |
 |---|---|
@@ -49,8 +98,8 @@
 
 ### `GET /api/arcades/[id]/reviews` → `200 {reviews}`
 ### `POST /api/arcades/[id]/reviews`
-`{playerId, rating: 1~5, body?}` — **1인 1리뷰 UPSERT**(평점 물타기 차단). `201 {review, reviews, arcade}`(평점 캐시 변경으로 arcade 동봉) | `404`.
-### `DELETE /api/arcades/[id]/reviews?playerId=N` → `200 {reviews, arcade}` | `400`(playerId 없음) | `404`
+`{rating: 1~5, body?}` (로그인 필요 `401`) — **1인 1리뷰 UPSERT**(평점 물타기 차단). `201 {review, reviews, arcade}`(평점 캐시 변경으로 arcade 동봉) | `404`.
+### `DELETE /api/arcades/[id]/reviews` → `200 {reviews, arcade}` | `401` | `404` — 세션 주인의 리뷰
 
 ---
 
@@ -110,38 +159,38 @@
 ### `GET /api/boards` → `200 {boards, categories}` — 글 0개인 게임도 포함(아니면 새 게임이 첫 글을 받을 수 없음)
 
 ### `GET /api/posts`
-`machineId`(없음 = 전체 탭) · `category` · `sort=recent|popular`(popular = 추천 ≥ 5) · `playerId`(내 추천 여부) · `limit`(기본 20, 상한 100) · `offset`.
+`machineId`(없음 = 전체 탭) · `category` · `sort=recent|popular`(popular = 추천 ≥ 5) · `limit`(기본 20, 상한 100) · `offset`. 내 추천 여부는 세션에서 옵니다.
 `200 {posts, notices, total, hasMore}` — `notices`는 탭·말머리·정렬과 무관하게 고정(최신 5), `posts`와 중복 없고 `total`에 **불포함**.
 
 ### `POST /api/posts`
-`postInputSchema`: `{machineId|null, category, playerId, title, body?, bodyDoc?}` — `bodyDoc`은 zod가 아닌 `normalizeDoc`이 단독 검증(재귀 화이트리스트 중복 방지). **`noticeGuard`** 통과 필요. `201 {post}` · FK 위반 → `400 {error: '말머리 또는 게임을 다시 확인해 주세요'}`(500 아님).
+`postInputSchema`: `{machineId|null, category, title, body?, bodyDoc?}` (로그인 필요 `401`) — `bodyDoc`은 zod가 아닌 `normalizeDoc`이 단독 검증(재귀 화이트리스트 중복 방지). **`noticeGuard`** 통과 필요. `201 {post}` · FK 위반 → `400 {error: '말머리 또는 게임을 다시 확인해 주세요'}`(500 아님).
 
-> **noticeGuard** (`app/api/posts/notice-guard.ts`): 말머리가 `notice`면 세션 쿠키로 관리자 확인(본문 `playerId`는 클라이언트 작성물이므로 불신) + `세션.playerId === 본문.playerId` 요구 → 위반 시 `403 {error: '공지는 관리자 본인 이름으로만 쓸 수 있습니다'}` — 공지의 작성자는 출처 그 자체.
+> **noticeGuard** (`app/api/posts/notice-guard.ts`): 말머리가 `notice`면 세션 쿠키로 관리자 확인 → 아니면 `403`. 작성자가 세션 주인이므로 "남의 이름으로 공지" 는 성립하지 않습니다(예전에는 본문의 `playerId` 가 작성자라 그 대조가 필요했습니다).
 
 ### `GET /api/posts/[id]`
-`?playerId` · `?view=1`(조회수 증가 — 첫 열람에만) · `?commentOffset`(서버가 범위로 클램프, 실제 사용값이 `post.commentOffset`으로 회신). `200 {post}` | `404`.
+`?view=1`(조회수 증가 — 첫 열람에만) · `?commentOffset`(서버가 범위로 클램프, 실제 사용값이 `post.commentOffset`으로 회신). `200 {post}` | `404`.
 
 ### `PUT /api/posts/[id]`
 POST와 동일 스키마 + `noticeGuard` 재실행("일반 글로 쓰고 말머리만 공지로 바꾸기" 경로 차단). 소유자 아님 → `403`. `200 {post}` | `404` | FK `400`.
 
-### `DELETE /api/posts/[id]?playerId=N`
-관리자(`isAdminRequest`) → 남의 글 삭제 가능. 일반 사용자 → 본인 글만(`403`). `204` | `404`. **수정은 관리자에게도 미개방** — 삭제는 중재, 남의 이름으로 고쳐 쓰기는 아님.
+### `DELETE /api/posts/[id]`
+관리자(`isAdminRequest`) → 남의 글 삭제 가능. 일반 사용자 → 본인 글만(`403`), 비로그인 `401`. `204` | `404`. **수정은 관리자에게도 미개방** — 삭제는 중재, 남의 이름으로 고쳐 쓰기는 아님.
 
-### `POST /api/posts/[id]/like`
-`{playerId, commentOffset?}` — on/off 쌍이 아닌 단일 **토글**(DB 현재 상태가 정본, 두 탭이 어긋날 수 없음). `200 {liked, post}` | `404`.
+### `PUT /api/posts/[id]/like` · `DELETE /api/posts/[id]/like?commentOffset=`
+켜기/끄기를 나눈 **멱등** 쌍입니다 — 토글은 재전송·두 번 탭에 뒤집혀 인기글 정렬이 조용히 틀어집니다. `PUT` 본문 `{commentOffset?}` 은 생략 가능(보고 있던 댓글 페이지 유지용). `200 {liked, post}` | `401` | `404`.
 
 ### `POST /api/posts/[id]/comments`
-`{playerId, body}`. 갱신된 글 전체를 **막 쓴 댓글이 보이는 페이지**(`lastCommentOffset`)로 반환. `201 {post}` | `404`.
+`{body}` (로그인 필요 `401`). 갱신된 글 전체를 **막 쓴 댓글이 보이는 페이지**(`lastCommentOffset`)로 반환. `201 {post}` | `404`.
 
-### `DELETE /api/posts/[id]/comments?commentId=&playerId=&commentOffset=`
-관리자는 `playerId` 불요. 결과 null → 관리자 `404`(댓글 없음) vs 일반 `403`(본인 것만). `200 {post}`.
+### `DELETE /api/posts/[id]/comments?commentId=&commentOffset=`
+본인 또는 관리자 — 둘 다 근거는 세션입니다. 결과 null → 관리자 `404`(댓글 없음) vs 일반 `403`(본인 것만). `200 {post}` | `401`.
 
 ---
 
 ## 6. 업로드 (Uploads)
 
 ### `POST /api/uploads`
-multipart: `file`(레거시 별칭 `image` 허용) + `playerId`.
+multipart: `file`(레거시 별칭 `image` 허용). 로그인 필요 — **본문을 읽기 전에** `401` 로 막습니다(비로그인이 50MB 를 올려 두고 거절당하지 않게).
 선언된 `file.size`를 **버퍼링 전에** 검사(500MB 업로드를 메모리에 다 읽고 거부하는 사고 방지) → `413`. 저장은 **매직 바이트 판정**(확장자·Content-Type은 클라이언트 통제물) + 타입별 상한(이미지 5MB · 영상 50MB).
 `201 {file, image}` · 미지원 형식 `415` · 초과 `413`. 알려진 부채: 초안 이탈 시 `post_id IS NULL` 고아 행 — 정리 배치 없음(부분 인덱스는 준비됨).
 
@@ -154,29 +203,29 @@ multipart: `file`(레거시 별칭 `image` 허용) + `playerId`.
 ## 7. 서열표 (Tier / Charts)
 
 ### `GET /api/tier`
-`machineId` · `mode` · `level` · `playerId`. `machineId`는 `listGames()` 검증 후 폴백(서열표 없는 기종 URL이 화면을 비우지 않게). `mode`/`level`은 *희망값* — `정확 일치 ?? 같은 모드 ?? levels[0]` 순으로 서버가 결정. `200 {games, machineId, levels, board}` (`board: null` = 채보 없음).
+`machineId` · `versionId` · `mode` · `level`(내 클리어·투표 표시는 세션 기준). `machineId`는 `listGames()` 검증 후 폴백(서열표 없는 기종 URL이 화면을 비우지 않게). `versionId`도 그 게임의 `versions` 로 검증 후 **첫 버전**으로 폴백 — 버전이 없는 게임(펌프·사볼)은 언제나 `null` 이고 `charts.version_id` 로 좁히지 않음. `mode`/`level`은 *희망값* — `정확 일치 ?? 같은 모드 ?? levels[0]` 순으로 서버가 결정(`levels` 자체가 이미 그 버전으로 좁혀진 목록). `level=unknown`(`UNKNOWN_LEVEL`)은 **난이도 미상 채보들의 칸** — 그 칸의 `levels[].level` 과 `board.level` 은 `null` 입니다. `200 {games, machineId, versionId, levels, board}` (`board: null` = 채보 없음).
 
-### `GET /api/charts/[id]?playerId=` → `200 {chart}` | `404`
+### `GET /api/charts/[id]` → `200 {chart}` | `404` — 내 클리어·투표는 세션 기준
 
 ### `POST /api/charts/[id]/clear`
-`{playerId, cleared: boolean}`. 클리어 해제 시 그 채보의 투표가 FK CASCADE로 소멸. `200 {chart}`.
+`{cleared: boolean}` (로그인 필요 `401`). 클리어 해제 시 그 채보의 투표가 FK CASCADE로 소멸. `200 {chart}`.
 
 ### `POST /api/charts/[id]/vote`
-`{playerId, value: number|null}`(null = 철회). 범위는 하드코딩이 아닌 `tier_settings`의 `voteMin/voteMax`로 검증 → `400`. 미클리어 `NotClearedError` → `403` — **DB 복합 FK로도 강제**되는 이중 게이트. `200 {chart}`.
+`{value: number|null}`(null = 철회, 로그인 필요 `401`). 범위는 하드코딩이 아닌 `tier_settings`의 `voteMin/voteMax`로 검증 → `400`. 미클리어 `NotClearedError` → `403` — **DB 복합 FK로도 강제**되는 이중 게이트. `200 {chart}`.
 
 ### `POST /api/charts/[id]/special`
-`{playerId, special: boolean}` — 특수패턴(개인차 아닌 기믹 채보) 표시. 마이그레이션 041부터 **1인 1표 `special_marks` + `special_min`(기본 3) 합의제**. 클리어 게이트 없음(세는 대상이 사람이므로). `200 {chart}`.
+`{special: boolean}`(로그인 필요 `401`) — 특수패턴(개인차 아닌 기믹 채보) 표시. 마이그레이션 041부터 **1인 1표 `special_marks` + `special_min`(기본 3) 합의제**. 클리어 게이트 없음(세는 대상이 사람이므로). `200 {chart}`.
 
 ### `GET /api/charts/[id]/comments` → `200 {comments}`
 ### `POST /api/charts/[id]/comments`
-`{playerId, body, tags}` — 태그는 `CHART_TAGS` 화이트리스트 최대 4개, 1인 1건 UPSERT, **클리어 게이트 없음**(어디서 막혔는지도 정보). `201 {chart}` | `404`.
-### `DELETE /api/charts/[id]/comments?playerId=N` → `200 {chart}` | `400` | `404`
+`{body, tags}`(로그인 필요 `401`) — 태그는 `CHART_TAGS` 화이트리스트 최대 4개, 1인 1건 UPSERT, **클리어 게이트 없음**(어디서 막혔는지도 정보). `201 {chart}` | `404`.
+### `DELETE /api/charts/[id]/comments` → `200 {chart}` | `401` | `404` — 세션 주인의 평가
 
 ---
 
 ## 8. 즐겨찾기 (Favorites) — 세션 전용
 
-플레이어는 **세션에서만** 결정(본문 `playerId`를 믿는 구식 경로와 달리 — 남의 데이터를 조용히 바꾸는 일이므로).
+플레이어는 **세션에서만** 결정합니다. R1 이후로는 이 문서의 모든 쓰기가 같습니다 — 여기가 그 첫 자리였을 뿐입니다.
 
 - `GET /api/favorites` → `200 {arcadeIds}` — 비로그인은 `401`이 아닌 `200 {arcadeIds: []}`(사이드바가 무조건 호출하며, 비로그인은 오류가 아님)
 - `POST /api/favorites` `{arcadeId}` → `200 {arcadeIds}` | `401` | `400` | `404`(FK 위반을 존재 검사로 사용 — TOCTOU 없음)
@@ -187,8 +236,7 @@ multipart: `file`(레거시 별칭 `image` 허용) + `playerId`.
 ## 9. 참조 목록
 
 - `GET /api/machines` → `200 {machines}` — 서버 5분 TTL 캐시
-- `GET /api/games` → `200 {games}` — `tier_settings` 있는 기종만, 캐시
-- `GET /api/players` → `200 {players}` — 인증 도입 전 프로토타입 잔재(주석에 명시)
+- `GET /api/games` → `200 {games}` — `tier_settings` 있는 기종만(모드·버전 포함), 캐시
 
 ## 10. 지역 검색 (Places)
 
