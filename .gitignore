@@ -9,7 +9,10 @@ node_modules/
 # 그래서 clone · 워크트리에는 첨부가 없고 글의 사진·영상이 404 입니다. 의도된 동작이고,
 # 원본은 주 체크아웃의 uploads/ 에 있습니다 (lib/uploads.ts 가 process.cwd() 기준으로 읽음).
 # 백업은 git 이 아니라 tar.zst 로 뜹니다 — deploy/README.md 의 복구 절차를 보세요.
-uploads/
+# 맨 앞 / 는 필수입니다 — 빼면 어느 깊이든 uploads 디렉터리가 걸려서 app/api/uploads/
+# (라우트) 에 새로 만든 파일이 소리 없이 빠집니다. 그 라우트는 이미 한 번 사라졌다
+# PR #3 으로 되살아났습니다.
+/uploads/
 # DB 덤프 (pg_dump). 파괴적 작업 전에 떠 두는 복구용 — 커밋하면 안 됩니다
 backups/
 .env.local
