@@ -6,6 +6,8 @@ import {
   UNIQUE_CODE,
   isSpecialChart,
   tierCodeOf,
+  chartVideoSearchUrl,
+  youtubeWatchUrl,
 } from '@/lib/tier-types';
 import type { ChartDetail, TierGrade } from '@/lib/tier-types';
 import ChartComments from './ChartComments';
@@ -118,6 +120,10 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
 
   const buckets = bucketVotes(chart);
   const maxCount = Math.max(1, ...buckets.map((b) => b.count));
+  // DB 값을 그대로 href 에 꽂지 않습니다 — 유튜브 주소일 때만 링크가 됩니다.
+  const videoUrl = youtubeWatchUrl(chart.videoUrl);
+  // 등록된 영상이 없으면 검색으로 보냅니다 — 빈 자리를 두는 것보다 낫습니다.
+  const searchUrl = chartVideoSearchUrl(chart);
 
   return (
     <div className="detail">
@@ -138,6 +144,30 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
           닫기
         </button>
       </div>
+
+      {/*
+        채보 영상. 숫자(등급·평균·투표 수)보다 **위**에 둡니다 — 처음 보는 채보에
+        투표하려면 먼저 그 채보가 어떻게 생겼는지 봐야 하고, 숫자는 그 다음입니다.
+        새 탭으로 엽니다: 여기서 나가면 보던 서열표와 투표 슬라이더를 잃습니다.
+      */}
+      <a
+        className={videoUrl ? 'chart-video' : 'chart-video is-search'}
+        href={videoUrl ?? searchUrl}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path
+            d="M12 3c-4 0-6.7.3-6.7.3A2.6 2.6 0 0 0 3 5.6S2.7 7.6 2.7 12s.3 6.4.3 6.4a2.6 2.6 0 0 0 2.3 2.3s2.7.3 6.7.3 6.7-.3 6.7-.3a2.6 2.6 0 0 0 2.3-2.3s.3-2 .3-6.4-.3-6.4-.3-6.4a2.6 2.6 0 0 0-2.3-2.3S16 3 12 3Z"
+            fill="currentColor"
+          />
+          <path d="M10 8.5v7l6-3.5-6-3.5Z" fill="var(--panel)" />
+        </svg>
+        <span>{videoUrl ? '채보 영상 보기' : '채보 영상 찾기'}</span>
+        <span className="muted small">
+          {videoUrl ? 'YouTube · 새 탭' : 'YouTube 검색 · 새 탭'}
+        </span>
+      </a>
 
       <div className="stat-grid">
         <div className="stat">

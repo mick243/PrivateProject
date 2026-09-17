@@ -219,6 +219,62 @@ export interface ChartDetail extends ChartSummary {
   difficultyLabel: string | null;
   /** 채보 평가 (코멘트 + 성향 태그) */
   comments: ChartComment[];
+  /**
+   * 대표 플레이 영상(유튜브). 없으면 null (db/migrate-065-chart-video.sql).
+   *
+   * 목록(ChartSummary)에는 넣지 않습니다 — 한 보드에 채보가 수백 개인데 그 중
+   * 상세를 여는 것은 한 번에 하나입니다.
+   */
+  videoUrl: string | null;
+}
+
+/**
+ * DB 에 담긴 주소를 **링크로 그려도 되는 것만** 돌려줍니다. 아니면 null.
+ *
+ * 값을 넣는 곳이 마이그레이션·관리자뿐이어도 화면에서 한 번 더 봅니다 —
+ * href 에 그대로 꽂는 값이라, 잘못 들어온 `javascript:` 한 줄이 곧 실행입니다.
+ * 받는 것은 https 인 youtube.com · youtu.be 뿐입니다(이 칸의 용도가 그것뿐).
+ */
+export function youtubeWatchUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:') return null;
+  const host = url.hostname.replace(/^www\./, '');
+  const ok = host === 'youtube.com' || host === 'm.youtube.com' || host === 'youtu.be';
+  return ok ? url.toString() : null;
+}
+
+/**
+ * 영상이 **등록되지 않은** 채보의 유튜브 검색 주소.
+ *
+ * 채보 하나하나에 영상을 손으로 달아 두는 것은 규모가 허락하지 않습니다 —
+ * 서열표에 담긴 채보가 20,267개(펌프만 4,466개)입니다. 대신 그 채보를 가리키는
+ * 검색어를 **채보 자신의 값으로** 만들어, 등록된 영상이 없어도 한 번 눌러
+ * 찾아볼 수 있게 합니다.
+ *
+ * 검색어는 커뮤니티가 실제로 쓰는 표기를 따릅니다 — 펌프는 'Beethoven Virus S4'
+ * 처럼 모드 글자와 레벨을 붙여 씁니다. 게임 이름과 '채보' 를 덧붙여 같은 제목의
+ * 다른 게임 영상과 노래 영상이 덜 섞이게 합니다.
+ */
+export function chartVideoSearchUrl(chart: {
+  title: string;
+  mode: string | null;
+  level: number | null;
+  machineName: string;
+}): string {
+  const step =
+    chart.mode === null
+      ? chart.level === null
+        ? ''
+        : `Lv.${chart.level}`
+      : `${chart.mode}${chart.level ?? ''}`;
+  const query = [chart.title, step, chart.machineName, '채보'].filter(Boolean).join(' ');
+  return `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
 }
 
 export interface Player {

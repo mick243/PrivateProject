@@ -231,6 +231,9 @@ export function listLevels(
 const CHART_SELECT = `
   SELECT c.id, s.title, s.artist, s.machine_id, c.mode, c.difficulty, c.level,
          c.vote_count, c.avg_vote, c.convergence, c.tier_code, c.special_count,
+         -- 상세에서만 씁니다(toSummary 는 읽지 않습니다). 여기 두는 이유는 상세가
+         -- 이 문장 하나로 끝나기 때문입니다 — 따로 물으면 왕복이 하나 늘어납니다.
+         c.video_url,
          (cr.player_id IS NOT NULL) AS my_clear,
          dv.value AS my_vote,
          (sm.player_id IS NOT NULL) AS my_special
@@ -395,6 +398,7 @@ export async function getChartDetail(
   const summary = toSummary(rows[0]);
   return {
     ...summary,
+    videoUrl: (rows[0].video_url as string) ?? null,
     votes: voteRows.map((v) => num(v.value)!),
     grades,
     settings,

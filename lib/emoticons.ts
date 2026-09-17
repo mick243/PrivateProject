@@ -80,6 +80,26 @@ export async function getEmoticonFile(
   return row ? { storageKey: row.storage_key, mime: row.mime } : null;
 }
 
+/**
+ * 여러 이모티콘의 이름·파일을 한 번에. **지운 것도 돌려줍니다** — 리뷰 요약이
+ * 옛 리뷰에 박힌 이모티콘을 그림으로 보려면 목록에서 뺀 것도 읽어야 합니다.
+ * 고르는 칸에 뜨는지는 여기 일이 아닙니다(listEmoticons).
+ */
+export async function getEmoticonsByIds(
+  ids: number[],
+): Promise<Map<number, { name: string; storageKey: string; mime: string }>> {
+  const out = new Map<number, { name: string; storageKey: string; mime: string }>();
+  const unique = [...new Set(ids)].filter((n) => Number.isInteger(n) && n > 0);
+  if (unique.length === 0) return out;
+  const db = await getDb();
+  const { rows } = await db.query<{ id: number | string; name: string; storage_key: string; mime: string }>(
+    `SELECT id, name, storage_key, mime FROM emoticons WHERE id = ANY($1::int[])`,
+    [unique],
+  );
+  for (const r of rows) out.set(Number(r.id), { name: r.name, storageKey: r.storage_key, mime: r.mime });
+  return out;
+}
+
 export async function createEmoticon(input: {
   name: string;
   storageKey: string;

@@ -3,9 +3,11 @@
 import Link from 'next/link';
 
 import { useEffect, useState } from 'react';
-import { chartTagsFor, timeAgo } from '@/lib/community-types';
+import { CHART_COMMENTS_PAGE_SIZE, chartTagsFor, timeAgo } from '@/lib/community-types';
+import { totalPagesOf } from '@/lib/board-types';
 import EmoticonPicker from './EmoticonPicker';
 import EmoticonText from './EmoticonText';
+import Pagination from './Pagination';
 import ScrollStrip from './ScrollStrip';
 import type { ChartDetail } from '@/lib/tier-types';
 
@@ -34,6 +36,17 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  /** 1-based. 다른 채보를 열면 목록이 통째로 바뀌므로 chart.id 가 바뀔 때 1쪽으로 */
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    setPage(1);
+  }, [chart.id]);
+  const totalPages = totalPagesOf(chart.comments.length, CHART_COMMENTS_PAGE_SIZE);
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = chart.comments.slice(
+    (currentPage - 1) * CHART_COMMENTS_PAGE_SIZE,
+    currentPage * CHART_COMMENTS_PAGE_SIZE,
+  );
 
   // 채보를 바꾸거나 내 평가가 바뀌면 폼을 그 상태로 되돌린다.
   useEffect(() => {
@@ -85,7 +98,9 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
     if (!playerId) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/charts/${chart.id}/comments`, { method: 'DELETE' });
+      const res = await fetch(`/api/charts/${chart.id}/comments`, {
+        method: 'DELETE',
+      });
       const data = await res.json();
       if (res.ok) {
         onChanged(data.chart as ChartDetail);
@@ -163,12 +178,14 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
           </div>
           {error && <p className="warn">{error}</p>}
           <p className="hint">
-            클리어하지 않아도 남길 수 있습니다 — 막힌 지점도 정보입니다. 목록에는 클리어 여부가
-            함께 표시됩니다.
+            클리어하지 않아도 남길 수 있습니다 — 막힌 지점도 정보입니다. 목록에는 클리어 여부가 함께
+            표시됩니다.
           </p>
         </div>
       ) : (
-        <div className="form-actions">
+        /* 내 평가가 있을 때의 단추 줄. 폼(.comment-form)과 같은 12px 로 목록과 떼어 둡니다 —
+           여백이 없으면 삭제 단추가 첫 평가 카드의 테두리에 붙어 한 덩이로 읽힙니다. */
+        <div className="form-actions comment-mine-actions">
           <button type="button" className="btn btn-sm" onClick={() => setEditing(true)}>
             내 평가 수정
           </button>
@@ -181,31 +198,41 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
       {chart.comments.length === 0 ? (
         <p className="muted small">아직 평가가 없습니다.</p>
       ) : (
-        <ul className="comment-list">
-          {chart.comments.map((c) => (
-            <li key={c.id} className={c.playerId === playerId ? 'is-mine' : ''}>
-              <div className="comment-head">
-                <strong>{c.nickname}</strong>
-                {c.cleared ? (
-                  <span className="tag tag-clear">클리어</span>
-                ) : (
-                  <span className="tag tag-noclear">미클리어</span>
-                )}
-                <span className="muted small">{timeAgo(c.updatedAt)}</span>
-              </div>
-              {c.tags.length > 0 && (
-                <div className="tag-row">
-                  {c.tags.map((t) => (
-                    <span key={t} className="tag">
-                      {t}
-                    </span>
-                  ))}
+        <>
+          <ul className="comment-list">
+            {pageItems.map((c) => (
+              <li key={c.id} className={c.playerId === playerId ? 'is-mine' : ''}>
+                <div className="comment-head">
+                  <strong>{c.nickname}</strong>
+                  {c.cleared ? (
+                    <span className="tag tag-clear">클리어</span>
+                  ) : (
+                    <span className="tag tag-noclear">미클리어</span>
+                  )}
+                  <span className="muted small">{timeAgo(c.updatedAt)}</span>
                 </div>
-              )}
-              <p className="comment-body"><EmoticonText text={c.body} /></p>
-            </li>
-          ))}
-        </ul>
+                {c.tags.length > 0 && (
+                  <div className="tag-row">
+                    {c.tags.map((t) => (
+                      <span key={t} className="tag">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="comment-body">
+                  <EmoticonText text={c.body} />
+                </p>
+              </li>
+            ))}
+          </ul>
+          <Pagination
+            page={currentPage}
+            total={chart.comments.length}
+            pageSize={CHART_COMMENTS_PAGE_SIZE}
+            onChange={setPage}
+          />
+        </>
       )}
     </div>
   );
