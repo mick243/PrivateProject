@@ -63,6 +63,7 @@ export async function upsertReview(input: {
     [input.arcadeId, input.playerId, input.rating, input.body],
   );
   await recalc(input.arcadeId);
+  await dropSummary(input.arcadeId);
 
   const { rows: full } = await db.query<Record<string, unknown>>(
     `${REVIEW_SELECT} WHERE r.id = $1`,
@@ -78,5 +79,18 @@ export async function deleteReview(arcadeId: number, playerId: number): Promise<
     [arcadeId, playerId],
   );
   await recalc(arcadeId);
+  await dropSummary(arcadeId);
   return rows.length > 0;
+}
+
+/**
+ * 리뷰가 바뀌었으니 AI 요약 캐시를 버립니다 (db/migrate-073-review-summaries.sql).
+ *
+ * lib/review-summary.ts 를 import 하지 않고 SQL 을 직접 씁니다 — 그쪽이 이 파일의
+ * listReviews 를 쓰므로 서로 import 하면 순환이 됩니다. 다음에 상세를 여는 사람이
+ * 새 요약을 만듭니다(GET /api/arcades/:id/reviews/summary).
+ */
+async function dropSummary(arcadeId: number): Promise<void> {
+  const db = await getDb();
+  await db.query(`DELETE FROM arcade_review_summaries WHERE arcade_id = $1`, [arcadeId]);
 }

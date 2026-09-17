@@ -220,6 +220,16 @@ export function timeAgo(iso: string, now: number = Date.now()): string {
 
 // ─── 오락실 리뷰 ─────────────────────────────────────────────
 
+/**
+ * 오락실 리뷰 · 채보 평가 한 페이지에 담는 수.
+ *
+ * 둘 다 좁은 상세 패널 안의 목록이라 게시판 댓글(COMMENTS_PAGE_SIZE 10)보다 적게
+ * 둡니다 — 이모티콘이 원본 크기로 그려지므로 한 줄이 꽤 높을 수 있습니다.
+ * 서버는 전체를 한 번에 주고(수십 개 규모) 화면이 쪽을 나눕니다.
+ */
+export const REVIEWS_PAGE_SIZE = 5;
+export const CHART_COMMENTS_PAGE_SIZE = 5;
+
 export interface ArcadeReview {
   id: number;
   arcadeId: number;

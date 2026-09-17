@@ -2,12 +2,19 @@
 
 import Link from 'next/link';
 
-import { useCallback, useEffect, useState } from 'react';
-import { timeAgo, type ArcadeReview } from '@/lib/community-types';
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { REVIEWS_PAGE_SIZE, timeAgo, type ArcadeReview } from '@/lib/community-types';
+import {
+  REVIEW_SUMMARY_KEYS,
+  REVIEW_SUMMARY_MIN,
+  type ReviewSummaryView,
+} from '@/lib/review-summary-types';
+import { totalPagesOf } from '@/lib/board-types';
 import type { Arcade } from '@/lib/types';
 import { usePlayerId } from '@/lib/use-player';
 import EmoticonPicker from './EmoticonPicker';
 import EmoticonText from './EmoticonText';
+import Pagination from './Pagination';
 import StarRating from './StarRating';
 
 interface Props {
@@ -23,6 +30,20 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 1-based. 목록이 줄어 지금 쪽이 비면 마지막 쪽으로 당깁니다 (아래 clamp) */
+  const [page, setPage] = useState(1);
+
+  /**
+   * AI 요약. 리뷰가 REVIEW_SUMMARY_MIN 개 이상일 때만 묻습니다.
+   * 첫 사람은 만드는 데 몇 초가 걸리므로 '만드는 중' 을 따로 보여 줍니다 —
+   * 그 사이 빈 상자는 고장으로 읽힙니다.
+   */
+  const [summary, setSummary] = useState<
+    | { kind: 'idle' }
+    | { kind: 'loading' }
+    | { kind: 'ready'; view: ReviewSummaryView }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' });
 
   const load = useCallback(async () => {
     try {
@@ -36,11 +57,50 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
   }, [arcade.id]);
 
   useEffect(() => {
+    // 다른 오락실을 열면 목록이 통째로 바뀝니다 — 3쪽을 보고 있었어도 1쪽부터.
+    setPage(1);
     void load();
   }, [load]);
 
+  // 목록이 바뀔 때마다(불러오기 · 등록 · 삭제) 요약을 다시 묻습니다. 서버는 리뷰가
+  // 바뀌면 저장된 요약을 지우므로 이 요청이 새 요약을 만들거나, 아니면 저장된 것을 돌려줍니다.
+  useEffect(() => {
+    if (reviews.length < REVIEW_SUMMARY_MIN) {
+      setSummary({ kind: 'idle' });
+      return;
+    }
+    let alive = true;
+    setSummary({ kind: 'loading' });
+    void (async () => {
+      try {
+        const res = await fetch(`/api/arcades/${arcade.id}/reviews/summary`, { cache: 'no-store' });
+        const data = (await res.json().catch(() => ({}))) as {
+          summary?: ReviewSummaryView | null;
+          error?: string;
+        };
+        if (!alive) return;
+        if (!res.ok || !data.summary) {
+          setSummary({ kind: 'error', message: data.error ?? '요약을 불러오지 못했습니다' });
+          return;
+        }
+        setSummary({ kind: 'ready', view: data.summary });
+      } catch {
+        if (alive) setSummary({ kind: 'error', message: '네트워크 오류' });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [arcade.id, reviews]);
+
   // 오락실이나 플레이어가 바뀌면 내가 이미 쓴 리뷰를 폼에 채워 "수정" 이 되게 한다.
   const mine = playerId ? reviews.find((r) => r.playerId === playerId) : undefined;
+  const totalPages = totalPagesOf(reviews.length, REVIEWS_PAGE_SIZE);
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = reviews.slice(
+    (currentPage - 1) * REVIEWS_PAGE_SIZE,
+    currentPage * REVIEWS_PAGE_SIZE,
+  );
   useEffect(() => {
     setRating(mine?.rating ?? 0);
     setBody(mine?.body ?? '');
@@ -80,7 +140,9 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
     if (!playerId) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/arcades/${arcade.id}/reviews`, { method: 'DELETE' });
+      const res = await fetch(`/api/arcades/${arcade.id}/reviews`, {
+        method: 'DELETE',
+      });
       const data = await res.json();
       if (res.ok) {
         setReviews(data.reviews as ArcadeReview[]);
@@ -148,25 +210,68 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
         </div>
       )}
 
+      {/*
+        AI 요약 — 리뷰가 다섯 개를 넘을 때만. 사람이 쓴 카드와 같은 모양이면 누가 쓴
+        글인지 헷갈리므로 점선 상자에 'AI 요약' 딱지를 붙입니다(기종 추정과 같은 결).
+        별점 평균은 서버가 SQL 로 낸 값이라 모델 답과 섞이지 않습니다.
+      */}
+      {reviews.length >= REVIEW_SUMMARY_MIN && summary.kind !== 'idle' && (
+        <section className="review-summary" aria-live="polite">
+          <p className="guess-head">
+            <span className="guess-tag">AI 요약</span>
+            {summary.kind === 'loading' && <span>리뷰 {reviews.length}개를 읽고 요약하는 중…</span>}
+            {summary.kind === 'ready' && (
+              <span>
+                후기 {summary.view.reviewCount}개 기준
+                {summary.view.ratingAvg !== null && ` · 평균 ★ ${summary.view.ratingAvg.toFixed(1)}`}
+              </span>
+            )}
+            {summary.kind === 'error' && <span>요약 없음</span>}
+          </p>
+          {summary.kind === 'ready' &&
+            (REVIEW_SUMMARY_KEYS.some(({ key }) => summary.view.summary[key]) ? (
+              <dl>
+                {REVIEW_SUMMARY_KEYS.filter(({ key }) => summary.view.summary[key]).map(({ key, label }) => (
+                  <Fragment key={key}>
+                    <dt>{label}</dt>
+                    <dd>{summary.view.summary[key]}</dd>
+                  </Fragment>
+                ))}
+              </dl>
+            ) : (
+              <p className="muted small">리뷰에서 세 칸에 넣을 만한 내용을 찾지 못했습니다.</p>
+            ))}
+          {summary.kind === 'error' && <p className="warn small">{summary.message}</p>}
+        </section>
+      )}
+
       {reviews.length === 0 ? (
         <p className="muted small">아직 리뷰가 없습니다.</p>
       ) : (
-        <ul className="review-list">
-          {reviews.map((r) => (
-            <li key={r.id} className={r.playerId === playerId ? 'is-mine' : ''}>
-              <div className="review-head">
-                <StarRating value={r.rating} />
-                <strong>{r.nickname}</strong>
-                <span className="muted small">{timeAgo(r.updatedAt)}</span>
-              </div>
-              {r.body && (
-                <p className="review-body">
-                  <EmoticonText text={r.body} />
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="review-list">
+            {pageItems.map((r) => (
+              <li key={r.id} className={r.playerId === playerId ? 'is-mine' : ''}>
+                <div className="review-head">
+                  <StarRating value={r.rating} />
+                  <strong>{r.nickname}</strong>
+                  <span className="muted small">{timeAgo(r.updatedAt)}</span>
+                </div>
+                {r.body && (
+                  <p className="review-body">
+                    <EmoticonText text={r.body} />
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+          <Pagination
+            page={currentPage}
+            total={reviews.length}
+            pageSize={REVIEWS_PAGE_SIZE}
+            onChange={setPage}
+          />
+        </>
       )}
     </div>
   );

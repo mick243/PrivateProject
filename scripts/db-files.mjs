@@ -87,6 +87,15 @@ export const MIGRATION_FILES = [
   'migrate-062-emoticons.sql',
   'migrate-063-imported-news.sql',
   'migrate-064-emoticons-soft-delete.sql',
+  'migrate-065-chart-video.sql',
+  'migrate-066-chart-video-piu-s4.sql',
+  'migrate-067-chart-video-piu-s1-s3.sql',
+  'migrate-068-chart-video-nakaka-s19.sql',
+  'migrate-069-chart-video-86-s20.sql',
+  'migrate-070-chart-video-piu-s4-rest.sql',
+  'migrate-071-chart-video-piu-s4-others.sql',
+  'migrate-072-chart-video-piu-s4-manual.sql',
+  'migrate-073-review-summaries.sql',
 ];
 
 // 파생 객체(뷰). 테이블이 다 만들어진 뒤 마지막에.

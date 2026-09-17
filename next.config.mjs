@@ -94,6 +94,17 @@ const nextConfig = {
   // 옮겼었는데, 이제 통째로 숨긴다.)
   devIndicators: false,
 
+  /*
+    개발 서버를 터널(cloudflared quick tunnel)로 밖에 내보일 때.
+
+    Next 는 개발에서 서버를 띄운 호스트(localhost)가 아닌 출처에서 오는 `/_next/*`
+    요청을 403 으로 막습니다. 터널 주소로 열면 HTML 은 오는데 청크 일부와 HMR
+    소켓이 403 이라 하이드레이션이 깨지고, 상단 탭이 눌러도 안 넘어가는 것처럼
+    보입니다(2026-09-16). 운영 빌드에는 영향이 없는 개발 전용 설정입니다.
+    quick tunnel 은 열 때마다 주소가 바뀌므로 와일드카드로 둡니다.
+  */
+  allowedDevOrigins: ['*.trycloudflare.com'],
+
   images: {
     /*
       목록 썸네일만 next/image 를 거칩니다 (components/PostList.tsx 의 PostThumb).
