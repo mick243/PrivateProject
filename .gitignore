@@ -1,5 +1,8 @@
 node_modules/
 .next/
+# bench 가 A/B 비교용으로 뽑아 두는 빌드 산출물 (각 99MB)
+.next-ab/
+.next-before/
 .pglite/
 # uploads/ 는 **추적합니다.** 첨부가 `process.cwd()/uploads` 에 있어서, 무시하면
 # 워크트리마다 파일이 없어 글의 사진·영상이 404 가 됩니다 (lib/uploads.ts).
@@ -10,6 +13,8 @@ backups/
 next-env.d.ts
 *.tsbuildinfo
 coverage/
+# 워크트리 (git worktree add 가 만드는 별도 작업 트리)
+.claude/worktrees/
 
 # 오락실 수입 스크립트의 진행 상태 (하루 한도·이어서 하기)
 .arcade-import-state.json
