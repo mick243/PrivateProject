@@ -4,7 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { inBox, padBox, type LatLngBox } from '@/lib/geo';
 import { drawTally, reportSync, setPerfMap, useCullingOff } from '@/lib/map-perf';
 import type { Arcade } from '@/lib/types';
-import { loadNaverMaps, mapErrorMessage } from '@/lib/naver-loader';
+import {
+  loadNaverMaps,
+  mapErrorMessage,
+  naverMapsUsable,
+  onNaverAuthFailure,
+} from '@/lib/naver-loader';
 import type { MapPaneProps } from './MapPane';
 
 const DEFAULT_CENTER = { lat: 37.5665, lng: 126.978 }; // 서울시청
@@ -38,6 +43,18 @@ const LAYOUT_SETTLE_MS = 220;
  * 들고 있다가 넘치는 것은 그때 떼어낸다 — 그건 드물게 일어나므로 값이 싸다.
  */
 const MARKER_POOL_MAX = 200;
+
+/**
+ * 손대도 되는 지도. SDK 가 인증 실패로 스스로 내려앉았으면 null.
+ *
+ * 인증 실패는 지도를 만든 **뒤에** 오고, 그때 SDK 가 `naver.maps` 를 비운다
+ * (lib/naver-loader.ts 의 authFailure 주석). 그 뒤에 도는 effect 가 `naver.maps.Point`
+ * 하나만 읽어도 TypeError 로 페이지 전체가 에러 경계로 떨어진다 — 그래서 SDK 를
+ * 부르는 effect·타이머는 전부 지도를 이것으로 꺼낸다.
+ */
+function usableMap(map: naver.maps.Map | null): naver.maps.Map | null {
+  return map && naverMapsUsable() ? map : null;
+}
 
 /** 지금 보이는 범위 + 여백. 'idle' 로 지도가 멈춘 뒤에 읽는다 */
 function readViewport(map: naver.maps.Map): LatLngBox {
@@ -373,10 +390,35 @@ export default function NaverMap({
   // ── 지도 초기화 ────────────────────────────────────────────
   useEffect(() => {
     let disposed = false;
+    let unsubscribeAuthFailure: (() => void) | undefined;
+
+    const fail = (e: unknown) => {
+      if (disposed) return;
+      console.error('[map] 네이버 지도 SDK —', e instanceof Error ? e.message : e);
+      setError(mapErrorMessage(e));
+      onSdkError?.(e);
+    };
+
+    /**
+     * SDK 가 이미 거둬 간 것들을 **SDK 를 부르지 않고** 놓아 준다. 죽은 SDK 의
+     * `setMap(null)` 은 내부 유틸이 비어 있어 던진다. DOM 은 SDK 가 이미 치웠거나
+     * React 가 이 컴포넌트를 내리며 지운다.
+     */
+    const forgetEverything = () => {
+      markersRef.current.clear();
+      markerShapeRef.current.clear();
+      poolRef.current = [];
+      pickMarkerRef.current = null;
+      meMarkerRef.current = null;
+      circleRef.current = null;
+      setPerfMap(null);
+      mapRef.current = null;
+    };
 
     loadNaverMaps()
       .then(() => {
         if (disposed || !containerRef.current) return;
+        if (!naverMapsUsable()) throw new Error('SDK 가 로드 직후 내려앉았습니다');
         const map = new naver.maps.Map(containerRef.current, {
           center: new naver.maps.LatLng(
             center?.lat ?? DEFAULT_CENTER.lat,
@@ -399,27 +441,31 @@ export default function NaverMap({
 
         // 'idle' 은 끌기·줌이 **멈춘 뒤** 한 번 온다. bounds_changed 로 받으면
         // 끄는 중에 프레임마다 마커를 다시 붙이게 된다.
-        naver.maps.Event.addListener(map, 'idle', () => setViewport(readViewport(map)));
+        naver.maps.Event.addListener(map, 'idle', () => {
+          if (usableMap(map)) setViewport(readViewport(map));
+        });
+
+        // 인증 실패는 여기까지 온 **뒤에** 온다 — 그때 FallbackMap 으로 넘긴다.
+        unsubscribeAuthFailure = onNaverAuthFailure((e) => {
+          if (disposed) return;
+          forgetEverything();
+          fail(e);
+        });
 
         setViewport(readViewport(map));
         setReady(true);
       })
-      .catch((e: unknown) => {
-        if (disposed) return;
-        console.error('[map] 네이버 지도 SDK —', e instanceof Error ? e.message : e);
-        setError(mapErrorMessage(e));
-        onSdkError?.(e);
-      });
+      .catch(fail);
 
     return () => {
       disposed = true;
-      markersRef.current.forEach((m) => m.setMap(null));
-      markersRef.current.clear();
-      poolRef.current.forEach((m) => m.setMap(null));
-      poolRef.current = [];
-      setPerfMap(null);
-      mapRef.current?.destroy();
-      mapRef.current = null;
+      unsubscribeAuthFailure?.();
+      if (naverMapsUsable()) {
+        markersRef.current.forEach((m) => m.setMap(null));
+        poolRef.current.forEach((m) => m.setMap(null));
+        mapRef.current?.destroy();
+      }
+      forgetEverything();
     };
     // 최초 1회만 초기화한다. center 변경은 아래 effect 가 처리.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -446,7 +492,7 @@ export default function NaverMap({
 
   // ── 오락실 마커 동기화 ─────────────────────────────────────
   useEffect(() => {
-    const map = mapRef.current;
+    const map = usableMap(mapRef.current);
     if (!ready || !map) return;
 
     // 계측 (lib/map-perf.ts) — 이 블록이 곧 "동기화 한 번" 이다.
@@ -553,7 +599,7 @@ export default function NaverMap({
   const pendingCenterRef = useRef<naver.maps.LatLng | null>(null);
 
   useEffect(() => {
-    const map = mapRef.current;
+    const map = usableMap(mapRef.current);
     if (!ready || !map) return;
     if (selectedId === null) {
       centeredFor.current = null;
@@ -583,7 +629,7 @@ export default function NaverMap({
 
     pendingCenterRef.current = at;
     const settle = setTimeout(() => {
-      const m = mapRef.current;
+      const m = usableMap(mapRef.current);
       if (!m) return;
       m.autoResize();
       m.setCenter(at);
@@ -612,7 +658,7 @@ export default function NaverMap({
     const observer = new ResizeObserver(() => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        const map = mapRef.current;
+        const map = usableMap(mapRef.current);
         if (!map) return;
         map.autoResize();
         if (pendingCenterRef.current) {
@@ -630,7 +676,7 @@ export default function NaverMap({
 
   // ── 반경 검색 원 ───────────────────────────────────────────
   useEffect(() => {
-    const map = mapRef.current;
+    const map = usableMap(mapRef.current);
     if (!ready || !map) return;
 
     if (!center || !radiusKm) {
@@ -673,7 +719,7 @@ export default function NaverMap({
    */
   const centerJumped = useRef(0);
   useEffect(() => {
-    const map = mapRef.current;
+    const map = usableMap(mapRef.current);
     if (!ready || !map || centerNonce === 0 || centerNonce === centerJumped.current) return;
     if (!center) return;
     centerJumped.current = centerNonce;
@@ -689,7 +735,7 @@ export default function NaverMap({
    */
   const focusPointApplied = useRef(0);
   useEffect(() => {
-    const map = mapRef.current;
+    const map = usableMap(mapRef.current);
     if (!ready || !map || !focusPoint || focusPoint.nonce === focusPointApplied.current) return;
     focusPointApplied.current = focusPoint.nonce;
     map.autoResize();
@@ -701,7 +747,7 @@ export default function NaverMap({
   // ── 내 위치 마커 ───────────────────────────────────────────
   // 반경 원만 있으면 원의 한가운데가 나인지, 내가 그 근처 어딘가인지 알 수 없다.
   useEffect(() => {
-    const map = mapRef.current;
+    const map = usableMap(mapRef.current);
     if (!ready || !map) return;
 
     if (!myLocation) {
@@ -729,7 +775,7 @@ export default function NaverMap({
 
   // ── 위치 지정 마커 ─────────────────────────────────────────
   useEffect(() => {
-    const map = mapRef.current;
+    const map = usableMap(mapRef.current);
     if (!ready || !map) return;
 
     if (!pickedCoord) {

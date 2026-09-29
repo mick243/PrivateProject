@@ -23,8 +23,11 @@ import path from 'node:path';
  * 여기서 세는 것은 의미가 없습니다. 아래 globalThis 표식은 같은 프로세스 안에서
  * dev 의 이중 호출만 막는 싸구려 빗장입니다.
  *
- * ─── 끄는 법 ──────────────────────────────────────────────
- * `.env.local` 에 NEWS_SYNC_ON_START=0. 간격은 NEWS_SYNC_MIN_HOURS (기본 6시간).
+ * ─── 기본은 꺼짐입니다 (2026-09-29) ─────────────────────────
+ * 홈 배너가 긁어 온 공지 대신 게임 공식 홈페이지 링크만 걸게 되면서(lib/game-sites.ts
+ * 머리말 — 남의 글을 옮기는 일이 약관에 걸릴 여지), 앱이 뜰 때마다 남의 사이트를 긁을
+ * 이유가 없어졌습니다. 켜려면 `.env.local` 에 NEWS_SYNC_ON_START=1.
+ * 간격은 NEWS_SYNC_MIN_HOURS (기본 6시간).
  */
 
 const FLAG = Symbol.for('arcade-finder.news-sync-boot');
@@ -32,7 +35,7 @@ const FLAG = Symbol.for('arcade-finder.news-sync-boot');
 type Marked = typeof globalThis & { [FLAG]?: boolean };
 
 export function startNewsSync(): void {
-  if (process.env.NEWS_SYNC_ON_START === '0') return;
+  if (process.env.NEWS_SYNC_ON_START !== '1') return;
 
   const g = globalThis as Marked;
   if (g[FLAG]) return;

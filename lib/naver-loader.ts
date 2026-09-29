@@ -48,11 +48,46 @@ declare global {
   }
 }
 
+/**
+ * 인증 실패는 **로드가 끝난 뒤에** 온다 (2026-09-29 실측 — 등록 안 된 포트로 dev 를 띄움).
+ *
+ * SDK 는 스크립트를 200 으로 주고 `naver.maps` 도 채운 채 onload 를 부른다. 그래서
+ * 위 약속은 resolve 되고 지도까지 만들어진다. 인증 요청이 401 로 돌아오면 SDK 는
+ * 그제서야 지도를 거두고, **1초 뒤 `naver.maps = null` 로 만든 다음**
+ * `navermap_authFailure` 를 부른다 (maps.js 원문: `t.naver.maps=null,It()`).
+ * 약속은 이미 끝났으므로 거기서 reject 할 수 없다 — 이 목록으로 따로 알린다.
+ *
+ * 한 번 실패하면 이 페이지에서는 계속 실패로 본다. 키와 도메인은 페이지가 사는 동안
+ * 바뀌지 않고, SDK 가 자기 네임스페이스를 비운 뒤라 다시 쓸 방법도 없다.
+ */
+let authFailure: NaverMapsLoadError | null = null;
+const authFailureListeners = new Set<(e: NaverMapsLoadError) => void>();
+
+/** 인증 실패를 받는다 (이미 실패했으면 바로 부른다). 돌려준 함수로 구독을 푼다 */
+export function onNaverAuthFailure(listener: (e: NaverMapsLoadError) => void): () => void {
+  if (authFailure) {
+    listener(authFailure);
+    return () => {};
+  }
+  authFailureListeners.add(listener);
+  return () => authFailureListeners.delete(listener);
+}
+
+/**
+ * 지금 SDK 를 불러도 되는지. false 면 `naver.maps.*` 를 읽는 순간 TypeError 다 —
+ * 인증 실패 뒤의 SDK 는 `naver.maps` 뿐 아니라 내부 유틸까지 비워서, 이미 만든
+ * 오버레이의 `setMap(null)` 조차 던진다.
+ */
+export function naverMapsUsable(): boolean {
+  return !authFailure && typeof window !== 'undefined' && !!window.naver?.maps;
+}
+
 /** SDK 를 한 번만 주입하고, 로드가 끝나면 naver 네임스페이스를 돌려준다. */
 export function loadNaverMaps(): Promise<typeof naver> {
   if (typeof window === 'undefined') {
     return Promise.reject(new Error('브라우저에서만 로드할 수 있습니다'));
   }
+  if (authFailure) return Promise.reject(authFailure);
   if (window.naver?.maps) return Promise.resolve(window.naver);
   if (!hasNaverKey) {
     return Promise.reject(new Error('NEXT_PUBLIC_NAVER_MAP_KEY_ID 가 설정되지 않았습니다'));
@@ -74,11 +109,19 @@ export function loadNaverMaps(): Promise<typeof naver> {
       });
 
     // SDK 가 인증 실패를 알리는 유일한 통로. 스크립트가 붙기 전에 정의해 둬야 한다.
-    window.navermap_authFailure = () =>
-      fail(
+    // 대개 resolve **뒤에** 온다 — 그때는 구독자에게 알린다 (위 authFailure 주석).
+    window.navermap_authFailure = () => {
+      if (authFailure) return;
+      const e = new NaverMapsLoadError(
         '네이버 지도 인증 실패 — 키가 유효한지, NCP 콘솔 Web 서비스 URL 에 현재 도메인이 등록됐는지 확인하세요',
         '지도 서비스 인증에 실패했습니다. 잠시 뒤 다시 시도해 주세요.',
       );
+      authFailure = e;
+      done(() => reject(e));
+      const listeners = [...authFailureListeners];
+      authFailureListeners.clear();
+      for (const listener of listeners) listener(e);
+    };
 
     const timer = setTimeout(
       () => fail(`네이버 지도 SDK 가 ${LOAD_TIMEOUT_MS / 1000}초 안에 뜨지 않았습니다`, '지도를 불러오는 데 시간이 너무 걸립니다.'),
