@@ -1,18 +1,16 @@
 import Link from 'next/link';
 import NewsHero from '@/components/NewsHero';
-import { listNews } from '@/lib/board';
-import type { PostSummary } from '@/lib/board-types';
+import { GAME_SITES } from '@/lib/game-sites';
 
 /**
- * 홈 — 소식 배너 + 각 화면으로 들어가는 카드.
+ * 홈 — 게임 공식 홈페이지 배너 + 각 화면으로 들어가는 카드.
  *
  * 예전에는 이 자리가 오락실 파인더였습니다(지금은 /finder). 지도를 문 앞에 두면
  * "여기가 지도 서비스" 로 읽혀서, 서열표·커뮤니티가 탭 뒤에 숨는 문제가 있었습니다.
  *
- * ⚠ **따로 만든 소식 표는 없습니다.** 배너는 커뮤니티 글 중 공지·대회·정보 말머리만
- *   골라 옵니다 (lib/board.ts NEWS_CATEGORIES). 자유·질문·공략은 잡담이라 뺍니다.
- *
- * 서버 컴포넌트라 DB 를 바로 읽습니다 — /api/posts 를 한 번 더 타면 왕복만 늘어납니다.
+ * 배너는 한때 커뮤니티의 공지·대회·정보 글(긁어 온 공식 공지 포함)을 보여 줬습니다.
+ * 지금은 **게임 공식 홈페이지 링크만** 겁니다 (lib/game-sites.ts 머리말 — 약관). 그래서
+ * 이 화면은 DB 를 읽지 않고, 빌드할 때 한 번 구워지는 정적 화면입니다.
  */
 
 /**
@@ -54,47 +52,10 @@ const NAV_CARDS = [
   },
 ] as const;
 
-/**
- * ⚠ 이 줄이 없으면 홈이 **정적으로 구워집니다.**
- *
- * listNews 는 DB 를 읽지만 cookies·headers 같은 동적 API 를 쓰지 않아서, Next 가
- * 빌드 시점에 한 번 실행하고 그 결과를 HTML 에 박아 둡니다. 실제로 그렇게 나왔고
- * (`○ /`), 그러면 "최신 소식" 이 배포한 날짜에서 멈춥니다.
- *
- * force-dynamic 대신 60초 재생성을 쓰는 이유: 소식은 초 단위로 바뀌지 않고, 홈은
- * 모든 방문이 지나는 자리라 매 요청마다 DB 를 치면 가장 비싼 화면이 됩니다.
- * 빌드 때 DB 에 못 닿아 빈 소식이 구워져도 60초 뒤 스스로 회복합니다.
- */
-export const revalidate = 60;
-
-export default async function Page() {
-  // 소식이 비어도 홈은 떠야 합니다 — DB 가 흔들릴 때 카드까지 같이 사라지면
-  // 갈 곳이 없어집니다 (폴백 중이면 lib/db.ts 가 로컬 사본으로 답합니다).
-  let news: PostSummary[] = [];
-  let newsFailed = false;
-  try {
-    news = await listNews(6);
-  } catch {
-    newsFailed = true;
-  }
-
+export default function Page() {
   return (
     <div className="home">
-      {news.length > 0 ? (
-        <NewsHero posts={news} />
-      ) : (
-        <section className="home-news-empty">
-          <h1>최신 소식</h1>
-          {newsFailed ? (
-            <p className="muted small">소식을 불러오지 못했습니다. 잠시 뒤 새로고침해 주세요.</p>
-          ) : (
-            <p className="muted small">
-              아직 올라온 소식이 없습니다. <Link href="/community">커뮤니티</Link>에 공지 · 대회 ·
-              정보 말머리로 글을 남기면 여기에 올라옵니다.
-            </p>
-          )}
-        </section>
-      )}
+      <NewsHero sites={GAME_SITES} />
 
       <div className="home-body">
         <div className="home-sec-head">

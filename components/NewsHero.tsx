@@ -1,11 +1,14 @@
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { PostSummary } from '@/lib/board-types';
+import { hostOf, type GameSite } from '@/lib/game-sites';
 
 /**
- * 홈 맨 위 소식 배너 — 배경 위에 글 제목을 얹고 옆으로 넘깁니다.
+ * 홈 맨 위 배너 — 게임마다 공식 홈페이지로 가는 칸을 하나씩 두고 옆으로 넘깁니다.
+ *
+ * 예전에는 긁어 온 공식 공지를 보여 줬습니다. 남의 글을 옮기는 일이 약관에 걸릴 여지가
+ * 있어 **링크만** 겁니다 (lib/game-sites.ts 머리말). 이름(NewsHero · .news-hero-*)은
+ * 그대로 둡니다 — 자리는 여전히 "새 소식을 보러 가는 곳" 입니다.
  *
  * ─── 왜 스크롤 스냅인가 ───────────────────────────────────
  * 넘기는 동작을 손으로 만들지 않고 `scroll-snap` 에 맡깁니다. 그러면 폰의 관성
@@ -26,10 +29,9 @@ import type { PostSummary } from '@/lib/board-types';
  * 거꾸로(0번에서 '이전')도 같은 사본으로 풉니다 — 먼저 사본으로 소리 없이 옮겨 두면
  * 화면은 그대로 0번인데 위치만 맨 뒤라, 거기서 마지막 칸으로 평범하게 되돌아갑니다.
  *
- * ─── 배경이 없는 글이 대부분입니다 ─────────────────────────
- * 첨부가 있으면 그 이미지를 깔고, 없으면 게임 이름에서 고른 짙은 단색으로
- * 칠합니다. 빈 회색을 깔면 "이미지를 못 불러왔다" 로 읽히는데, 사실은 **글에 사진이
- * 없는** 것이라 다르게 보여야 합니다. 영상 첨부는 배경으로 쓰지 않습니다(mime 확인).
+ * ─── 배경 ──────────────────────────────────────────────────
+ * 게임 이름에서 고른 짙은 단색으로 칠합니다. 게임 로고나 키 아트는 깔지 않습니다 —
+ * 그것도 남의 그림이라 옮기지 않는다는 위 원칙에 걸립니다.
  */
 
 const AUTO_MS = 6000;
@@ -37,7 +39,7 @@ const AUTO_MS = 6000;
 const SETTLE_MS = 150;
 
 /**
- * 사진이 없는 글에 깔 배경 — **짙은 단색 넷 중 하나**를 씁니다.
+ * 칸마다 깔 배경 — **짙은 단색 넷 중 하나**를 씁니다.
  *
  * 처음엔 게임 이름 해시를 색상환 전체(0~359°)에 뿌렸는데, 형광 초록·붉은색이 나와
  * 앱 톤과 따로 놀았습니다. 그다음 판은 남색 · 틸 · 인디고 그라데이션이었는데, 그건
@@ -45,7 +47,7 @@ const SETTLE_MS = 150;
  * 낮춰 제목 뒤로 물러나게 했습니다 (docs/VISUAL-DESIGN.md).
  *
  * 같은 게임이 늘 같은 배경을 받도록 이름 해시로 고릅니다 — 새로고침마다 색이
- * 바뀌면 글이 바뀐 것처럼 보입니다.
+ * 바뀌면 내용이 바뀐 것처럼 보입니다.
  */
 const SLATES = [
   '#24272d', // 먹색
@@ -60,32 +62,35 @@ function slateOf(seed: string): string {
   return SLATES[h % SLATES.length];
 }
 
-function backgroundOf(p: PostSummary): string {
-  const img = p.thumbnail && p.thumbnail.mime.startsWith('image/') ? p.thumbnail.url : null;
-  // 사진 위에 흰 글씨를 얹으므로 어두운 막을 한 겹 깝니다 — 밝은 사진에서 제목이 사라집니다.
-  if (img) {
-    return `linear-gradient(90deg, rgba(12,13,16,.84) 0%, rgba(12,13,16,.5) 55%, rgba(12,13,16,.25) 100%), url(${img}) center/cover no-repeat`;
-  }
-  return slateOf(p.machineShortName ?? p.categoryLabel);
-}
-
-/** 슬라이드 한 장의 내용. 맨 뒤 사본은 링크 없이(clone) 그립니다 — 같은 글이 두 번 잡히면 안 됩니다. */
-function SlideBody({ post, clone }: { post: PostSummary; clone?: boolean }) {
+/**
+ * 칸 한 장의 내용. 맨 뒤 사본은 링크 없이(clone) 그립니다 — 같은 링크가 두 번 잡히면 안 됩니다.
+ *
+ * 남의 사이트로 나가는 링크라 새 창으로 엽니다. `noreferrer` 로 우리 주소(어느 글에서
+ * 왔는지)를 넘기지 않고, 새 창이라는 것은 화면 읽기 프로그램에도 알립니다.
+ */
+function SlideBody({ site, clone }: { site: GameSite; clone?: boolean }) {
   return (
     <div className="news-hero-body">
       <p className="news-hero-kicker">
-        {post.machineShortName && <span className="badge">{post.machineShortName}</span>}
-        <span className={`cat cat-${post.category}`}>{post.categoryLabel}</span>
+        <span className="badge">{site.shortName}</span>
+        <span className="cat">공식 홈페이지</span>
       </p>
       <h3 className="news-hero-title">
-        {clone ? post.title : <Link href={`/community?post=${post.id}`}>{post.title}</Link>}
+        {clone ? (
+          site.name
+        ) : (
+          <a href={site.url} target="_blank" rel="noopener noreferrer">
+            {site.name}
+            <span className="sr-only"> 공식 홈페이지 (새 창)</span>
+          </a>
+        )}
       </h3>
-      {post.excerpt && <p className="news-hero-excerpt">{post.excerpt}</p>}
+      <p className="news-hero-excerpt">새 소식과 업데이트는 공식 홈페이지에서 확인하세요 · {hostOf(site.url)}</p>
     </div>
   );
 }
 
-export default function NewsHero({ posts }: { posts: PostSummary[] }) {
+export default function NewsHero({ sites }: { sites: readonly GameSite[] }) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const settleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
@@ -98,7 +103,7 @@ export default function NewsHero({ posts }: { posts: PostSummary[] }) {
   const [paused, setPaused] = useState(false);
   const headingId = useId();
 
-  const total = posts.length;
+  const total = sites.length;
   const looping = total > 1;
 
   /**
@@ -110,7 +115,7 @@ export default function NewsHero({ posts }: { posts: PostSummary[] }) {
    * 스크롤 → onScroll → setIndex → 리렌더 → style 재기록 → 스냅 보정 → 다시 스크롤
    * 이 되먹임이 돌아서, 넘기기가 목표까지 못 가고 88px·178px 처럼 **기어가다 멈췄습니다.**
    */
-  const backgrounds = useMemo(() => posts.map(backgroundOf), [posts]);
+  const backgrounds = useMemo(() => sites.map((s) => slateOf(s.shortName)), [sites]);
 
   /**
    * 칸 번호로 스크롤. `total` 은 맨 뒤 사본을 가리킨다.
@@ -195,30 +200,30 @@ export default function NewsHero({ posts }: { posts: PostSummary[] }) {
       onBlurCapture={() => setPaused(false)}
     >
       <h2 id={headingId} className="sr-only">
-        최신 소식
+        게임 공식 홈페이지
       </h2>
 
       <div className="news-hero-track" ref={trackRef} onScroll={onScroll}>
-        {posts.map((p, i) => (
+        {sites.map((site, i) => (
           <article
             className="news-hero-slide"
-            key={p.id}
+            key={site.url}
             style={{ background: backgrounds[i] }}
             aria-roledescription="슬라이드"
             aria-label={`${i + 1} / ${total}`}
           >
-            <SlideBody post={p} />
+            <SlideBody site={site} />
           </article>
         ))}
         {/* 맨 뒤 사본 — 마지막에서 처음으로 이어 가기 위한 자리다. 보조기술에는 같은
-            글이 두 번 있는 것으로 보이면 안 되므로 숨긴다. */}
+            링크가 두 번 있는 것으로 보이면 안 되므로 숨긴다. */}
         {looping && (
           <article
             className="news-hero-slide"
             aria-hidden="true"
             style={{ background: backgrounds[0] }}
           >
-            <SlideBody post={posts[0]} clone />
+            <SlideBody site={sites[0]} clone />
           </article>
         )}
       </div>
@@ -231,7 +236,7 @@ export default function NewsHero({ posts }: { posts: PostSummary[] }) {
             가로로 미는 손쉬운 방법이 없어 화살표가 안내이자 유일한 조작 수단입니다
             (components/ScrollStrip.tsx 가 같은 이유로 같은 선택을 합니다).
           */}
-          <button type="button" className="news-hero-arrow is-prev" onClick={prev} aria-label="이전 소식">
+          <button type="button" className="news-hero-arrow is-prev" onClick={prev} aria-label="이전 게임">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
               <path
                 d="M15 5 8 12l7 7"
@@ -243,7 +248,7 @@ export default function NewsHero({ posts }: { posts: PostSummary[] }) {
               />
             </svg>
           </button>
-          <button type="button" className="news-hero-arrow is-next" onClick={next} aria-label="다음 소식">
+          <button type="button" className="news-hero-arrow is-next" onClick={next} aria-label="다음 게임">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
               <path
                 d="m9 5 7 7-7 7"
@@ -256,14 +261,14 @@ export default function NewsHero({ posts }: { posts: PostSummary[] }) {
             </svg>
           </button>
 
-          <div className="news-hero-dots" role="tablist" aria-label="소식 넘기기">
-            {posts.map((p, i) => (
+          <div className="news-hero-dots" role="tablist" aria-label="게임 넘기기">
+            {sites.map((site, i) => (
               <button
-                key={p.id}
+                key={site.url}
                 type="button"
                 role="tab"
                 aria-selected={i === index}
-                aria-label={`${i + 1}번째 소식`}
+                aria-label={site.name}
                 className={i === index ? 'is-on' : undefined}
                 onClick={() => scrollToSlide(i)}
               />
