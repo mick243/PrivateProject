@@ -16,18 +16,18 @@ import type { PostSummary } from '@/lib/board-types';
  */
 
 /**
- * 바로 가기 카드 — 위는 비주얼, 아래는 어두운 띠에 이름과 한 줄 설명.
+ * 바로 가기 카드 — 아이콘 · 이름 · 한 줄 설명이 든 판판한 회색 판.
  *
  * 목적지에는 사진이 없습니다(오락실 목록·제보·서열표·게시판은 그림이 아니라 화면입니다).
- * 그래서 소식 배너와 **같은 계열의 어두운 한랭색**을 깔고 얇은 선 아이콘을 얹습니다 —
- * 두 구역이 한 벌로 읽히고, 나중에 대표 이미지가 생기면 gradient 자리만 바꾸면 됩니다.
+ * 예전에는 그 빈자리를 색이 다른 그라데이션 넷으로 채웠는데, 네 장이 제각각 빛나서
+ * "생성된 화면" 처럼 읽혔습니다. 지금은 넷 다 같은 회색 판이고, 다른 것은 아이콘뿐입니다
+ * (docs/VISUAL-DESIGN.md).
  */
 const NAV_CARDS = [
   {
     href: '/finder',
-    label: '오락실 파인더',
+    label: '오락실 찾기',
     desc: '내 주변 오락실을 기종으로 찾기',
-    tint: 'linear-gradient(150deg, #111a2e 0%, #1d3357 60%, #2b4a74 100%)',
     // 지도 핀
     icon: 'M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z M12 10.5a1.8 1.8 0 1 0 0-3.6 1.8 1.8 0 0 0 0 3.6Z',
   },
@@ -35,7 +35,6 @@ const NAV_CARDS = [
     href: '/live',
     label: '실시간 제보',
     desc: '기종이 들어오고 빠진 소식',
-    tint: 'linear-gradient(150deg, #101c26 0%, #1b3a4a 60%, #28566a 100%)',
     // 전파
     icon: 'M12 13a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2Z M8.2 15.2a5.4 5.4 0 0 1 0-7.6 M15.8 7.6a5.4 5.4 0 0 1 0 7.6 M5.4 18a9.4 9.4 0 0 1 0-13.2 M18.6 4.8a9.4 9.4 0 0 1 0 13.2',
   },
@@ -43,7 +42,6 @@ const NAV_CARDS = [
     href: '/tier',
     label: '서열표 · 채보 평가',
     desc: '같은 레벨 안의 체감 난이도',
-    tint: 'linear-gradient(150deg, #161428 0%, #292350 60%, #3b356e 100%)',
     // 막대 셋
     icon: 'M6 19V11 M12 19V5 M18 19v-5 M3.5 19h17',
   },
@@ -51,7 +49,6 @@ const NAV_CARDS = [
     href: '/community',
     label: '커뮤니티',
     desc: '게임별 공략 · 질문 · 대회',
-    tint: 'linear-gradient(150deg, #141a1c 0%, #24383c 60%, #345054 100%)',
     // 말풍선
     icon: 'M20 12.5c0 3.6-3.6 6.5-8 6.5-1 0-2-.15-2.9-.42L5 20l1.1-3.1A6.3 6.3 0 0 1 4 12.5C4 8.9 7.6 6 12 6s8 2.9 8 6.5Z',
   },
@@ -110,22 +107,18 @@ export default async function Page() {
         <nav className="home-cards" aria-label="바로 가기">
           {NAV_CARDS.map((c) => (
             <Link key={c.href} href={c.href} className="home-card">
-              <span className="home-card-visual" style={{ background: c.tint }} aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="36" height="36">
-                  <path
-                    d={c.icon}
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.4"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </span>
-              <span className="home-card-cap">
-                <span className="home-card-label">{c.label}</span>
-                <span className="home-card-desc">{c.desc}</span>
-              </span>
+              <svg className="home-card-icon" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+                <path
+                  d={c.icon}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="home-card-label">{c.label}</span>
+              <span className="home-card-desc">{c.desc}</span>
             </Link>
           ))}
         </nav>

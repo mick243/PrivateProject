@@ -103,9 +103,16 @@ export default function PwaSetup() {
 
   return (
     <div className="pwa-banner" role="complementary" aria-label="앱 설치 안내">
-      <span className="pwa-banner-icon" aria-hidden="true">
-        📍
-      </span>
+      <svg className="pwa-banner-icon" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <path
+          d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11Z M12 10.5a1.8 1.8 0 1 0 0-3.6 1.8 1.8 0 0 0 0 3.6Z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
       {installEvent ? (
         <>
           <span className="pwa-banner-text">

@@ -220,7 +220,7 @@ export default function LiveFeed() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <button type="submit" className="btn btn-sm btn-primary">
+        <button type="submit" className="btn btn-sm">
           검색
         </button>
         {/* 값이 없을 때 **감추지 않고 끈다** — 감추면 나타나고 사라질 때마다
