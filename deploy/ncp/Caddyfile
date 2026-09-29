@@ -1,0 +1,24 @@
+# /etc/caddy/Caddyfile — bootstrap.sh 가 __SITE_DOMAIN__ 을 실제 주소로 바꿔 넣는다.
+#
+# Caddy 는 이 주소로 Let's Encrypt 인증서를 스스로 받고(80 · 443 이 열려 있어야 함) 갱신한다.
+# 무료 주소(1-2-3-4.sslip.io)도 된다. 도메인을 사면 이 줄의 주소만 바꾸고 systemctl reload caddy.
+__SITE_DOMAIN__ {
+	encode zstd gzip
+
+	# 첨부 업로드 한도(lib/uploads.ts)보다 넉넉히 — 영상 한 개가 수십 MB 다
+	request_body {
+		max_size 64MB
+	}
+
+	# 앱의 클러스터 프록시(scripts/start-cluster.mjs). TRUSTED_PROXY_HOPS=2 가 이 한 겹을 센다.
+	# 주기 상태 검사(health_uri)는 두지 않는다 — 뒤가 하나뿐이라 고를 곳이 없고, 켜 두면 배포 직후
+	# 다음 검사(30초)까지 앱이 떠 있어도 503 을 돌려줬다 (2026-09-29 리허설). 앱 자체 확인은 install-release.sh 가 한다.
+	reverse_proxy 127.0.0.1:3000
+
+	log {
+		output file /var/log/caddy/arcade-finder.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
