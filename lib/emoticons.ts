@@ -1,4 +1,3 @@
-import { getDb } from './db';
 import {
   EMOTICON_ADMIN_PAGE_SIZE,
   EMOTICON_ADMIN_PAGE_SIZE_MAX,
@@ -7,6 +6,9 @@ import {
   type EmoticonAdminRow,
   type EmoticonStatus,
 } from './community-types';
+import type { Prisma } from './generated/prisma/client.ts';
+import { isUniqueViolation } from './pg-errors';
+import { getPrismaClient, iso } from './prisma';
 
 /**
  * 그림 이모티콘 (db/migrate-062-emoticons.sql · 064 soft delete).
@@ -36,11 +38,15 @@ export function normalizeName(raw: unknown): string {
   return String(raw ?? '').trim().replace(/\s+/g, ' ').slice(0, EMOTICON_NAME_MAX);
 }
 
-/** 이름 UNIQUE(살아 있는 것 사이) 위반만 사용자 입력 문제로 되돌립니다 */
+/**
+ * 이름 UNIQUE(살아 있는 것 사이 · emoticons_name_key) 위반만 사용자 입력 문제로 되돌립니다.
+ *
+ * 이 표에 UNIQUE 는 PK 말고 그것 하나라, 어느 제약인지 이름을 맞춰 보지 않고
+ * "UNIQUE 위반이면 이름" 으로 봅니다. 부분 인덱스(lower(name) WHERE deleted_at IS NULL)는
+ * Prisma 스키마에 없어서 제약 이름이 에러에 실리지 않을 수 있기 때문입니다.
+ */
 function rethrowNameTaken(err: unknown): never {
-  if (err instanceof Error && /emoticons_name_key/.test(err.message)) {
-    throw new EmoticonNameTakenError();
-  }
+  if (isUniqueViolation(err)) throw new EmoticonNameTakenError();
   throw err;
 }
 
@@ -52,13 +58,13 @@ function rethrowNameTaken(err: unknown): never {
  * 분류를 먼저 붙여야지 페이지를 나눌 일이 아닙니다.
  */
 export async function listEmoticons(): Promise<Emoticon[]> {
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number | string; name: string }>(
-    `SELECT id, name FROM emoticons
-      WHERE deleted_at IS NULL
-      ORDER BY created_at DESC, id DESC`,
-  );
-  return rows.map((r) => ({ id: Number(r.id), name: r.name, url: url(Number(r.id)) }));
+  const prisma = await getPrismaClient();
+  const rows = await prisma.emoticons.findMany({
+    where: { deleted_at: null },
+    orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+    select: { id: true, name: true },
+  });
+  return rows.map((r) => ({ id: r.id, name: r.name, url: url(r.id) }));
 }
 
 /**
@@ -71,12 +77,11 @@ export async function listEmoticons(): Promise<Emoticon[]> {
 export async function getEmoticonFile(
   id: number,
 ): Promise<{ storageKey: string; mime: string } | null> {
-  const db = await getDb();
-  const { rows } = await db.query<{ storage_key: string; mime: string }>(
-    `SELECT storage_key, mime FROM emoticons WHERE id = $1::int`,
-    [id],
-  );
-  const row = rows[0];
+  const prisma = await getPrismaClient();
+  const row = await prisma.emoticons.findUnique({
+    where: { id },
+    select: { storage_key: true, mime: true },
+  });
   return row ? { storageKey: row.storage_key, mime: row.mime } : null;
 }
 
@@ -91,12 +96,12 @@ export async function getEmoticonsByIds(
   const out = new Map<number, { name: string; storageKey: string; mime: string }>();
   const unique = [...new Set(ids)].filter((n) => Number.isInteger(n) && n > 0);
   if (unique.length === 0) return out;
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number | string; name: string; storage_key: string; mime: string }>(
-    `SELECT id, name, storage_key, mime FROM emoticons WHERE id = ANY($1::int[])`,
-    [unique],
-  );
-  for (const r of rows) out.set(Number(r.id), { name: r.name, storageKey: r.storage_key, mime: r.mime });
+  const prisma = await getPrismaClient();
+  const rows = await prisma.emoticons.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, name: true, storage_key: true, mime: true },
+  });
+  for (const r of rows) out.set(r.id, { name: r.name, storageKey: r.storage_key, mime: r.mime });
   return out;
 }
 
@@ -107,15 +112,19 @@ export async function createEmoticon(input: {
   bytes: number;
   playerId: number;
 }): Promise<Emoticon> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
   try {
-    const { rows } = await db.query<{ id: number | string }>(
-      `INSERT INTO emoticons (name, storage_key, mime, bytes, created_by)
-            VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [input.name, input.storageKey, input.mime, input.bytes, input.playerId],
-    );
-    const id = Number(rows[0].id);
-    return { id, name: input.name, url: url(id) };
+    const row = await prisma.emoticons.create({
+      data: {
+        name: input.name,
+        storage_key: input.storageKey,
+        mime: input.mime,
+        bytes: input.bytes,
+        created_by: input.playerId,
+      },
+      select: { id: true },
+    });
+    return { id: row.id, name: input.name, url: url(row.id) };
   } catch (err) {
     rethrowNameTaken(err);
   }
@@ -134,14 +143,12 @@ export async function createEmoticon(input: {
  * 이미 지운 것을 다시 지우면 false — 두 번 눌러도 시각이 뒤로 밀리지 않습니다.
  */
 export async function deleteEmoticon(id: number): Promise<boolean> {
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number }>(
-    `UPDATE emoticons SET deleted_at = now()
-      WHERE id = $1::int AND deleted_at IS NULL
-      RETURNING id`,
-    [id],
-  );
-  return rows.length > 0;
+  const prisma = await getPrismaClient();
+  const { count } = await prisma.emoticons.updateMany({
+    where: { id, deleted_at: null },
+    data: { deleted_at: new Date() },
+  });
+  return count > 0;
 }
 
 /**
@@ -149,15 +156,13 @@ export async function deleteEmoticon(id: number): Promise<boolean> {
  * 그때는 EmoticonNameTakenError. 관리자가 한쪽 이름을 바꾼 뒤 다시 누르면 됩니다.
  */
 export async function restoreEmoticon(id: number): Promise<boolean> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
   try {
-    const { rows } = await db.query<{ id: number }>(
-      `UPDATE emoticons SET deleted_at = NULL
-        WHERE id = $1::int AND deleted_at IS NOT NULL
-        RETURNING id`,
-      [id],
-    );
-    return rows.length > 0;
+    const { count } = await prisma.emoticons.updateMany({
+      where: { id, deleted_at: { not: null } },
+      data: { deleted_at: null },
+    });
+    return count > 0;
   } catch (err) {
     rethrowNameTaken(err);
   }
@@ -168,15 +173,13 @@ export async function restoreEmoticon(id: number): Promise<boolean> {
  * 바뀌는 건 고르는 칸의 이름표와 alt 텍스트만입니다. 살아 있는 것만 바꿉니다.
  */
 export async function renameEmoticon(id: number, name: string): Promise<boolean> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
   try {
-    const { rows } = await db.query<{ id: number }>(
-      `UPDATE emoticons SET name = $2
-        WHERE id = $1::int AND deleted_at IS NULL
-        RETURNING id`,
-      [id, name],
-    );
-    return rows.length > 0;
+    const { count } = await prisma.emoticons.updateMany({
+      where: { id, deleted_at: null },
+      data: { name },
+    });
+    return count > 0;
   } catch (err) {
     rethrowNameTaken(err);
   }
@@ -214,25 +217,12 @@ export function normalizeAdminQuery(input: {
   };
 }
 
-interface AdminRowRaw {
-  id: number | string;
-  name: string;
-  mime: string;
-  bytes: number | string;
-  created_by: string | null;
-  created_at: string | Date;
-  deleted_at: string | Date | null;
-}
-
-const iso = (v: string | Date | null): string | null =>
-  v === null ? null : v instanceof Date ? v.toISOString() : new Date(v).toISOString();
-
 /**
  * 관리 목록 — 한 페이지와 전체 개수.
  *
- * WHERE 절과 값 배열을 한 번 만들어 목록 쿼리와 COUNT 쿼리가 **같은 조건**을
- * 봅니다(PetMediSearch-rebuild category.js 의 방식). 두 쿼리를 따로 짜면 필터를
- * 하나 고칠 때 한쪽만 고쳐져 "24개 중 1~24" 가 실제 줄 수와 어긋납니다.
+ * WHERE 조건을 한 번 만들어 목록과 COUNT 가 **같은 조건**을 봅니다(PetMediSearch-rebuild
+ * category.js 의 방식). 두 쿼리를 따로 짜면 필터를 하나 고칠 때 한쪽만 고쳐져
+ * "24개 중 1~24" 가 실제 줄 수와 어긋납니다.
  *
  * 정렬은 created_at 에 id 를 덧붙입니다 — 같은 초에 올린 두 장이 페이지 경계에서
  * 순서가 뒤바뀌어 한 장이 두 번 보이거나 빠지지 않게.
@@ -240,46 +230,45 @@ const iso = (v: string | Date | null): string | null =>
 export async function listEmoticonsForAdmin(
   query: EmoticonAdminQuery,
 ): Promise<{ rows: EmoticonAdminRow[]; total: number }> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
 
-  const where: string[] = [];
-  const values: unknown[] = [];
-  if (query.status === 'live') where.push('e.deleted_at IS NULL');
-  else if (query.status === 'deleted') where.push('e.deleted_at IS NOT NULL');
-  if (query.q !== '') {
-    values.push(`%${query.q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
-    where.push(`e.name ILIKE $${values.length}`);
-  }
-  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  const where: Prisma.emoticonsWhereInput = {
+    ...(query.status === 'live' ? { deleted_at: null } : {}),
+    ...(query.status === 'deleted' ? { deleted_at: { not: null } } : {}),
+    // Prisma 가 %·_ 를 이스케이프하므로 여기서 따로 하지 않습니다.
+    ...(query.q !== '' ? { name: { contains: query.q, mode: 'insensitive' } } : {}),
+  };
 
-  const { rows: countRows } = await db.query<{ total: number | string }>(
-    `SELECT COUNT(*)::int AS total FROM emoticons e ${whereSql}`,
-    values,
-  );
-  const total = Number(countRows[0]?.total ?? 0);
-
-  const offset = (query.page - 1) * query.pageSize;
-  const { rows } = await db.query<AdminRowRaw>(
-    `SELECT e.id, e.name, e.mime, e.bytes, p.nickname AS created_by, e.created_at, e.deleted_at
-       FROM emoticons e
-       LEFT JOIN players p ON p.id = e.created_by
-       ${whereSql}
-      ORDER BY e.created_at DESC, e.id DESC
-      LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
-    [...values, query.pageSize, offset],
-  );
+  const [total, rows] = await Promise.all([
+    prisma.emoticons.count({ where }),
+    prisma.emoticons.findMany({
+      where,
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+      select: {
+        id: true,
+        name: true,
+        mime: true,
+        bytes: true,
+        created_at: true,
+        deleted_at: true,
+        players: { select: { nickname: true } },
+      },
+    }),
+  ]);
 
   return {
     total,
     rows: rows.map((r) => ({
-      id: Number(r.id),
+      id: r.id,
       name: r.name,
-      url: url(Number(r.id)),
+      url: url(r.id),
       mime: r.mime,
-      bytes: Number(r.bytes),
-      createdBy: r.created_by,
-      createdAt: iso(r.created_at) ?? '',
-      deletedAt: iso(r.deleted_at),
+      bytes: r.bytes,
+      createdBy: r.players?.nickname ?? null,
+      createdAt: iso(r.created_at),
+      deletedAt: r.deleted_at === null ? null : iso(r.deleted_at),
     })),
   };
 }

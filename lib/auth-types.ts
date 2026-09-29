@@ -1,7 +1,7 @@
 /**
  * 세션 관련 타입 — **클라이언트에서도 import 합니다**.
  *
- * lib/auth.ts 는 node:crypto 와 getDb() 를 끌고 오므로 컴포넌트에서 못 씁니다.
+ * lib/auth.ts 는 node:crypto 와 getPrismaClient() 를 끌고 오므로 컴포넌트에서 못 씁니다.
  * 서버·클라이언트가 함께 봐야 하는 모양만 여기 둡니다 (*-types.ts 규칙).
  */
 

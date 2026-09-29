@@ -2,3 +2,10 @@
 # "')' was unexpected at this time" 으로 죽습니다. 체크아웃 때 CRLF 를 강제합니다.
 *.cmd text eol=crlf
 *.bat text eol=crlf
+
+# Prisma 마이그레이션은 줄 끝을 LF 로 고정합니다. Prisma 는 적용할 때 파일의 sha256 을
+# _prisma_migrations 에 남기는데, Windows 에서 autocrlf 로 CRLF 가 되어 풀리면 같은 파일이
+# 다른 체크섬이 됩니다. 생성기(scripts/prisma-migrations-build.mjs)도 LF 로 쓰므로
+# tests/prisma-migrations.test.ts 의 대조도 이게 있어야 통과합니다. 바깥 저장소는 루트의
+# `* text=auto eol=lf` 가 대신하지만, arcade-finder/ 만 올리는 GitHub 저장소에는 그 파일이 없습니다.
+prisma/migrations/** text eol=lf

@@ -7,8 +7,9 @@ import {
 import { promisify } from 'node:util';
 import { NextResponse } from 'next/server';
 import { SESSION_COOKIE, type SessionUser } from './auth-types';
-import { getDb } from './db';
+import { noteLoginFailure as noteLoginFailureSql } from './typed-sql';
 import { isUniqueViolation, violatedConstraint } from './pg-errors';
+import { getPrismaClient } from './prisma';
 
 /**
  * 인증.
@@ -221,14 +222,11 @@ export async function getSession(request: Request): Promise<SessionUser | null> 
 async function playerRow(
   playerId: number,
 ): Promise<{ nickname: string; isAdmin: boolean; epoch: number } | null> {
-  const db = await getDb();
-  const { rows } = await db.query<{
-    nickname: string;
-    is_admin: boolean;
-    token_epoch: number;
-  }>(`SELECT nickname, is_admin, token_epoch FROM players WHERE id = $1`, [playerId]);
-
-  const row = rows[0];
+  const prisma = await getPrismaClient();
+  const row = await prisma.players.findUnique({
+    where: { id: playerId },
+    select: { nickname: true, is_admin: true, token_epoch: true },
+  });
   if (!row) return null;
   return { nickname: row.nickname, isAdmin: !!row.is_admin, epoch: Number(row.token_epoch) };
 }
@@ -241,8 +239,12 @@ async function playerRow(
  * 다시 발급받아야 합니다 — 안 그러면 방금 누른 사람도 같이 튕깁니다.
  */
 export async function revokeSessions(playerId: number): Promise<void> {
-  const db = await getDb();
-  await db.query(`UPDATE players SET token_epoch = token_epoch + 1 WHERE id = $1`, [playerId]);
+  const prisma = await getPrismaClient();
+  // updateMany — 없는 계정이면 0행으로 끝나야 합니다 (update 는 P2025 를 던집니다).
+  await prisma.players.updateMany({
+    where: { id: playerId },
+    data: { token_epoch: { increment: 1 } },
+  });
 }
 
 /**
@@ -387,33 +389,33 @@ export async function ensureAdminAccount(): Promise<{ id: number; nickname: stri
   if (!password) return null;
 
   const nickname = configuredAdminNickname();
-  const db = await getDb();
+  const prisma = await getPrismaClient();
 
-  const { rows } = await db.query<{ id: number; is_admin: boolean; password_hash: string | null }>(
-    `SELECT id, is_admin, password_hash FROM players WHERE nickname = $1`,
-    [nickname],
-  );
+  const existing = await prisma.players.findUnique({
+    where: { nickname },
+    select: { id: true, is_admin: true, password_hash: true },
+  });
 
-  const existing = rows[0];
   if (!existing) {
-    const { rows: created } = await db.query<{ id: number }>(
-      `INSERT INTO players (nickname, is_admin, password_hash) VALUES ($1, TRUE, $2)
-       RETURNING id`,
-      [nickname, await hashPassword(password)],
-    );
+    const created = await prisma.players.create({
+      data: { nickname, is_admin: true, password_hash: await hashPassword(password) },
+      select: { id: true },
+    });
     console.log(`[auth] 관리자 계정 생성 — ${nickname}`);
-    return { id: Number(created[0].id), nickname };
+    return { id: created.id, nickname };
   }
 
-  const id = Number(existing.id);
+  const id = existing.id;
   if (!existing.is_admin || !(await verifyPassword(password, existing.password_hash))) {
     // 비밀번호가 바뀐 것이라면 지난 관리자 세션도 끊습니다 — setPlayerPassword 와 같은 규칙.
-    await db.query(
-      `UPDATE players
-          SET is_admin = TRUE, password_hash = $2, token_epoch = token_epoch + 1
-        WHERE id = $1`,
-      [id, await hashPassword(password)],
-    );
+    await prisma.players.update({
+      where: { id },
+      data: {
+        is_admin: true,
+        password_hash: await hashPassword(password),
+        token_epoch: { increment: 1 },
+      },
+    });
   }
   return { id, nickname };
 }
@@ -423,21 +425,16 @@ export async function authenticate(
   nickname: string,
   password: string,
 ): Promise<SessionUser | null> {
-  const db = await getDb();
-  const { rows } = await db.query<{
-    id: number;
-    nickname: string;
-    is_admin: boolean;
-    password_hash: string | null;
-  }>(`SELECT id, nickname, is_admin, password_hash FROM players WHERE nickname = $1`, [
-    nickname.trim(),
-  ]);
+  const prisma = await getPrismaClient();
+  const row = await prisma.players.findUnique({
+    where: { nickname: nickname.trim() },
+    select: { id: true, nickname: true, is_admin: true, password_hash: true },
+  });
 
-  const row = rows[0];
   // 비밀번호가 없는 계정(= 일반 플레이어)은 로그인 대상이 아닙니다.
   if (!row || !(await verifyPassword(password, row.password_hash))) return null;
 
-  return { playerId: Number(row.id), nickname: row.nickname, isAdmin: !!row.is_admin };
+  return { playerId: row.id, nickname: row.nickname, isAdmin: !!row.is_admin };
 }
 
 // ─── 일반 계정 가입 ──────────────────────────────────────────
@@ -466,7 +463,7 @@ export async function createAccount(
   const name = nickname.trim();
   if (isReservedNickname(name)) return { ok: false, reason: 'reserved' };
 
-  const db = await getDb();
+  const prisma = await getPrismaClient();
   /*
     이름과 이메일 중복을 **한 번에** 봅니다. 두 번 나눠 물으면 "이름은 되는데
     이메일이 안 된다" 를 두 번의 왕복으로 알게 됩니다.
@@ -475,23 +472,29 @@ export async function createAccount(
     자리를 맡아 두면, 남의 이메일을 적어 그 사람의 가입을 막을 수 있습니다.
     이름은 대소문자만 다른 것도 같은 이름으로 봅니다 (migrate-027 의 lower() 인덱스와
     같은 기준 — 여기만 바이트 일치로 보면 안내 없이 23505 로 떨어집니다).
+    `mode: 'insensitive'` 가 그 lower() 비교입니다.
   */
-  const { rows: dup } = await db.query<{ nickname_taken: boolean; email_taken: boolean }>(
-    `SELECT bool_or(lower(nickname) = lower($1)) AS nickname_taken,
-            bool_or(lower(email) = lower($2) AND email_verified_at IS NOT NULL) AS email_taken
-       FROM players
-      WHERE lower(nickname) = lower($1) OR lower(email) = lower($2)`,
-    [name, email],
-  );
-  if (dup[0]?.nickname_taken) return { ok: false, reason: 'taken' };
-  if (dup[0]?.email_taken) return { ok: false, reason: 'email-taken' };
+  const dup = await prisma.players.findMany({
+    where: {
+      OR: [
+        { nickname: { equals: name, mode: 'insensitive' } },
+        { email: { equals: email, mode: 'insensitive' } },
+      ],
+    },
+    select: { nickname: true, email: true, email_verified_at: true },
+  });
+  const lower = (s: string | null) => (s ?? '').toLowerCase();
+  if (dup.some((p) => lower(p.nickname) === name.toLowerCase())) return { ok: false, reason: 'taken' };
+  if (dup.some((p) => lower(p.email) === email.toLowerCase() && p.email_verified_at !== null)) {
+    return { ok: false, reason: 'email-taken' };
+  }
 
-  const { rows } = await db.query<{ id: number }>(
-    `INSERT INTO players (nickname, password_hash, email) VALUES ($1, $2, $3) RETURNING id`,
-    [name, await hashPassword(password), email],
-  );
+  const created = await prisma.players.create({
+    data: { nickname: name, password_hash: await hashPassword(password), email },
+    select: { id: true },
+  });
   // 가입으로 관리자가 되지는 않습니다. is_admin 은 DB 기본값 FALSE 그대로 둡니다.
-  return { ok: true, user: { playerId: Number(rows[0].id), nickname: name, isAdmin: false } };
+  return { ok: true, user: { playerId: created.id, nickname: name, isAdmin: false } };
 }
 
 /**
@@ -543,28 +546,19 @@ export async function linkOAuthAccount(params: {
   nickname: string | null;
   email: string | null;
 }): Promise<{ user: SessionUser; needsNickname: boolean }> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
 
-  const { rows: linked } = await db.query<{
-    id: number;
-    nickname: string;
-    is_admin: boolean;
-    nickname_pending: boolean;
-  }>(
-    `SELECT p.id, p.nickname, p.is_admin, p.nickname_pending
-       FROM player_identities i
-       JOIN players p ON p.id = i.player_id
-      WHERE i.provider = $1 AND i.provider_uid = $2`,
-    [params.provider, params.providerUid],
-  );
-  if (linked[0]) {
+  const linked = await prisma.player_identities.findUnique({
+    where: { provider_provider_uid: { provider: params.provider, provider_uid: params.providerUid } },
+    select: {
+      players: { select: { id: true, nickname: true, is_admin: true, nickname_pending: true } },
+    },
+  });
+  if (linked) {
+    const p = linked.players;
     return {
-      user: {
-        playerId: Number(linked[0].id),
-        nickname: linked[0].nickname,
-        isAdmin: !!linked[0].is_admin,
-      },
-      needsNickname: !!linked[0].nickname_pending,
+      user: { playerId: p.id, nickname: p.nickname, isAdmin: !!p.is_admin },
+      needsNickname: !!p.nickname_pending,
     };
   }
 
@@ -578,11 +572,11 @@ export async function linkOAuthAccount(params: {
       attempt === 0 ? base : `${base.slice(0, 94)}${attempt + 1}`;
     if (isReservedNickname(candidate)) continue;
     try {
-      const { rows } = await db.query<{ id: number }>(
-        `INSERT INTO players (nickname, nickname_pending) VALUES ($1, TRUE) RETURNING id`,
-        [candidate],
-      );
-      playerId = Number(rows[0].id);
+      const created = await prisma.players.create({
+        data: { nickname: candidate, nickname_pending: true },
+        select: { id: true },
+      });
+      playerId = created.id;
       nickname = candidate;
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
@@ -590,12 +584,13 @@ export async function linkOAuthAccount(params: {
   }
   if (playerId === null) throw new Error('닉네임을 정할 수 없습니다');
 
-  await db.query(
-    `INSERT INTO player_identities (provider, provider_uid, player_id, email)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (provider, provider_uid) DO NOTHING`,
-    [params.provider, params.providerUid, playerId, params.email],
-  );
+  // 같은 신원이 그 사이 연결됐다면 조용히 넘어갑니다 (ON CONFLICT DO NOTHING).
+  await prisma.player_identities.createMany({
+    data: [
+      { provider: params.provider, provider_uid: params.providerUid, player_id: playerId, email: params.email },
+    ],
+    skipDuplicates: true,
+  });
 
   return { user: { playerId, nickname, isAdmin: false }, needsNickname: true };
 }
@@ -631,29 +626,40 @@ export async function claimNickname(
   // (createAccount 주석과 같은 이유).
   if (isReservedNickname(name)) return { ok: false, reason: 'reserved' };
 
-  const db = await getDb();
-  const { rows } = await db.query<{
-    nickname: string;
-    is_admin: boolean;
-    nickname_pending: boolean;
-  }>(`SELECT nickname, is_admin, nickname_pending FROM players WHERE id = $1`, [playerId]);
+  const prisma = await getPrismaClient();
+  const row = await prisma.players.findUnique({
+    where: { id: playerId },
+    select: { nickname: true, is_admin: true, nickname_pending: true },
+  });
 
-  const row = rows[0];
   if (!row) return { ok: false, reason: 'gone' };
   if (!row.nickname_pending) return { ok: false, reason: 'settled' };
 
+  return renamePlayer(playerId, name, row);
+}
+
+/**
+ * claimNickname · changeNickname 의 공통 꼬리 — 이름이 같으면 표시만 끄고, 다르면
+ * 바꿉니다. UNIQUE 에 걸리면 'taken'. 두 함수의 차이는 여기 오기 전의 조건뿐입니다.
+ */
+async function renamePlayer(
+  playerId: number,
+  name: string,
+  row: { nickname: string; is_admin: boolean },
+): Promise<NicknameClaim> {
+  const prisma = await getPrismaClient();
   const user: SessionUser = { playerId, nickname: name, isAdmin: !!row.is_admin };
 
   if (name === row.nickname) {
-    await db.query(`UPDATE players SET nickname_pending = FALSE WHERE id = $1`, [playerId]);
+    await prisma.players.updateMany({ where: { id: playerId }, data: { nickname_pending: false } });
     return { ok: true, user };
   }
 
   try {
-    await db.query(
-      `UPDATE players SET nickname = $2, nickname_pending = FALSE WHERE id = $1`,
-      [playerId, name],
-    );
+    await prisma.players.updateMany({
+      where: { id: playerId },
+      data: { nickname: name, nickname_pending: false },
+    });
   } catch (err) {
     if (isUniqueViolation(err)) return { ok: false, reason: 'taken' };
     throw err;
@@ -677,17 +683,16 @@ export async function claimNickname(
 export async function accountStatus(
   playerId: number,
 ): Promise<{ nickname: string; hasPassword: boolean; isAdmin: boolean } | null> {
-  const db = await getDb();
-  const { rows } = await db.query<{
-    nickname: string;
-    password_hash: string | null;
-    is_admin: boolean;
-  }>(`SELECT nickname, password_hash, is_admin FROM players WHERE id = $1`, [playerId]);
-  if (!rows[0]) return null;
+  const prisma = await getPrismaClient();
+  const row = await prisma.players.findUnique({
+    where: { id: playerId },
+    select: { nickname: true, password_hash: true, is_admin: true },
+  });
+  if (!row) return null;
   return {
-    nickname: rows[0].nickname,
-    hasPassword: rows[0].password_hash !== null,
-    isAdmin: !!rows[0].is_admin,
+    nickname: row.nickname,
+    hasPassword: row.password_hash !== null,
+    isAdmin: !!row.is_admin,
   };
 }
 
@@ -696,13 +701,13 @@ export async function verifyPlayerPassword(
   playerId: number,
   password: string,
 ): Promise<boolean> {
-  const db = await getDb();
-  const { rows } = await db.query<{ password_hash: string | null }>(
-    `SELECT password_hash FROM players WHERE id = $1`,
-    [playerId],
-  );
-  if (!rows[0]) return false;
-  return verifyPassword(password, rows[0].password_hash);
+  const prisma = await getPrismaClient();
+  const row = await prisma.players.findUnique({
+    where: { id: playerId },
+    select: { password_hash: true },
+  });
+  if (!row) return false;
+  return verifyPassword(password, row.password_hash);
 }
 
 /**
@@ -721,12 +726,9 @@ export async function verifyPlayerPassword(
  * 가리키는 곳이 사라졌습니다. 쿠키 자체는 라우트가 지웁니다.
  */
 export async function deleteAccount(playerId: number): Promise<boolean> {
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number }>(
-    `DELETE FROM players WHERE id = $1 AND is_admin = FALSE RETURNING id`,
-    [playerId],
-  );
-  return rows.length > 0;
+  const prisma = await getPrismaClient();
+  const { count } = await prisma.players.deleteMany({ where: { id: playerId, is_admin: false } });
+  return count > 0;
 }
 
 /**
@@ -738,11 +740,11 @@ export async function deleteAccount(playerId: number): Promise<boolean> {
  * setSessionCookie 로 새 번호를 받아 갑니다 (app/api/account PUT).
  */
 export async function setPlayerPassword(playerId: number, password: string): Promise<void> {
-  const db = await getDb();
-  await db.query(
-    `UPDATE players SET password_hash = $2, token_epoch = token_epoch + 1 WHERE id = $1`,
-    [playerId, await hashPassword(password)],
-  );
+  const prisma = await getPrismaClient();
+  await prisma.players.updateMany({
+    where: { id: playerId },
+    data: { password_hash: await hashPassword(password), token_epoch: { increment: 1 } },
+  });
 }
 
 /**
@@ -760,44 +762,27 @@ export async function changeNickname(
   const name = rawNickname.trim();
   if (isReservedNickname(name)) return { ok: false, reason: 'reserved' };
 
-  const db = await getDb();
-  const { rows } = await db.query<{ nickname: string; is_admin: boolean }>(
-    `SELECT nickname, is_admin FROM players WHERE id = $1`,
-    [playerId],
-  );
-  const row = rows[0];
+  const prisma = await getPrismaClient();
+  const row = await prisma.players.findUnique({
+    where: { id: playerId },
+    select: { nickname: true, is_admin: true },
+  });
   if (!row) return { ok: false, reason: 'gone' };
 
-  const user: SessionUser = { playerId, nickname: name, isAdmin: !!row.is_admin };
-
-  if (name === row.nickname) {
-    await db.query(`UPDATE players SET nickname_pending = FALSE WHERE id = $1`, [playerId]);
-    return { ok: true, user };
-  }
-
-  try {
-    await db.query(
-      `UPDATE players SET nickname = $2, nickname_pending = FALSE WHERE id = $1`,
-      [playerId, name],
-    );
-  } catch (err) {
-    if (isUniqueViolation(err)) return { ok: false, reason: 'taken' };
-    throw err;
-  }
-  return { ok: true, user };
+  return renamePlayer(playerId, name, row);
 }
 
 /** `/welcome` 이 화면을 그리기 전에 묻는 것 — "물어볼 상태인가, 지금 이름은 무엇인가" */
 export async function nicknameStatus(
   playerId: number,
 ): Promise<{ nickname: string; pending: boolean } | null> {
-  const db = await getDb();
-  const { rows } = await db.query<{ nickname: string; nickname_pending: boolean }>(
-    `SELECT nickname, nickname_pending FROM players WHERE id = $1`,
-    [playerId],
-  );
-  if (!rows[0]) return null;
-  return { nickname: rows[0].nickname, pending: !!rows[0].nickname_pending };
+  const prisma = await getPrismaClient();
+  const row = await prisma.players.findUnique({
+    where: { id: playerId },
+    select: { nickname: true, nickname_pending: true },
+  });
+  if (!row) return null;
+  return { nickname: row.nickname, pending: !!row.nickname_pending };
 }
 
 // ─── 로그인 시도 제한 ────────────────────────────────────────
@@ -829,14 +814,15 @@ const LOCK_MINUTES = 10;
  * 다음 실패를 기록할 때 함께 합니다 (noteLoginFailure).
  */
 export async function loginLockRemainingMs(key: string): Promise<number> {
-  const db = await getDb();
-  const { rows } = await db.query<{ remaining_ms: string }>(
-    `SELECT EXTRACT(EPOCH FROM (until - now())) * 1000 AS remaining_ms
-       FROM login_failures
-      WHERE key = $1 AND count >= $2 AND until > now()`,
-    [key, MAX_FAILURES],
-  );
-  const left = Number(rows[0]?.remaining_ms ?? 0);
+  const prisma = await getPrismaClient();
+  const row = await prisma.login_failures.findUnique({
+    where: { key },
+    select: { count: true, until: true },
+  });
+  if (!row || row.count < MAX_FAILURES) return 0;
+  // 남은 시간은 앱 시계로 잽니다. 기록(until)은 DB 의 now() 로 찍혔으므로 두 시계가 어긋나면
+  // 그만큼 오차가 생기지만, 10분짜리 잠금에서 초 단위 오차는 판정을 바꾸지 않습니다.
+  const left = row.until.getTime() - Date.now();
   return left > 0 ? Math.ceil(left) : 0;
 }
 
@@ -848,28 +834,21 @@ export async function loginLockRemainingMs(key: string): Promise<number> {
  * 우연히 안전했지만, 이제는 프로세스가 여럿이라 그 우연이 사라졌습니다.
  */
 export async function noteLoginFailure(key: string): Promise<void> {
-  const db = await getDb();
-  await db.query(
-    `INSERT INTO login_failures (key, count, until)
-     VALUES ($1, 1, now() + make_interval(mins => $2::int))
-     ON CONFLICT (key) DO UPDATE
-        SET count = CASE WHEN login_failures.until > now()
-                         THEN login_failures.count + 1
-                         ELSE 1 END,
-            until = now() + make_interval(mins => $2::int),
-            updated_at = now()`,
-    [key, LOCK_MINUTES],
-  );
+  const prisma = await getPrismaClient();
+  // 조건부 UPSERT 한 문장 — prisma/sql/noteLoginFailure.sql (원자성 때문에 TypedSQL).
+  await prisma.$queryRawTyped(noteLoginFailureSql(key, LOCK_MINUTES));
 
   // 낡은 줄은 쓰는 김에 치웁니다 (lib/reports.ts purgeExpiredQueueReports 와 같은
   // 방식). 넉넉히 하루를 지난 것만 — 아슬아슬한 줄을 건드리지 않습니다.
-  await db.query(`DELETE FROM login_failures WHERE until < now() - interval '1 day'`);
+  await prisma.login_failures.deleteMany({
+    where: { until: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+  });
 }
 
 /** 성공했으니 카운터를 비웁니다 */
 export async function clearLoginFailures(key: string): Promise<void> {
-  const db = await getDb();
-  await db.query(`DELETE FROM login_failures WHERE key = $1`, [key]);
+  const prisma = await getPrismaClient();
+  await prisma.login_failures.deleteMany({ where: { key } });
 }
 
 /**

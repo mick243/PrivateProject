@@ -96,6 +96,13 @@ export const MIGRATION_FILES = [
   'migrate-071-chart-video-piu-s4-others.sql',
   'migrate-072-chart-video-piu-s4-manual.sql',
   'migrate-073-review-summaries.sql',
+  'migrate-074-ez2dj-7th-1-5-tier.sql',
+  'migrate-075-ez2dj-7th-2-0-tier.sql',
+  'migrate-076-ez2dj-7th-cv-tier.sql',
+  'migrate-077-ez2dj-7th-bera-tier.sql',
+  'migrate-078-ez2dj-aeic-tier.sql',
+  'migrate-079-ez2dj-aeic-ae-remix-charts.sql',
+  'migrate-080-restore-missing-fks.sql',
 ];
 
 // 파생 객체(뷰). 테이블이 다 만들어진 뒤 마지막에.

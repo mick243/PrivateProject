@@ -1,0 +1,521 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../lib/generated/prisma"
+  previewFeatures = ["partialIndexes", "views", "typedSql"]
+  moduleFormat    = "esm"
+  runtime         = "nodejs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model arcade_cabinets {
+  id              Int               @id @default(autoincrement())
+  arcade_id       Int
+  machine_id      Int
+  cabinet_no      Int               @db.SmallInt
+  condition       Int?              @db.SmallInt
+  updated_at      DateTime          @default(now()) @db.Timestamptz(6)
+  arcade_machines arcade_machines   @relation(fields: [arcade_id, machine_id], references: [arcade_id, machine_id], onDelete: Cascade, onUpdate: NoAction)
+  machine_reports machine_reports[]
+
+  @@unique([arcade_id, machine_id, cabinet_no])
+}
+
+model arcade_favorites {
+  player_id  Int
+  arcade_id  Int
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  arcades    arcades  @relation(fields: [arcade_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  players    players  @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([player_id, arcade_id])
+  @@index([player_id, created_at(sort: Desc)], map: "arcade_favorites_player_idx")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model arcade_machine_guesses {
+  arcade_id  Int
+  machine_id Int
+  evidence   String
+  model      String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  arcades    arcades  @relation(fields: [arcade_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  machines   machines @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([arcade_id, machine_id])
+}
+
+model arcade_machines {
+  arcade_id       Int
+  machine_id      Int
+  updated_at      DateTime          @default(now()) @db.Timestamptz(6)
+  arcade_cabinets arcade_cabinets[]
+  arcades         arcades           @relation(fields: [arcade_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  machines        machines          @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([arcade_id, machine_id])
+  @@index([machine_id], map: "arcade_machines_machine_idx")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model arcade_review_summaries {
+  arcade_id    Int      @id
+  review_count Int
+  summary      Json
+  model        String
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  arcades      arcades  @relation(fields: [arcade_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model arcade_reviews {
+  id         Int      @id @default(autoincrement())
+  arcade_id  Int
+  player_id  Int
+  rating     Int      @db.SmallInt
+  body       String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  arcades    arcades  @relation(fields: [arcade_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  players    players  @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([arcade_id, player_id])
+  @@index([arcade_id, created_at(sort: Desc)], map: "arcade_reviews_arcade_idx")
+  @@index([player_id], map: "arcade_reviews_player_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model arcades {
+  id                      Int                      @id @default(autoincrement())
+  name                    String
+  address                 String
+  lat                     Float
+  lng                     Float
+  open_time               String?
+  close_time              String?
+  is_24h                  Boolean                  @default(false)
+  phone                   String?
+  note                    String?
+  created_at              DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                 @default(now()) @db.Timestamptz(6)
+  rating_avg              Decimal?                 @db.Decimal(3, 2)
+  review_count            Int                      @default(0)
+  source                  String?
+  source_ref              String?                  @unique(map: "arcades_source_ref_idx", where: raw("(source_ref IS NOT NULL)"))
+  homepage                String?
+  arcade_favorites        arcade_favorites[]
+  arcade_machine_guesses  arcade_machine_guesses[]
+  arcade_machines         arcade_machines[]
+  arcade_review_summaries arcade_review_summaries?
+  arcade_reviews          arcade_reviews[]
+  machine_reports         machine_reports[]
+
+  @@index([lat, lng])
+  @@index([name])
+}
+
+model board_categories {
+  code       String  @id
+  label      String
+  sort_order Int     @unique
+  posts      posts[]
+}
+
+model chart_comments {
+  id         Int      @id @default(autoincrement())
+  chart_id   Int
+  player_id  Int
+  body       String
+  tags       String[] @default([])
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  charts     charts   @relation(fields: [chart_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  players    players  @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([chart_id, player_id])
+  @@index([chart_id, created_at(sort: Desc)], map: "chart_comments_chart_idx")
+  @@index([player_id], map: "chart_comments_player_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model charts {
+  id               Int              @id @default(autoincrement())
+  song_id          Int
+  mode             String?
+  level            Decimal?         @db.Decimal(4, 2)
+  vote_count       Int              @default(0)
+  avg_vote         Decimal?         @db.Decimal(6, 3)
+  convergence      Decimal?         @db.Decimal(6, 3)
+  tier_code        String?
+  stats_updated_at DateTime?        @db.Timestamptz(6)
+  special_count    Int              @default(0)
+  level_label      String
+  version_id       Int?
+  difficulty       String?
+  video_url        String?
+  chart_comments   chart_comments[]
+  songs            songs            @relation(fields: [song_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  game_versions    game_versions?   @relation(fields: [version_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  clear_records    clear_records[]
+  special_marks    special_marks[]
+
+  @@unique([song_id, version_id, mode, difficulty, level_label], map: "charts_song_version_mode_diff_level_key")
+  @@index([level, level_label], map: "charts_level_order_idx")
+  @@index([mode, level_label], map: "charts_lookup_idx")
+  @@index([version_id], map: "charts_version_idx")
+}
+
+model clear_records {
+  player_id        Int
+  chart_id         Int
+  cleared_at       DateTime          @default(now()) @db.Timestamptz(6)
+  charts           charts            @relation(fields: [chart_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  players          players           @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  difficulty_votes difficulty_votes?
+
+  @@id([player_id, chart_id])
+  @@index([chart_id], map: "clear_records_chart_idx")
+}
+
+model difficulty_votes {
+  player_id     Int
+  chart_id      Int
+  value         Decimal       @db.Decimal(4, 2)
+  created_at    DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime      @default(now()) @db.Timestamptz(6)
+  clear_records clear_records @relation(fields: [player_id, chart_id], references: [player_id, chart_id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([player_id, chart_id])
+  @@index([chart_id], map: "difficulty_votes_chart_idx")
+}
+
+model email_verifications {
+  token_hash String    @id
+  player_id  Int
+  email      String
+  expires_at DateTime  @db.Timestamptz(6)
+  used_at    DateTime? @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  players    players   @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([player_id, created_at(sort: Desc)], map: "idx_email_verifications_player")
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model emoticons {
+  id          Int       @id @default(autoincrement())
+  name        String
+  storage_key String
+  mime        String
+  bytes       Int
+  created_by  Int?
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  deleted_at  DateTime? @db.Timestamptz(6)
+  players     players?  @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+
+  @@index([deleted_at, created_at(sort: Desc), id(sort: Desc)], map: "emoticons_live_created_idx")
+}
+
+model game_versions {
+  id         Int      @id @default(autoincrement())
+  machine_id Int
+  code       String
+  label      String
+  sort_order Int
+  charts     charts[]
+  machines   machines @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([machine_id, code])
+  @@unique([machine_id, sort_order])
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model imported_news {
+  source    String
+  source_id String
+  post_id   Int
+  title     String
+  url       String
+  synced_at DateTime @default(now()) @db.Timestamptz(6)
+  posts     posts    @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([source, source_id])
+  @@index([post_id], map: "imported_news_post_idx")
+}
+
+model login_failures {
+  key        String   @id
+  count      Int
+  until      DateTime @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([until])
+}
+
+model machine_difficulties {
+  machine_id Int
+  code       String
+  label      String
+  sort_order Int
+  machines   machines @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([machine_id, code])
+  @@unique([machine_id, sort_order])
+}
+
+model machine_modes {
+  machine_id Int
+  code       String
+  label      String
+  sort_order Int
+  machines   machines @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([machine_id, code])
+  @@unique([machine_id, sort_order])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model machine_reports {
+  id              Int              @id @default(autoincrement())
+  arcade_id       Int
+  machine_id      Int
+  cabinet_id      Int?
+  player_id       Int?
+  kind            String
+  wait_count      Int?             @db.SmallInt
+  condition       Int?             @db.SmallInt
+  comment         String?
+  created_at      DateTime         @default(now()) @db.Timestamptz(6)
+  arcades         arcades          @relation(fields: [arcade_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  arcade_cabinets arcade_cabinets? @relation(fields: [cabinet_id], references: [id], onUpdate: NoAction)
+  machines        machines         @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  players         players?         @relation(fields: [player_id], references: [id], onUpdate: NoAction)
+
+  @@index([cabinet_id, created_at(sort: Desc)], map: "machine_reports_cabinet_idx")
+  @@index([created_at(sort: Desc)], map: "machine_reports_feed_idx")
+  @@index([arcade_id, machine_id, kind, created_at(sort: Desc)], map: "machine_reports_live_idx")
+  @@index([player_id], map: "machine_reports_player_idx", where: raw("(player_id IS NOT NULL)"))
+  @@index([created_at], map: "machine_reports_queue_ttl_idx", where: raw("(kind = 'queue'::text)"))
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model machines {
+  id                     Int                      @id @default(autoincrement())
+  name                   String                   @unique
+  short_name             String
+  category               String
+  sort_order             Int                      @default(999)
+  arcade_machine_guesses arcade_machine_guesses[]
+  arcade_machines        arcade_machines[]
+  game_versions          game_versions[]
+  machine_difficulties   machine_difficulties[]
+  machine_modes          machine_modes[]
+  machine_reports        machine_reports[]
+  posts                  posts[]
+  songs                  songs[]
+  tier_grades            tier_grades[]
+  tier_settings          tier_settings?
+}
+
+model player_identities {
+  provider     String
+  provider_uid String
+  player_id    Int
+  email        String?
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  players      players  @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([provider, provider_uid])
+  @@index([player_id], map: "idx_identities_player")
+}
+
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model players {
+  id                  Int                   @id @default(autoincrement())
+  nickname            String                @unique
+  password_hash       String?
+  is_admin            Boolean               @default(false)
+  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+  nickname_pending    Boolean               @default(false)
+  email               String?
+  email_verified_at   DateTime?             @db.Timestamptz(6)
+  token_epoch         Int                   @default(0)
+  arcade_favorites    arcade_favorites[]
+  arcade_reviews      arcade_reviews[]
+  chart_comments      chart_comments[]
+  clear_records       clear_records[]
+  email_verifications email_verifications[]
+  emoticons           emoticons[]
+  machine_reports     machine_reports[]
+  player_identities   player_identities[]
+  post_comments       post_comments[]
+  post_images         post_images[]
+  post_likes          post_likes[]
+  posts               posts[]
+  special_marks       special_marks[]
+}
+
+model post_comments {
+  id         Int      @id @default(autoincrement())
+  post_id    Int
+  player_id  Int
+  body       String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  players    players  @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  posts      posts    @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([player_id], map: "post_comments_player_idx")
+  @@index([post_id, created_at], map: "post_comments_post_idx")
+}
+
+model post_images {
+  id          Int      @id @default(autoincrement())
+  post_id     Int?
+  player_id   Int
+  storage_key String
+  mime        String
+  bytes       Int
+  sort_order  Int      @default(0)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  players     players  @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  posts       posts?   @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([created_at], map: "post_images_orphan_idx", where: raw("(post_id IS NULL)"))
+  @@index([player_id], map: "post_images_player_idx")
+  @@index([post_id, sort_order, id], map: "post_images_post_idx")
+}
+
+model post_likes {
+  post_id    Int
+  player_id  Int
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  players    players  @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  posts      posts    @relation(fields: [post_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([post_id, player_id])
+}
+
+model posts {
+  id               Int              @id @default(autoincrement())
+  machine_id       Int?
+  category         String
+  player_id        Int
+  title            String
+  body             String
+  body_doc         Json?
+  comment_count    Int              @default(0)
+  like_count       Int              @default(0)
+  view_count       Int              @default(0)
+  created_at       DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime         @default(now()) @db.Timestamptz(6)
+  imported_news    imported_news[]
+  post_comments    post_comments[]
+  post_images      post_images[]
+  post_likes       post_likes[]
+  board_categories board_categories @relation(fields: [category], references: [code], onDelete: NoAction, onUpdate: NoAction)
+  machines         machines?        @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  players          players          @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([machine_id, created_at(sort: Desc)], map: "posts_board_idx")
+  @@index([body(ops: raw("gin_trgm_ops"))], map: "posts_body_trgm_idx", type: Gin)
+  @@index([machine_id, category, created_at(sort: Desc)], map: "posts_category_idx")
+  @@index([player_id], map: "posts_player_idx")
+  @@index([like_count(sort: Desc), comment_count(sort: Desc), created_at(sort: Desc)], map: "posts_popular_idx")
+  @@index([created_at(sort: Desc)], map: "posts_recent_idx")
+  @@index([title(ops: raw("gin_trgm_ops"))], map: "posts_title_trgm_idx", type: Gin)
+}
+
+model rate_counters {
+  key          String   @id
+  window_start DateTime @db.Timestamptz(6)
+  count        Int
+
+  @@index([window_start], map: "rate_counters_window_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model report_settings {
+  id                    Int @id @default(1) @db.SmallInt
+  queue_ttl_minutes     Int @default(240)
+  condition_window_days Int @default(30)
+  presence_threshold    Int @default(2)
+}
+
+model songs {
+  id         Int      @id @default(autoincrement())
+  machine_id Int
+  title      String
+  artist     String?
+  charts     charts[]
+  machines   machines @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([machine_id, title])
+}
+
+model special_marks {
+  player_id  Int
+  chart_id   Int
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  charts     charts   @relation(fields: [chart_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  players    players  @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([player_id, chart_id])
+  @@index([chart_id], map: "special_marks_chart_idx")
+}
+
+model tier_grades {
+  machine_id Int
+  code       String
+  label      String
+  anchor     Decimal  @db.Decimal(4, 2)
+  sort_order Int
+  machines   machines @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([machine_id, code])
+  @@unique([machine_id, sort_order])
+}
+
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model tier_settings {
+  machine_id         Int      @id
+  vote_min           Decimal  @db.Decimal(4, 2)
+  vote_max           Decimal  @db.Decimal(4, 2)
+  vote_step          Decimal  @default(0.10) @db.Decimal(4, 2)
+  tier_step          Decimal  @db.Decimal(4, 2)
+  min_votes          Int
+  min_convergence    Decimal  @db.Decimal(4, 2)
+  special_min        Int      @default(3)
+  chart_basis        String?
+  mode_is_difficulty Boolean  @default(false)
+  machines           machines @relation(fields: [machine_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// ⚠ 아래 두 뷰의 식별자(@@unique · @unique)와 NOT NULL 표시는 **손으로 넣은 것**입니다.
+/// 뷰에는 기본키가 없어 인트로스펙션이 전부 nullable 로 적어 오는데, 그러면 Prisma Client
+/// 가 조회 대상으로 쓰지 못합니다. GROUP BY 키(arcade_id·machine_id)와 cabinet_id 는
+/// 원본 컬럼이 NOT NULL 이라 뷰에서도 절대 NULL 이 되지 않습니다 (db/views.sql).
+///
+/// ⚠ `prisma db pull --force` 를 다시 돌리면 이 표시가 지워집니다. 인트로스펙션 뒤에는
+///   여기를 다시 손봐야 합니다 (docs/PRISMA-MIGRATION.md §뷰).
+view machine_live {
+  arcade_id        Int
+  machine_id       Int
+  wait_count       Int?
+  wait_reports     Int?
+  wait_reported_at DateTime? @db.Timestamptz(6)
+
+  @@unique([arcade_id, machine_id])
+}
+
+view cabinet_condition {
+  cabinet_id  Int       @unique
+  value       Int?
+  reports     Int?
+  reported_at DateTime? @db.Timestamptz(6)
+}

@@ -7,14 +7,18 @@ import path from 'node:path';
 import { recordPoolQuery, withTelemetry } from './telemetry.ts';
 
 /**
- * DB 어댑터.
+ * DB 어댑터 — **scripts/ 전용**입니다.
+ *
+ * 2026-09-22 에 앱(lib/*.ts · app/api)은 Prisma 로 옮겨 갔습니다 (lib/prisma.ts). 이 파일을
+ * 아직 쓰는 것은 적재·점검 도구(scripts/import-*.ts 등)와 옛 마이그레이션 러너
+ * (scripts/migrate.mjs 가 아래 목록을 대조합니다)뿐입니다. 앱 코드에서 import 하지 마세요 —
+ * 앱은 PGlite 폴백이 없고 기동 시 마이그레이션도 하지 않습니다(lib/prisma.ts 머리말).
  *
  *  - DATABASE_URL 이 있으면        → 실제 PostgreSQL (node-postgres)
  *  - 없으면                        → PGlite (WASM 로 빌드된 내장 Postgres, .pglite/ 에 영속)
  *  - 있는데 **연결이 안 되면**     → PGlite 로 내려갑니다 (DB_FALLBACK=off 로 끌 수 있음)
  *
  * 양쪽 다 진짜 Postgres 엔진이라 SQL 은 한 글자도 바뀌지 않습니다.
- * 프로토타입은 설치 없이 돌리고, 운영은 연결 문자열만 채우면 됩니다.
  *
  * 폴백은 PostgreSQL 서비스가 멈춰 있어도(재시작 중, 노트북에서 서비스를 꺼 둔 상태)
  * 화면이 그대로 뜨게 하려는 것입니다. `.pglite/` 는 `npm run db:snapshot -- --yes` 로
@@ -412,6 +416,13 @@ export const MIGRATION_FILES = [
   'migrate-071-chart-video-piu-s4-others.sql',
   'migrate-072-chart-video-piu-s4-manual.sql',
   'migrate-073-review-summaries.sql',
+  'migrate-074-ez2dj-7th-1-5-tier.sql',
+  'migrate-075-ez2dj-7th-2-0-tier.sql',
+  'migrate-076-ez2dj-7th-cv-tier.sql',
+  'migrate-077-ez2dj-7th-bera-tier.sql',
+  'migrate-078-ez2dj-aeic-tier.sql',
+  'migrate-079-ez2dj-aeic-ae-remix-charts.sql',
+  'migrate-080-restore-missing-fks.sql',
 ] as const;
 
 export const SQL_FILES = [

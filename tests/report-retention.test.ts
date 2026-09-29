@@ -14,12 +14,17 @@ import { describe, expect, it } from 'vitest';
  * kind 하나를 더 넣는" 것이라 문장 자체를 봐야 잡힙니다. 값이 맞는지(30일)와
  * **범위가 맞는지**(무엇을 지우는가)는 다른 질문이고, 뒤쪽이 더 위험합니다 —
  * 기종 변동을 시간으로 지우면 "있어요" 근거가 조용히 사라집니다.
+ *
+ * 2026-09-22 부터 데이터 계층은 Prisma 입니다. 수명 삭제는 TypedSQL 파일
+ * (prisma/sql/purgeExpiredQueueReports.sql)에, 관리자 삭제는 `deleteMany` 호출에 있어
+ * 둘을 각각 읽습니다.
  */
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
 
 const reportsTs = read('lib/reports.ts');
+const purgeSql = read('prisma/sql/purgeExpiredQueueReports.sql');
 const viewsSql = read('db/views.sql');
 const schemaSql = read('db/schema-community.sql');
 const migration = read('db/migrate-039-condition-window-30d.sql');
@@ -36,7 +41,7 @@ describe('컨디션 제보 — 1달 창', () => {
   });
 
   it('코드 fallback 도 30 이다 — 설정 행이 없을 때 스키마와 달라지면 안 된다', () => {
-    expect(reportsTs).toMatch(/conditionWindowDays:\s*num\(r\.condition_window_days\)\s*\?\?\s*30/);
+    expect(reportsTs).toMatch(/conditionWindowDays:\s*r\?\.condition_window_days\s*\?\?\s*30/);
   });
 
   it('창은 뷰가 설정값으로 적용한다 — 숫자를 뷰에 박아 넣지 않는다', () => {
@@ -47,25 +52,34 @@ describe('컨디션 제보 — 1달 창', () => {
 });
 
 describe('기종 변동 — 영구 보존', () => {
-  /** lib/reports.ts 안의 DELETE ... FROM machine_reports 문장들 */
-  const deletes = [...reportsTs.matchAll(/DELETE FROM machine_reports[\s\S]*?`/g)].map((m) => m[0]);
+  /** lib/reports.ts 안에서 machine_reports 를 지우는 호출들 (인자 객체까지) */
+  const deleteCalls = [...reportsTs.matchAll(/machine_reports\.deleteMany\(\{[\s\S]*?\}\)/g)].map(
+    (m) => m[0],
+  );
 
-  it('제보를 지우는 경로가 둘뿐이다 (수명 만료 · 관리자 삭제)', () => {
-    expect(deletes).toHaveLength(2);
+  it('제보를 지우는 경로가 둘뿐이다 (수명 만료 = TypedSQL · 관리자 삭제 = deleteMany)', () => {
+    expect(purgeSql).toMatch(/DELETE FROM machine_reports/);
+    expect(deleteCalls).toHaveLength(1);
+    // 옛 DELETE 문장이 TS 안에 남아 있으면 경로가 셋이 된다
+    expect(reportsTs).not.toMatch(/DELETE\s+FROM\s+machine_reports/);
   });
 
   it('수명으로 지우는 것은 대기뿐이다', () => {
-    const purge = deletes.find((d) => d.includes('queue_ttl_minutes'));
-    expect(purge).toBeDefined();
-    expect(purge).toMatch(/r\.kind = 'queue'/);
+    expect(purgeSql).toMatch(/queue_ttl_minutes/);
+    expect(purgeSql).toMatch(/r\.kind = 'queue'/);
     // 이 DELETE 가 다른 종류까지 건드리면 영구 기록이 조용히 사라진다
-    expect(purge).not.toMatch(/presence|absence|condition/);
+    expect(purgeSql).not.toMatch(/presence|absence|condition/);
+  });
+
+  it('관리자 삭제는 id 하나로만 지운다 — kind 나 기간을 조건에 섞지 않는다', () => {
+    expect(deleteCalls[0]).toMatch(/where:\s*\{\s*id\s*\}/);
+    expect(deleteCalls[0]).not.toMatch(/kind|created_at|presence|absence/);
   });
 
   it('machine_reports 를 지우는 문장 어디에도 presence/absence 가 없다', () => {
     // `ON DELETE CASCADE` 같은 무관한 DELETE 를 집지 않도록 대상 테이블까지 짚는다.
-    const statements = [reportsTs, viewsSql, schemaSql, migration].flatMap((sql) =>
-      [...sql.matchAll(/DELETE\s+FROM\s+machine_reports[\s\S]*?(?:;|`)/g)].map((m) => m[0]),
+    const statements = [purgeSql, viewsSql, schemaSql, migration].flatMap((sql) =>
+      [...sql.matchAll(/DELETE\s+FROM\s+machine_reports[\s\S]*?;/g)].map((m) => m[0]),
     );
     expect(statements.length).toBeGreaterThan(0);
     for (const stmt of statements) {
@@ -74,10 +88,12 @@ describe('기종 변동 — 영구 보존', () => {
   });
 
   it('집계도 시간으로 자르지 않는다 — 뒤집는 건 반대 제보다', () => {
-    // applyPresence 는 "반대 제보가 마지막으로 들어온 뒤" 로만 구간을 잡는다.
+    // applyPresence 는 "반대 제보가 마지막으로 들어온 뒤" 로만 구간을 잡는다:
+    // 반대 종류(opposite)의 가장 최근 created_at 을 경계로 삼고, 지금 시각(Date.now)은 보지 않는다.
     const applyPresence = /async function applyPresence[\s\S]*?\n}/.exec(reportsTs)?.[0] ?? '';
-    expect(applyPresence).toMatch(/MAX\(o\.created_at\)/);
-    expect(applyPresence).not.toMatch(/make_interval|now\(\)\s*-/);
+    expect(applyPresence).toMatch(/kind:\s*opposite/);
+    expect(applyPresence).toMatch(/orderBy:\s*\{\s*created_at:\s*'desc'\s*\}/);
+    expect(applyPresence).not.toMatch(/Date\.now\(\)|make_interval|now\(\)\s*-/);
   });
 });
 

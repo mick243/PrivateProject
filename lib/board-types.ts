@@ -1,7 +1,7 @@
 /**
  * 커뮤니티 게시판의 공용 타입.
  *
- * lib/board.ts 는 getDb() → fs 를 끌고 오므로 클라이언트에서 import 할 수 없습니다.
+ * lib/board.ts 는 getPrismaClient() → pg 를 끌고 오므로 클라이언트에서 import 할 수 없습니다.
  * 화면과 서버가 같은 모양을 보게 하는 순수 타입만 여기 둡니다
  * (lib/types.ts · lib/tier-types.ts · lib/community-types.ts 와 같은 규칙).
  */

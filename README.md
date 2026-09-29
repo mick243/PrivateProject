@@ -65,59 +65,37 @@ npm run dev
 
 ---
 
-## DB — 설치 없이 시작, 나중에 진짜 Postgres로
+## DB — PostgreSQL + Prisma
 
-[`lib/db.ts`](lib/db.ts) 가 환경에 따라 두 드라이버 중 하나를 고릅니다.
-
-| 조건 | 사용 엔진 | 저장 위치 |
-|---|---|---|
-| `DATABASE_URL` 없음 (기본) | **PGlite** — WASM으로 빌드된 내장 Postgres | `.pglite/` |
-| `DATABASE_URL` 있음 | **PostgreSQL** (node-postgres) | 해당 서버 |
-| `DATABASE_URL` 있는데 **연결 실패** | **PGlite** — 떠 둔 사본으로 내려갑니다 ([아래](#postgresql-이-안-뜰-때--로컬-사본으로-계속-돌기)) | `.pglite/` |
-
-둘 다 진짜 Postgres 엔진이라 **SQL은 한 글자도 바뀌지 않습니다.** 프로토타입은 설치 없이
-돌리고, 운영으로 넘어갈 때 `.env.local` 에 연결 문자열만 채우면 됩니다.
+앱의 데이터 계층은 **Prisma** 입니다 ([`lib/prisma.ts`](lib/prisma.ts) · 2026-09-22 부터).
+`lib/*.ts` 에 SQL 문자열이 없습니다 — 단일 표 CRUD·관계·집계는 Prisma Client API 로, 측정
+근거가 있는 튜닝 SQL(반경 검색·서열표 정렬 등)과 DB 안의 원자적 연산은
+[`prisma/sql/*.sql`](prisma/sql) 에 **TypedSQL** 로 두고 `npm run db:prisma:sql` 이 타입이 붙은
+모듈을 [`lib/typed-sql/`](lib/typed-sql) 로 만듭니다. 그 모듈은 **생성물이지만 커밋합니다** — TypedSQL 은
+DB 에 붙어야 만들어지는데 빌드는 DB 없이 돌기 때문입니다. `.sql` 을 고치면(주석만 고쳐도)
+다시 만드세요. 어긋나면 `tests/typed-sql.test.ts` 가 DB 없이 잡습니다. 무엇을 어느 쪽으로 보냈고 왜인지는 [docs/PRISMA-MIGRATION.md](docs/PRISMA-MIGRATION.md).
 
 ```bash
-# .env.local
+# .env.local — 필수입니다
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/arcade_finder
 ```
 
 ```bash
-npm run db:init    # 스키마 + 시드 적용 (기존 테이블 드롭 — 파괴적)
-npm run db:reset   # .pglite 까지 통째로 지우고 새로 생성
+npm run db:migrate:prisma      # 마이그레이션 적용 (= prisma migrate deploy) — 배포 전에
+npm run db:prisma:baseline     # 이미 돌던 DB 를 Prisma 이력에 처음 얹을 때 한 번
+npm run db:views               # 뷰 2개만 다시 만들기 (앱이 뜰 때도 합니다)
+npm run db:prisma:drift        # 지금 DB 가 스키마와 어긋났나
 ```
-
-### PostgreSQL 이 안 뜰 때 — 로컬 사본으로 계속 돌기
-
-PostgreSQL 을 쓰기로 한 뒤에도 그 서비스가 멈춰 있으면(재시작 중, 노트북에서 꺼 둔 상태)
-화면이 통째로 죽습니다. 그래서 **`.pglite/` 를 PostgreSQL 의 사본으로 떠 두고**, 못 붙을 때
-그쪽으로 내려갑니다. 서열표·오락실 목록이 시드가 아니라 실제 데이터로 그대로 뜹니다.
-
-```bash
-npm run db:snapshot            # 무엇이 복사될지만 보여줍니다 (dry-run)
-npm run db:snapshot -- --yes   # 실제로 뜹니다 — .pglite/ 를 새로 만듭니다
-```
-
-떠 둔 사본은 dry-run 이 보여준 행 수와 대조되고, 기존 `.pglite/` 는 `backups/` 로 옮겨집니다.
-스키마는 `db/*.sql` 에서 새로 만들므로 오래된 사본에 컬럼이 빠져 있어도 상관없습니다
-([`scripts/snapshot-pg-to-pglite.mjs`](scripts/snapshot-pg-to-pglite.mjs)).
-
-내려가는 자리는 두 곳입니다 ([`lib/db.ts`](lib/db.ts) `createDbWithFallback`).
-
-1. **서버가 뜰 때** — 연결 확인(`SELECT 1`)이 실패하면 처음부터 사본으로 시작
-2. **돌던 중에** — 쿼리가 커넥션 오류로 실패하면 그 쿼리부터 사본으로 다시 실행
 
 > [!WARNING]
-> 사본으로 내려간 동안 **쓴 내용은 PostgreSQL 에 반영되지 않습니다.** 그래서 한 번 내려가면
-> 프로세스가 사는 동안 돌아오지 않습니다 — 살아난 걸 감지해 왕복하면 그 사이에 쌓인 글·제보가
-> 어느 쪽에도 온전히 없는 상태가 됩니다. PostgreSQL 을 살린 뒤 **서버를 재시작**하면 다시 붙습니다.
-> 지금 어느 쪽으로 돌고 있는지는 `getDbStatus()` 가 알려주고, 내려갈 때 서버 로그에 이유가 찍힙니다.
+> **PGlite 폴백은 없습니다.** Prisma 7 에 PGlite 어댑터가 없어, PostgreSQL 에 못 붙으면 그
+> 자리에서 실패합니다(`/api/health` 503). 예전의 "DATABASE_URL 없이 내장 DB 로 시작" ·
+> "Postgres 가 죽으면 사본으로 내려가기" 는 앱에서 빠졌습니다. 앱은 **기동하면서 마이그레이션도
+> 적용하지 않습니다** — 빠진 것이 있으면 경고만 찍습니다 (deploy/README.md §2).
 
-폴백이 싫으면(운영에서 사본에 쓰는 것 자체가 사고라면) `.env.local` 에 `DB_FALLBACK=off` 를
-넣으세요 — 연결이 안 되면 그냥 에러를 냅니다. 판정 기준은 "DB 에 못 닿았다" 뿐입니다.
-제약 위반·문법 오류는 사본에서 다시 시도하지 않습니다
-([`tests/db-fallback.test.ts`](tests/db-fallback.test.ts)).
+옛 어댑터 [`lib/db.ts`](lib/db.ts)(node-postgres 직결 · PGlite 폴백 · 기동 시 적용)와
+`npm run db:init` · `db:migrate` · `db:snapshot` 은 **scripts/ 의 적재·점검 도구용**으로 남아
+있습니다. 앱 코드에서 import 하지 마세요.
 
 PostgreSQL 서비스 자체를 다루는 명령은 (Windows · 관리자 PowerShell):
 
@@ -127,9 +105,9 @@ Get-Service postgresql-x64-18         # 상태 확인
 ```
 
 
-**밖에서 폴백을 알아채기 — `GET /api/health`.** 폴백 중에도 화면은 멀쩡해서 로그 말고는 알 길이 없었다.
-이 엔드포인트가 `{status: 'degraded', checks: {db: 'ok', db_primary: 'fail'}, db: {driver: 'pglite', fallback: true}}` 를 돌려주므로
-모니터링 도구가 `check.db_primary` 로 잡을 수 있다 (정상이면 `healthy`, DB 조회 자체가 실패하면 `503 unhealthy`).
+**밖에서 알아채기 — `GET /api/health`.** DB 가 답하면 `{status: 'healthy', checks: {db: 'ok', db_primary: 'ok'}, db: {driver: 'postgres', client: 'prisma'}}`,
+못 붙으면 `503 unhealthy`. 모니터링 도구가 `check.db` 로 잡는다. (예전의 `degraded` — PGlite 폴백 중 — 는
+폴백 자체가 없어져 사라졌다. `db_primary` 키는 모니터링 룰이 보는 이름이라 남겨 두었고 `db` 와 같은 값이다.)
 [Pulse](https://github.com/mick243/pulse) 에 PROBE 대상으로 등록하면 응답시간·가동 여부와 함께 이 값이 차트와 알림 룰이 된다.
 
 **실제 트래픽까지 보기 — 앱 계측 (`lib/telemetry.ts`).** `.env.local` 에 `PULSE_API_URL` 과 `PULSE_AGENT_KEY` 를 넣으면

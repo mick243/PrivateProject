@@ -1,6 +1,7 @@
 import { cacheReference } from './cache';
 import { listComments } from './comments';
-import { getDb } from './db';
+import { recalcChartStats, tierCharts } from './typed-sql';
+import { getPrismaClient, num } from './prisma';
 import {
   SPECIAL_CODE,
   UNDECIDED_CODE,
@@ -10,10 +11,6 @@ import {
 import type {
   ChartDetail,
   ChartSummary,
-  GameDifficulty,
-  GameMode,
-  GameVersion,
-  Player,
   TierBoard,
   TierGame,
   TierGrade,
@@ -29,21 +26,10 @@ export const DEFAULT_MACHINE_ID = 1;
 // 화면(ChartDetailPanel)도 같은 규칙을 써야 하고, 그 파일은 DB 를 물지 않습니다.
 export { SPECIAL_CODE, UNDECIDED_CODE, UNIQUE_CODE } from './tier-types';
 
-/** NUMERIC 컬럼은 드라이버에 따라 문자열로 올 수 있어 항상 통과시킨다. */
-function num(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
 export async function getSettings(machineId = DEFAULT_MACHINE_ID): Promise<TierSettings> {
-  const db = await getDb();
-  const { rows } = await db.query<Record<string, unknown>>(
-    `SELECT * FROM tier_settings WHERE machine_id = $1`,
-    [machineId],
-  );
-  if (!rows[0]) throw new Error(`tier_settings 에 machine_id=${machineId} 설정이 없습니다`);
-  const r = rows[0];
+  const prisma = await getPrismaClient();
+  const r = await prisma.tier_settings.findUnique({ where: { machine_id: machineId } });
+  if (!r) throw new Error(`tier_settings 에 machine_id=${machineId} 설정이 없습니다`);
   return {
     machineId,
     voteMin: num(r.vote_min)!,
@@ -53,23 +39,23 @@ export async function getSettings(machineId = DEFAULT_MACHINE_ID): Promise<TierS
     minVotes: num(r.min_votes)!,
     minConvergence: num(r.min_convergence)!,
     specialMin: num(r.special_min)!,
-    chartBasis: (r.chart_basis as string | null) ?? null,
+    chartBasis: r.chart_basis ?? null,
     modeIsDifficulty: Boolean(r.mode_is_difficulty),
   };
 }
 
 export async function getGrades(machineId = DEFAULT_MACHINE_ID): Promise<TierGrade[]> {
-  const db = await getDb();
-  const { rows } = await db.query<Record<string, unknown>>(
-    `SELECT code, label, anchor, sort_order FROM tier_grades
-     WHERE machine_id = $1 ORDER BY sort_order`,
-    [machineId],
-  );
+  const prisma = await getPrismaClient();
+  const rows = await prisma.tier_grades.findMany({
+    where: { machine_id: machineId },
+    orderBy: { sort_order: 'asc' },
+    select: { code: true, label: true, anchor: true, sort_order: true },
+  });
   return rows.map((r) => ({
-    code: r.code as string,
-    label: r.label as string,
+    code: r.code,
+    label: r.label,
     anchor: num(r.anchor)!,
-    sortOrder: num(r.sort_order)!,
+    sortOrder: r.sort_order,
   }));
 }
 
@@ -81,54 +67,43 @@ export async function getGrades(machineId = DEFAULT_MACHINE_ID): Promise<TierGra
  * 선택기에 올라오면 고를 수 없는 항목이 대부분이 됩니다.
  */
 async function listGamesUncached(): Promise<TierGame[]> {
-  const db = await getDb();
-  const { rows } = await db.query<Record<string, unknown>>(
-    `SELECT m.id, m.name, m.short_name,
-            COALESCE((
-              SELECT COUNT(*) FROM charts c
-              JOIN songs s ON s.id = c.song_id
-              WHERE s.machine_id = m.id
-            ), 0)::int AS chart_count,
-            COALESCE((
-              SELECT json_agg(json_build_object('code', mm.code, 'label', mm.label)
-                              ORDER BY mm.sort_order)
-              FROM machine_modes mm WHERE mm.machine_id = m.id
-            ), '[]'::json) AS modes,
-            -- 버전을 구분하지 않는 게임은 빈 배열 → 화면이 선택기를 안 그린다.
-            COALESCE((
-              SELECT json_agg(json_build_object('id', gv.id, 'code', gv.code, 'label', gv.label)
-                              ORDER BY gv.sort_order)
-              FROM game_versions gv WHERE gv.machine_id = m.id
-            ), '[]'::json) AS versions,
-            -- 난이도 축이 없는 게임은 빈 배열 → 칩에 대괄호가 붙지 않는다.
-            COALESCE((
-              SELECT json_agg(json_build_object('code', md.code, 'label', md.label)
-                              ORDER BY md.sort_order)
-              FROM machine_difficulties md WHERE md.machine_id = m.id
-            ), '[]'::json) AS difficulties
-     FROM machines m
-     JOIN tier_settings ts ON ts.machine_id = m.id
-     ORDER BY m.id`,
+  const prisma = await getPrismaClient();
+  const games = await prisma.machines.findMany({
+    where: { tier_settings: { isNot: null } },
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      name: true,
+      short_name: true,
+      machine_modes: { orderBy: { sort_order: 'asc' }, select: { code: true, label: true } },
+      // 버전을 구분하지 않는 게임은 빈 배열 → 화면이 선택기를 안 그린다.
+      game_versions: { orderBy: { sort_order: 'asc' }, select: { id: true, code: true, label: true } },
+      // 난이도 축이 없는 게임은 빈 배열 → 칩에 대괄호가 붙지 않는다.
+      machine_difficulties: { orderBy: { sort_order: 'asc' }, select: { code: true, label: true } },
+    },
+  });
+
+  // 채보 수는 songs 를 거쳐야 세어지므로(charts 에 machine_id 가 없다) 게임마다 한 번씩.
+  // 게임이 셋뿐이고 결과는 5분 캐시라 왕복 수는 문제가 아니다.
+  const chartCounts = await Promise.all(
+    games.map((g) => prisma.charts.count({ where: { songs: { machine_id: g.id } } })),
   );
 
-  const parse = <T,>(v: unknown): T => (typeof v === 'string' ? JSON.parse(v) : v) as T;
-
-  return rows.map((r) => ({
-    machineId: num(r.id)!,
-    name: r.name as string,
-    shortName: r.short_name as string,
-    chartCount: num(r.chart_count)!,
-    modes: parse<GameMode[]>(r.modes),
-    versions: parse<GameVersion[]>(r.versions),
-    difficulties: parse<GameDifficulty[]>(r.difficulties),
+  return games.map((g, i) => ({
+    machineId: g.id,
+    name: g.name,
+    shortName: g.short_name,
+    chartCount: chartCounts[i],
+    modes: g.machine_modes,
+    versions: g.game_versions,
+    difficulties: g.machine_difficulties,
   }));
 }
 
 /**
  * 서열표를 제공하는 게임 목록.
  *
- * 채보 수를 세는 상관 서브쿼리가 둘 붙어 있는데, songs·charts 는 적재 스크립트로만
- * 채우는 참조 데이터라 캐시한다 (근거는 lib/cache.ts).
+ * songs·charts 는 적재 스크립트로만 채우는 참조 데이터라 캐시한다 (근거는 lib/cache.ts).
  * getGame() 도 이 함수를 거치므로 서열표 조회 경로 전체가 함께 덕을 본다.
  */
 export const listGames = cacheReference(listGamesUncached, 'tier-games');
@@ -161,6 +136,13 @@ function difficultyLabelOf(game: TierGame, difficulty: string | null): string | 
   return game.difficulties.find((d) => d.code === difficulty)?.label ?? difficulty;
 }
 
+/** 레벨 비교 — 난이도 미상(NULL)은 목록 끝으로 (SQL 의 ASC NULLS LAST 와 같은 규칙) */
+function compareLevel(a: number | null, b: number | null): number {
+  if (a === null) return b === null ? 0 : 1;
+  if (b === null) return -1;
+  return a - b;
+}
+
 /**
  * 서열표를 만들 수 있는 (모드, 레벨) 조합.
  *
@@ -171,45 +153,35 @@ async function listLevelsUncached(
   machineId: number,
   versionId: number | null,
 ): Promise<TierLevelOption[]> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
+  const where = {
+    songs: { machine_id: machineId },
+    ...(versionId !== null ? { version_id: versionId } : {}),
+  };
 
   // 난이도 축인 게임(사볼)은 레벨만으로 보드가 정해지므로 (모드, 레벨) 로 쪼개지 않는다.
   const { modeIsDifficulty } = await getSettings(machineId);
   if (modeIsDifficulty) {
-    const { rows } = await db.query<Record<string, unknown>>(
-      `SELECT c.level, COUNT(*)::int AS chart_count
-         FROM charts c
-         JOIN songs s ON s.id = c.song_id
-        WHERE s.machine_id = $1 AND ($2::int IS NULL OR c.version_id = $2::int)
-        GROUP BY c.level
-        -- 난이도 미상(NULL)은 목록 끝으로 — ASC 의 기본이 NULLS LAST 다.
-        ORDER BY c.level`,
-      [machineId, versionId],
-    );
-    return rows.map((r) => ({
-      mode: null,
-      level: num(r.level),
-      chartCount: num(r.chart_count)!,
-    }));
+    const rows = await prisma.charts.groupBy({ by: ['level'], where, _count: { _all: true } });
+    return rows
+      .map((r) => ({ mode: null, level: num(r.level), chartCount: r._count._all }))
+      .sort((a, b) => compareLevel(a.level, b.level));
   }
 
-  const { rows } = await db.query<Record<string, unknown>>(
-    // 알파벳순이면 Double 이 Single 보다 앞에 온다. machine_modes.sort_order 로 고정.
-    // 등록되지 않은 모드 코드는 뒤로 밀되 목록에서 빼지는 않는다.
-    `SELECT c.mode, c.level, COUNT(*)::int AS chart_count
-     FROM charts c
-     JOIN songs s ON s.id = c.song_id
-     LEFT JOIN machine_modes mm ON mm.machine_id = s.machine_id AND mm.code = c.mode
-     WHERE s.machine_id = $1 AND ($2::int IS NULL OR c.version_id = $2::int)
-     GROUP BY c.mode, c.level, mm.sort_order
-     ORDER BY mm.sort_order NULLS LAST, c.mode, c.level`,
-    [machineId, versionId],
-  );
-  return rows.map((r) => ({
-    mode: r.mode as string,
-    level: num(r.level),
-    chartCount: num(r.chart_count)!,
-  }));
+  // 알파벳순이면 Double 이 Single 보다 앞에 온다. machine_modes.sort_order(= 게임의 modes
+  // 배열 순서)로 고정. 등록되지 않은 모드 코드는 뒤로 밀되 목록에서 빼지는 않는다.
+  const game = await getGame(machineId);
+  const rank = new Map(game.modes.map((m, i) => [m.code, i]));
+  const rankOf = (mode: string | null) => (mode !== null && rank.has(mode) ? rank.get(mode)! : Infinity);
+  const rows = await prisma.charts.groupBy({ by: ['mode', 'level'], where, _count: { _all: true } });
+  return rows
+    .map((r) => ({ mode: r.mode as string, level: num(r.level), chartCount: r._count._all }))
+    .sort(
+      (a, b) =>
+        rankOf(a.mode) - rankOf(b.mode) ||
+        a.mode.localeCompare(b.mode) ||
+        compareLevel(a.level, b.level),
+    );
 }
 
 const listLevelsCached = cacheReference(listLevelsUncached, 'tier-levels');
@@ -217,7 +189,7 @@ const listLevelsCached = cacheReference(listLevelsUncached, 'tier-levels');
 /**
  * 그 게임·그 버전에서 서열표를 만들 수 있는 (모드, 레벨) 조합.
  *
- * 기본값을 캐시 바깥에서 채워 넘긴다 — Next 는 인자를 그대로 캐시 키에 넣으므로
+ * 기본값을 캐시 바깥에서 채워 넘긴다 — 인자를 그대로 캐시 키에 넣으므로
  * `listLevels()` 와 `listLevels(DEFAULT_MACHINE_ID)` 를 그냥 두면 같은 데이터가
  * 서로 다른 키로 두 벌 쌓인다. `versionId` 도 같은 이유로 항상 채워 넘긴다.
  */
@@ -228,39 +200,53 @@ export function listLevels(
   return listLevelsCached(machineId, versionId);
 }
 
-const CHART_SELECT = `
-  SELECT c.id, s.title, s.artist, s.machine_id, c.mode, c.difficulty, c.level,
-         c.vote_count, c.avg_vote, c.convergence, c.tier_code, c.special_count,
-         -- 상세에서만 씁니다(toSummary 는 읽지 않습니다). 여기 두는 이유는 상세가
-         -- 이 문장 하나로 끝나기 때문입니다 — 따로 물으면 왕복이 하나 늘어납니다.
-         c.video_url,
-         (cr.player_id IS NOT NULL) AS my_clear,
-         dv.value AS my_vote,
-         (sm.player_id IS NOT NULL) AS my_special
-  FROM charts c
-  JOIN songs s ON s.id = c.song_id
-  -- 난이도는 쉬운 순으로 세워야 한다 (코드 알파벳순이면 4D 가 EZ 보다 앞).
-  -- 등록되지 않은 코드는 뒤로 밀되 목록에서 빼지는 않는다 — listLevels 와 같은 규칙.
-  LEFT JOIN machine_difficulties md ON md.machine_id = s.machine_id AND md.code = c.difficulty
-  LEFT JOIN clear_records    cr ON cr.chart_id = c.id AND cr.player_id = $1::int
-  LEFT JOIN difficulty_votes dv ON dv.chart_id = c.id AND dv.player_id = $1::int
-  LEFT JOIN special_marks    sm ON sm.chart_id = c.id AND sm.player_id = $1::int`;
+/** prisma/sql/tierCharts.sql 의 한 줄 */
+type ChartRow = Awaited<ReturnType<typeof fetchCharts>>[number];
 
-function toSummary(r: Record<string, unknown>): ChartSummary {
+/**
+ * 채보 줄 조회. 정렬·필터의 근거가 SQL 주석에 있어 TypedSQL 로 둔다
+ * (prisma/sql/tierCharts.sql — 표시값 반올림 → 배치 순서 → 제목 → 난이도 순서표 …).
+ */
+async function fetchCharts(params: {
+  playerId: number | null;
+  chartId?: number | null;
+  machineId?: number | null;
+  mode?: string | null;
+  level?: number | null;
+  /** true 면 레벨 미상(NULL) 채보만 — 미상 보드 */
+  levelUnknown?: boolean;
+  versionId?: number | null;
+}) {
+  const prisma = await getPrismaClient();
+  return prisma.$queryRawTyped(
+    tierCharts(
+      params.playerId,
+      params.chartId ?? null,
+      params.machineId ?? null,
+      params.mode ?? null,
+      params.level ?? null,
+      params.levelUnknown ?? false,
+      params.versionId ?? null,
+    ),
+  );
+}
+
+function toSummary(r: ChartRow): ChartSummary {
   return {
-    id: num(r.id)!,
-    title: r.title as string,
-    artist: (r.artist as string) ?? null,
-    mode: (r.mode as string) ?? null,
-    difficulty: (r.difficulty as string) ?? null,
+    id: r.id,
+    title: r.title,
+    artist: r.artist ?? null,
+    mode: r.mode ?? null,
+    difficulty: r.difficulty ?? null,
     level: num(r.level),
-    voteCount: num(r.vote_count)!,
+    voteCount: r.vote_count,
     avgVote: num(r.avg_vote),
     convergence: num(r.convergence),
-    tierCode: (r.tier_code as string) ?? null,
-    specialCount: num(r.special_count) ?? 0,
+    tierCode: r.tier_code ?? null,
+    specialCount: r.special_count ?? 0,
     myClear: Boolean(r.my_clear),
-    myVote: num(r.my_vote),
+    // LEFT JOIN 이라 실제로는 NULL 이 올 수 있다 — 생성된 타입은 non-null 이지만 방어한다.
+    myVote: num(r.my_vote as unknown),
     mySpecial: Boolean(r.my_special),
   };
 }
@@ -276,50 +262,15 @@ export async function getTierBoard(params: {
   playerId: number | null;
 }): Promise<TierBoard> {
   const { machineId = DEFAULT_MACHINE_ID, versionId = null, mode, level, playerId } = params;
-  const db = await getDb();
 
-  const [settings, grades, game] = await Promise.all([
+  const [settings, grades, game, rows] = await Promise.all([
     getSettings(machineId),
     getGrades(machineId),
     getGame(machineId),
+    // 레벨이 NULL 인 채보(난이도 미상)도 자기 보드를 가져야 한다 — level 이 null 이면
+    // "미상만" 이라는 뜻이라 levelUnknown 으로 따로 넘긴다 (SQL 주석 참고).
+    fetchCharts({ playerId, machineId, mode, level, levelUnknown: level === null, versionId }),
   ]);
-
-  const { rows } = await db.query<Record<string, unknown>>(
-    `${CHART_SELECT}
-     WHERE s.machine_id = $2 AND ($3::text IS NULL OR c.mode = $3::text)
-       -- 레벨이 NULL 인 채보(난이도 미상)도 자기 보드를 가져야 한다 — 'c.level = NULL'
-       -- 은 아무것도 고르지 못하므로 NULL 쪽 가지를 따로 붙인다.
-       --
-       -- 더 짧은 'IS NOT DISTINCT FROM' 을 쓰지 않은 이유는 **인덱스**다. 그쪽은
-       -- charts_lookup_idx(mode, level) 를 못 타서 펌프 S15 조회가 seq scan 이 된다
-       -- (실측 284버퍼 · 0.83ms vs 이 형태 63버퍼 · 0.47ms). 아래 OR 는 $4 가 값일 때
-       -- 뒷가지가 상수 false 로 접혀 비트맵 인덱스 스캔이 그대로 남는다.
-       AND (c.level = $4::int OR ($4::int IS NULL AND c.level IS NULL))
-       AND ($5::int IS NULL OR c.version_id = $5::int)
-     -- 화면에 보이는 값(소수점 2자리)으로 줄을 세운다. 원본 평균으로 정렬하면
-     -- 같은 '0.26' 끼리도 순서가 갈려 이유를 알 수 없는 배열이 된다.
-     -- 등급 칸은 이 순서를 그대로 물려받으므로 왼쪽 위가 가장 높고
-     -- 오른쪽 아래가 가장 낮다 (.tier-charts 가 flex-wrap 이라 줄바꿈되며 채워진다).
-     --
-     -- 동점이면 **먼저 배치된 곡이 왼쪽** — charts.id 가 서열표에 들어온 순서다.
-     -- (stats_updated_at 은 못 쓴다. 전체 재계산이 모든 채보를 같은 시각으로
-     --  덮어써서 "먼저 배치" 를 잃는다.)
-     --
-     -- 투표가 아예 없는 채보는 '동점' 이 아니라 점수가 없는 것이라 제목순을
-     -- 유지한다 — 수백 곡짜리 '미정' 칸에서 곡을 찾으려면 그쪽이 낫다.
-     ORDER BY ROUND(c.avg_vote, 2) DESC NULLS LAST,
-              CASE WHEN c.avg_vote IS NULL THEN NULL ELSE c.id END ASC NULLS LAST,
-              s.title ASC,
-              -- 한 레벨에 여러 난이도가 섞이는 게임에서 제목까지 같을 때 순서가
-              -- 흔들리지 않게 난이도를 마지막 기준으로 둔다. 실제로 그런 곡이 있다 —
-              -- EZ2DJ SE 의 'Quake in Kyoto' 스트리트 NM 6 / RE 6 (migrate-060).
-              -- 미표기(NULL)는 뒤로 — 아는 난이도를 먼저 보여준다.
-              md.sort_order ASC NULLS LAST,
-              c.difficulty ASC NULLS LAST,
-              -- 사볼은 난이도가 mode 에 들어 있다 (migrate-045).
-              c.mode ASC NULLS LAST`,
-    [playerId, machineId, mode, level, versionId],
-  );
   const charts = rows.map(toSummary);
 
   // 등급별로 묶는다. 빈 등급도 자리를 유지해야 서열 구조가 보인다.
@@ -372,33 +323,30 @@ export async function getChartDetail(
   chartId: number,
   playerId: number | null,
 ): Promise<ChartDetail | null> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
   // 설정/등급은 게임마다 다르므로 채보에서 machine_id 를 끌어와야 한다.
   // 기본값으로 읽으면 사볼 채보에 펌프의 7단계 등급표가 붙는다.
-  const { rows } = await db.query<Record<string, unknown>>(
-    `${CHART_SELECT} WHERE c.id = $2`,
-    [playerId, chartId],
-  );
-  if (!rows[0]) return null;
-  const machineId = num(rows[0].machine_id)!;
+  const [row] = await fetchCharts({ playerId, chartId });
+  if (!row) return null;
+  const machineId = row.machine_id;
 
   // 분포는 익명 — 누가 몇 점 줬는지는 내보내지 않는다.
-  const { rows: voteRows } = await db.query<{ value: unknown }>(
-    `SELECT value FROM difficulty_votes WHERE chart_id = $1 ORDER BY value`,
-    [chartId],
-  );
-
-  const [settings, grades, game, comments] = await Promise.all([
+  const [voteRows, settings, grades, game, comments] = await Promise.all([
+    prisma.difficulty_votes.findMany({
+      where: { chart_id: chartId },
+      orderBy: { value: 'asc' },
+      select: { value: true },
+    }),
     getSettings(machineId),
     getGrades(machineId),
     getGame(machineId),
     listComments(chartId),
   ]);
 
-  const summary = toSummary(rows[0]);
+  const summary = toSummary(row);
   return {
     ...summary,
-    videoUrl: (rows[0].video_url as string) ?? null,
+    videoUrl: row.video_url ?? null,
     votes: voteRows.map((v) => num(v.value)!),
     grades,
     settings,
@@ -410,11 +358,13 @@ export async function getChartDetail(
   };
 }
 
-
-/** 투표 반영 후 반드시 호출. 캐시 컬럼(avg/convergence/tier_code)을 갱신한다. */
+/**
+ * 투표 반영 후 반드시 호출. 캐시 컬럼(avg/convergence/tier_code)을 갱신한다 —
+ * 집계 규칙은 DB 함수 recalc_chart_stats 에 있다 (prisma/sql/recalcChartStats.sql).
+ */
 async function recalc(chartId: number): Promise<void> {
-  const db = await getDb();
-  await db.query(`SELECT recalc_chart_stats($1)`, [chartId]);
+  const prisma = await getPrismaClient();
+  await prisma.$queryRawTyped(recalcChartStats(chartId));
 }
 
 /** 클리어 기록 등록/해제. 해제하면 그 채보의 투표도 함께 사라진다(FK CASCADE). */
@@ -423,18 +373,14 @@ export async function setClear(
   chartId: number,
   cleared: boolean,
 ): Promise<void> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
   if (cleared) {
-    await db.query(
-      `INSERT INTO clear_records (player_id, chart_id) VALUES ($1, $2)
-       ON CONFLICT DO NOTHING`,
-      [playerId, chartId],
-    );
+    await prisma.clear_records.createMany({
+      data: [{ player_id: playerId, chart_id: chartId }],
+      skipDuplicates: true,
+    });
   } else {
-    await db.query(`DELETE FROM clear_records WHERE player_id = $1 AND chart_id = $2`, [
-      playerId,
-      chartId,
-    ]);
+    await prisma.clear_records.deleteMany({ where: { player_id: playerId, chart_id: chartId } });
   }
   await recalc(chartId);
 }
@@ -454,18 +400,14 @@ export async function setSpecial(
   chartId: number,
   marked: boolean,
 ): Promise<void> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
   if (marked) {
-    await db.query(
-      `INSERT INTO special_marks (player_id, chart_id) VALUES ($1, $2)
-       ON CONFLICT DO NOTHING`,
-      [playerId, chartId],
-    );
+    await prisma.special_marks.createMany({
+      data: [{ player_id: playerId, chart_id: chartId }],
+      skipDuplicates: true,
+    });
   } else {
-    await db.query(`DELETE FROM special_marks WHERE player_id = $1 AND chart_id = $2`, [
-      playerId,
-      chartId,
-    ]);
+    await prisma.special_marks.deleteMany({ where: { player_id: playerId, chart_id: chartId } });
   }
   await recalc(chartId);
 }
@@ -482,30 +424,26 @@ export async function setVote(
   chartId: number,
   value: number | null,
 ): Promise<void> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
 
   if (value === null) {
-    await db.query(`DELETE FROM difficulty_votes WHERE player_id = $1 AND chart_id = $2`, [
-      playerId,
-      chartId,
-    ]);
+    await prisma.difficulty_votes.deleteMany({ where: { player_id: playerId, chart_id: chartId } });
     await recalc(chartId);
     return;
   }
 
   // DB 의 복합 FK 가 최종 방어선이지만, 여기서 먼저 막아야 사용자에게
   // 제약 위반 메시지 대신 뜻이 통하는 403 을 돌려줄 수 있다.
-  const { rows } = await db.query(
-    `SELECT 1 FROM clear_records WHERE player_id = $1 AND chart_id = $2`,
-    [playerId, chartId],
-  );
-  if (rows.length === 0) throw new NotClearedError();
+  const cleared = await prisma.clear_records.findUnique({
+    where: { player_id_chart_id: { player_id: playerId, chart_id: chartId } },
+    select: { chart_id: true },
+  });
+  if (!cleared) throw new NotClearedError();
 
-  await db.query(
-    `INSERT INTO difficulty_votes (player_id, chart_id, value) VALUES ($1, $2, $3)
-     ON CONFLICT (player_id, chart_id)
-       DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-    [playerId, chartId, value],
-  );
+  await prisma.difficulty_votes.upsert({
+    where: { player_id_chart_id: { player_id: playerId, chart_id: chartId } },
+    create: { player_id: playerId, chart_id: chartId, value },
+    update: { value, updated_at: new Date() },
+  });
   await recalc(chartId);
 }

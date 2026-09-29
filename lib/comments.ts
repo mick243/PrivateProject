@@ -1,5 +1,5 @@
-import { getDb } from './db';
 import type { ChartComment } from './community-types';
+import { getPrismaClient, iso } from './prisma';
 
 /**
  * 채보 평가.
@@ -12,43 +12,53 @@ import type { ChartComment } from './community-types';
  * 정보이기 때문입니다. 대신 목록에 클리어 여부를 함께 실어 보냅니다.
  */
 
-function iso(v: unknown): string {
-  return v instanceof Date ? v.toISOString() : String(v);
-}
+/**
+ * 한 줄에 필요한 관계. 투표값(difficulty_votes.value)은 일부러 싣지 않는다 —
+ * 투표 분포를 익명으로 두기로 한 결정이 평가란을 통해 뚫리면 안 된다. 클리어 여부만
+ * 내보낸다 (작성자의 clear_records 중 **이 채보** 것만 골라 있는지 본다).
+ */
+const commentInclude = (chartId: number) =>
+  ({
+    players: {
+      select: {
+        nickname: true,
+        clear_records: { where: { chart_id: chartId }, select: { chart_id: true } },
+      },
+    },
+  }) as const;
 
-function toComment(r: Record<string, unknown>): ChartComment {
+type CommentRow = {
+  id: number;
+  chart_id: number;
+  player_id: number;
+  body: string;
+  tags: string[];
+  created_at: Date;
+  updated_at: Date;
+  players: { nickname: string; clear_records: { chart_id: number }[] };
+};
+
+function toComment(r: CommentRow): ChartComment {
   return {
-    id: Number(r.id),
-    chartId: Number(r.chart_id),
-    playerId: Number(r.player_id),
-    nickname: r.nickname as string,
-    body: r.body as string,
-    // TEXT[] 는 드라이버가 배열로 주지만, 방어적으로 한 번 더 확인한다.
-    tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
-    cleared: Boolean(r.cleared),
+    id: r.id,
+    chartId: r.chart_id,
+    playerId: r.player_id,
+    nickname: r.players.nickname,
+    body: r.body,
+    tags: r.tags,
+    cleared: r.players.clear_records.length > 0,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
   };
 }
 
-// 투표값(dv.value)은 일부러 select 하지 않는다 — 투표 분포를 익명으로 두기로 한
-// 결정이 평가란을 통해 뚫리면 안 된다. 클리어 여부만 내보낸다.
-const COMMENT_SELECT = `
-  SELECT cc.id, cc.chart_id, cc.player_id, cc.body, cc.tags,
-         cc.created_at, cc.updated_at,
-         p.nickname,
-         (cr.player_id IS NOT NULL) AS cleared
-  FROM chart_comments cc
-  JOIN players p ON p.id = cc.player_id
-  LEFT JOIN clear_records cr
-    ON cr.chart_id = cc.chart_id AND cr.player_id = cc.player_id`;
-
 export async function listComments(chartId: number): Promise<ChartComment[]> {
-  const db = await getDb();
-  const { rows } = await db.query<Record<string, unknown>>(
-    `${COMMENT_SELECT} WHERE cc.chart_id = $1 ORDER BY cc.created_at DESC`,
-    [chartId],
-  );
+  const prisma = await getPrismaClient();
+  const rows = await prisma.chart_comments.findMany({
+    where: { chart_id: chartId },
+    orderBy: { created_at: 'desc' },
+    include: commentInclude(chartId),
+  });
   return rows.map(toComment);
 }
 
@@ -58,28 +68,20 @@ export async function upsertComment(input: {
   body: string;
   tags: string[];
 }): Promise<ChartComment> {
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number }>(
-    `INSERT INTO chart_comments (chart_id, player_id, body, tags)
-     VALUES ($1, $2, $3, $4::text[])
-     ON CONFLICT (chart_id, player_id)
-       DO UPDATE SET body = EXCLUDED.body, tags = EXCLUDED.tags, updated_at = now()
-     RETURNING id`,
-    [input.chartId, input.playerId, input.body, input.tags],
-  );
-
-  const { rows: full } = await db.query<Record<string, unknown>>(
-    `${COMMENT_SELECT} WHERE cc.id = $1`,
-    [rows[0].id],
-  );
-  return toComment(full[0]);
+  const prisma = await getPrismaClient();
+  const row = await prisma.chart_comments.upsert({
+    where: { chart_id_player_id: { chart_id: input.chartId, player_id: input.playerId } },
+    create: { chart_id: input.chartId, player_id: input.playerId, body: input.body, tags: input.tags },
+    update: { body: input.body, tags: input.tags, updated_at: new Date() },
+    include: commentInclude(input.chartId),
+  });
+  return toComment(row);
 }
 
 export async function deleteComment(chartId: number, playerId: number): Promise<boolean> {
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number }>(
-    `DELETE FROM chart_comments WHERE chart_id = $1 AND player_id = $2 RETURNING id`,
-    [chartId, playerId],
-  );
-  return rows.length > 0;
+  const prisma = await getPrismaClient();
+  const { count } = await prisma.chart_comments.deleteMany({
+    where: { chart_id: chartId, player_id: playerId },
+  });
+  return count > 0;
 }

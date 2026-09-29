@@ -10,8 +10,9 @@
 | 하려는 일 | 명령 |
 |---|---|
 | 처음 설치 | 아래 §1 |
-| 코드 배포 (무중단) | `git pull && npm ci && npm run build && npm run db:migrate && systemctl reload arcade-finder` |
-| 스키마만 미리 적용 | `npm run db:migrate` (`-- --dry-run` 으로 미리보기) |
+| 코드 배포 (무중단) | `git pull && npm ci && npm run build && npm run db:migrate:prisma && systemctl reload arcade-finder` |
+| 스키마만 미리 적용 | `npm run db:migrate:prisma` (= `prisma migrate deploy`; 상태는 `npx prisma migrate status`) |
+| 기존 DB 를 Prisma 이력에 처음 얹기 (한 번) | `npm run db:prisma:baseline -- --dry-run` → `npm run db:prisma:baseline` |
 | 백업 | `deploy/backup.sh` (systemd timer 가 매일 04:00) |
 | 복구 | §4 |
 | 상태 | `curl -s localhost:3000/api/health` · `journalctl -u arcade-finder -f` |
@@ -58,7 +59,10 @@ sudo -u postgres createdb -O arcade arcade_finder
 # 개발 DB 의 실데이터(오락실 939 · 채보 5,157)를 가져가는 경우:
 pg_restore -w -d "$DATABASE_URL" --no-owner dev.dump
 # 또는 빈 DB 에서 시작하는 경우 (시드의 '(가상)' 오락실 5곳이 들어갑니다 — 지우세요):
-npm run db:migrate
+npm run db:migrate:prisma      # 마이그레이션 89개 전부
+npm run db:views               # 뷰 2개 (앱이 뜰 때도 만들어지지만 먼저 확인하려면)
+# 덤프를 복원한 경우에는 이력을 얹어야 앱이 "미적용" 경고를 찍지 않습니다:
+npm run db:prisma:baseline
 ```
 
 빌드와 서비스 등록:
@@ -82,7 +86,7 @@ cd /srv/arcade-finder/app && sudo -u arcade git pull
 cd arcade-finder
 sudo -u arcade npm ci
 sudo -u arcade npm run build
-sudo -u arcade npm run db:migrate          # 새 마이그레이션이 있으면 여기서 미리 적용
+sudo -u arcade npm run db:migrate:prisma   # 새 마이그레이션이 있으면 **반드시** 여기서 적용
 sudo systemctl reload arcade-finder        # SIGHUP → 인스턴스를 하나씩 교체
 ```
 
@@ -90,9 +94,10 @@ sudo systemctl reload arcade-finder        # SIGHUP → 인스턴스를 하나�
 200 을 확인한 뒤 다음으로 넘어갑니다. 그동안 다른 인스턴스가 트래픽을 받습니다.
 90초 안에 돌아오지 않으면 교체를 멈추고 나머지는 옛 코드로 계속 돕니다(로그 확인).
 
-`db:migrate` 를 빼먹어도 첫 인스턴스가 뜰 때 advisory lock 안에서 적용합니다 — 다만
-그 인스턴스의 첫 응답이 늦어지고, 실패하면 그 인스턴스가 뜨지 않습니다. 미리 하는
-쪽이 낫습니다.
+⚠ **`db:migrate:prisma` 는 빼먹으면 안 됩니다.** 2026-09-22 부터 앱은 기동하면서 마이그레이션을
+적용하지 않습니다(Prisma — lib/prisma.ts). 빠진 것이 있으면 기동 로그에 경고가 찍히고, 새
+컬럼을 읽는 코드는 그 자리에서 500 이 됩니다. 예전처럼 "첫 인스턴스가 대신 적용" 하는 일은
+없습니다. 뷰(`db/views.sql`)만 기동마다 앱이 다시 만듭니다.
 
 ⚠ **`migrate-057`(token_epoch)을 올리는 배포에서는 로그인한 사람이 전부 로그아웃됩니다.**
 세션 토큰의 모양이 바뀌어서, 그 전에 나간 쿠키는 세대 번호가 없어 무효가 됩니다. 사고가

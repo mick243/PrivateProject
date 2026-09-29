@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { listMachineGuesses, listMachines } from './arcades';
-import { getDb } from './db';
+import { getPrismaClient } from './prisma';
 import type { MachineGuess } from './types';
 
 /**
@@ -70,12 +70,11 @@ export async function guessMachines(arcadeId: number): Promise<GuessOutcome> {
     throw new MachineGuessUnavailable('GEMINI_API_KEY 가 없어 검색할 수 없습니다');
   }
 
-  const db = await getDb();
-  const { rows } = await db.query<{ name: string; address: string | null }>(
-    `SELECT name, address FROM arcades WHERE id = $1::int`,
-    [arcadeId],
-  );
-  const arcade = rows[0];
+  const prisma = await getPrismaClient();
+  const arcade = await prisma.arcades.findUnique({
+    where: { id: arcadeId },
+    select: { name: true, address: true },
+  });
   if (!arcade) throw new MachineGuessUnavailable('그런 오락실이 없습니다');
 
   // 리듬게임 기종만. 목록을 코드에 적지 않고 DB 에서 읽는 이유는 관리자가 기종을
@@ -146,13 +145,12 @@ export async function guessMachines(arcadeId: number): Promise<GuessOutcome> {
   }
 
   for (const [machineId, evidence] of found) {
-    await db.query(
-      `INSERT INTO arcade_machine_guesses (arcade_id, machine_id, evidence, model)
-            VALUES ($1, $2, $3, $4)
-       ON CONFLICT (arcade_id, machine_id)
-       DO UPDATE SET evidence = EXCLUDED.evidence, model = EXCLUDED.model, created_at = now()`,
-      [arcadeId, machineId, evidence, MODEL],
-    );
+    // 같은 (오락실, 기종) 은 근거·모델·시각을 새 것으로 덮습니다 — 옛 ON CONFLICT DO UPDATE 와 같습니다.
+    await prisma.arcade_machine_guesses.upsert({
+      where: { arcade_id_machine_id: { arcade_id: arcadeId, machine_id: machineId } },
+      create: { arcade_id: arcadeId, machine_id: machineId, evidence, model: MODEL },
+      update: { evidence, model: MODEL, created_at: new Date() },
+    });
   }
 
   // 이번에 찾은 것 중 몇 개가 실제로 화면에 뜨는지 셉니다. 목록은 이미 확정된

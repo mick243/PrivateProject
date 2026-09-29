@@ -150,14 +150,18 @@ npm run start:cluster        # 인스턴스 2개 × PG_POOL_MAX=10, 공개 포�
 
 ### 알고 있는 한계
 
-- **마이그레이션은 PostgreSQL 에도 기동 시 적용됩니다** (2026-09-13 부터 — 그 전에는
-  PGlite 경로만 적용하고 PG 는 풀만 만들었습니다. 이 문단이 그때도 "적용된다" 고 적혀
-  있어 코드와 어긋났었습니다). `pg_advisory_lock` 으로 한 프로세스씩 들어가므로 두
-  인스턴스가 동시에 떠도 충돌하지 않습니다. 배포 전에 `npm run db:migrate` 로 미리
-  적용하는 편이 낫습니다 — 첫 인스턴스의 첫 응답이 늦어지지 않습니다 (deploy/README.md).
-- **뷰는 기동마다 DROP → CREATE 입니다.** `exec` 이 파일 전체를 한 번의 simple
-  query 로 보내 암묵적 트랜잭션이 걸리므로 다른 세션은 **락을 기다릴 뿐 에러를
-  보지 않습니다**(failover 테스트 48/48 통과). 잠깐 멈춤이지 장애는 아닙니다.
+- **앱은 기동하면서 마이그레이션을 적용하지 않습니다** (2026-09-22 부터 — 데이터 계층이
+  Prisma 로 옮겨 갔습니다, lib/prisma.ts). 적용은 배포 단계의 `npm run db:migrate:prisma`
+  (= `prisma migrate deploy`)가 하고, 앱은 빠진 것이 있으면 **경고만** 찍습니다. 그래서 배포
+  순서가 "마이그레이션 먼저, 기동은 그다음" 으로 **고정**됩니다 (deploy/README.md §2).
+  이미 돌던 DB 는 한 번 `npm run db:prisma:baseline` 으로 얹어야 합니다 (docs/PRISMA-MIGRATION.md §3).
+  옛 경로(기동 시 적용 · `npm run db:migrate`)는 scripts/ 와 lib/db.ts 에 남아 있지만 앱은 쓰지 않습니다.
+- **PGlite 폴백이 없습니다.** Prisma 7 에 PGlite 어댑터가 없어, DATABASE_URL 은 필수이고
+  PostgreSQL 에 못 붙으면 그 자리에서 실패합니다(/api/health 503). "Postgres 를 꺼 둔 채
+  화면만 보기" 는 이제 되지 않습니다.
+- **뷰는 기동마다 DROP → CREATE 입니다** (Prisma 경로도 같습니다 — 뷰는 마이그레이션이
+  아닙니다). 파일 전체를 한 번의 simple query 로 보내 암묵적 트랜잭션이 걸리므로 다른
+  세션은 **락을 기다릴 뿐 에러를 보지 않습니다**. 잠깐 멈춤이지 장애는 아닙니다.
 - **첨부는 로컬 디스크**(`process.cwd()/uploads`)입니다. 지금 2프로세스는 같은
   cwd 를 공유해 괜찮지만, **인스턴스를 다른 장비로 나누는 순간 깨집니다.**
 
