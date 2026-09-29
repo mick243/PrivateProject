@@ -305,7 +305,21 @@ export default function ChatBot() {
         aria-label={open ? '도우미 닫기' : '도우미 열기'}
         aria-expanded={open}
       >
-        {open ? '✕' : '💬'}
+        {/* 그림 글자(이모지)는 기기마다 모양이 달라서 선 아이콘으로 그립니다 */}
+        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+          <path
+            d={
+              open
+                ? 'M6 6l12 12M18 6 6 18'
+                : 'M20 12.5c0 3.6-3.6 6.5-8 6.5-1 0-2-.15-2.9-.42L5 20l1.1-3.1A6.3 6.3 0 0 1 4 12.5C4 8.9 7.6 6 12 6s8 2.9 8 6.5Z'
+            }
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </button>
 
       {open && (

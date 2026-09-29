@@ -8,7 +8,7 @@ import PlayerPicker from './PlayerPicker';
 import ThemeToggle from './ThemeToggle';
 
 const LINKS = [
-  { href: '/finder', label: '오락실 파인더' },
+  { href: '/finder', label: '오락실 찾기' },
   { href: '/live', label: '실시간 제보' },
   { href: '/tier', label: '서열표 · 채보 평가' },
   { href: '/community', label: '커뮤니티' },
@@ -27,7 +27,7 @@ export default function TopNav() {
   return (
     <nav className="topnav">
       <Link href="/" className="topnav-brand">
-        ARCADE
+        오락실 파인더
       </Link>
 
       <button

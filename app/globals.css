@@ -1,5 +1,11 @@
 /*
   ── 색 ────────────────────────────────────────────────────────
+  2026-09-29 에 통째로 다시 잡았습니다 (docs/VISUAL-DESIGN.md).
+
+  예전 판은 남색 바탕 + 파랑 · 민트 두 강조색 + 그라데이션 카드였습니다. 틀린 곳은 없었지만
+  "어디서 본 대시보드" 로 읽혔습니다. 지금 판은 당근 SEED 디자인 시스템의 규칙을 따릅니다 —
+  **회색이 화면을 끌고, 브랜드 색은 주 버튼 · 고른 것 · 지도의 선택 핀에만.**
+
   기본은 다크입니다. 라이트는 두 곳에서 켜집니다.
 
     · `@media (prefers-color-scheme: light)` — OS 설정. JS 가 없어도 동작합니다.
@@ -11,65 +17,89 @@
   같은 값을 두 번 적는 대신 한쪽을 var 로 참조하게 만들 수도 있지만, 그러면 색을
   찾을 때 한 단계를 더 따라가야 해서 그냥 두 번 적습니다.
 
-  ── 어떤 색이 토큰이 되어야 하나 ──
-  `rgba(…, 0.16)` 같은 **틴트 배경은 토큰이 아닙니다.** 반투명이라 어떤 바탕 위에서든
-  그 바탕과 섞여서, 다크에서는 어둡게 라이트에서는 옅게 저절로 맞습니다. 토큰이 되어야
-  하는 건 바탕을 가정하고 박아 둔 색입니다 — 그 틴트 **위에 얹는 글자색**, 눌린 면,
-  떠 있는 판, 그림자, 덧대는 밝기.
+  ── 역할 ──
+  --accent      브랜드(파랑). 주 버튼 배경 · 지도의 오락실 점 · 포커스.
+                **글자로 쓰지 않습니다** — 흰 바탕에서 4.5:1 이 안 나옵니다. 글자는 --text-accent.
+  --accent-2    '좋음 · 있음 · 켜짐' (SEED 의 positive). 컨디션 4~5 · 내 위치 · 클리어 표시.
+  --danger      지우기 · 오류.  --warn  주의(컨디션 3).
+  --info        글 안의 링크.
 
-  `--accent` · `--accent-2` · `--danger` 는 배경으로도 글자로도 쓰입니다. 그래서
-  라이트에서는 '흰 바탕에서 글자로 읽히는' 진하기까지 내립니다 — 그 덕에 `color:
-  var(--accent-2)` 로 적힌 20여 곳을 한 곳도 건드리지 않아도 됩니다.
+  틴트 배경(옅게 깐 색)은 토큰이 아니라 `color-mix(in srgb, var(--accent) 12%, transparent)`
+  로 씁니다. 어떤 바탕 위에서든 그 바탕과 섞이므로 두 테마에서 따로 적을 필요가 없습니다.
+  토큰이 되어야 하는 건 그 틴트 **위에 얹는 글자색**(--text-*)입니다.
+
+  ── 모양 ──
+  간격은 4의 배수만 씁니다. 모서리는 세 가지 — 작은 것 --r-sm(8) · 카드 --r-md(12) ·
+  알약 --r-full. 그림자는 **떠 있는 것**(지도 위 판 · 펼친 메뉴 · 떠 있는 단추)에만 줍니다.
+  버튼과 카드는 납작합니다.
 */
 :root {
   /* 스크롤 막대·기본 폼 컨트롤 같은 브라우저 제공 UI 도 같이 따라오게 한다 */
   color-scheme: dark;
 
-  --bg: #0e1015;
-  --panel: #161a22;
-  --panel-2: #1d222c;
-  /*
-     홈 바로가기 카드의 설명 띠 (.home-card-cap).
-
-     카드에 테두리를 두지 않아 이 띠가 곧 카드 경계라, 공용 --panel-2 보다 한 단 더
-     벌려 둡니다. 다크는 더 밝게, 라이트는 더 어둡게 — 어느 쪽이든 **카드 배경에서
-     멀어지는** 방향입니다. 세 곳(:root · 라이트 미디어 · [data-theme=light])에 모두
-     두어야 시스템 설정과 토글 양쪽에서 맞습니다.
-  */
-  --card-cap: #2a3242;
-  --line: #2a3040;
-  --text: #e6e9f0;
-  --muted: #8b93a7;
-  --accent: #356ee6;
-  --accent-2: #22d3a6;
-  --danger: #f2555a;
-  /* 주의를 끌되 위험은 아닌 것 (컨디션 3 · 서열표 3구간) */
-  --warn: #e2b93b;
+  --bg: #16171b;
+  --panel: #1b1d22;
+  --panel-2: #2b2e35;
+  /* 홈 바로가기 카드의 바탕 (.home-card). 판(--panel)과 한 단 떨어져야 카드로 읽힌다 */
+  --card-cap: #22252b;
+  --line: #2b2e35;
+  /* 입력 칸 테두리처럼 '여기가 경계' 를 또렷이 말해야 하는 선 */
+  --line-strong: #393d46;
+  /* 회색 홈 안에서 떠오른 칸 (.seg 의 고른 칸). 다크에서는 홈보다 밝아야 떠 보인다 */
+  --raised: #3d414a;
+  --text: #f3f4f5;
+  --muted: #b0b3ba;
+  /* 날짜 · 조회수처럼 세 번째로 읽히는 글자 */
+  --subtle: #868b94;
+  --accent: #3b82f6;
+  --accent-2: #22b27f;
+  --danger: #ff6e60;
+  --warn: #ca901c;
+  --info: #41a2f9;
 
   /* 바탕보다 더 눌린 면 — 사진·영상·지도처럼 '안쪽' 으로 읽혀야 하는 자리 */
-  --sunken: #0b0d12;
+  --sunken: #0f1013;
   /* 지도 위에 떠 있는 판. 뒤가 비쳐야 해서 알파가 있다 */
-  --panel-float: rgba(22, 26, 34, 0.95);
+  --panel-float: rgba(29, 32, 37, 0.97);
   /* 어떤 면 위에든 한 겹 덧대는 밝기 (호버·눌림) */
-  --overlay: rgba(255, 255, 255, 0.12);
+  --overlay: rgba(255, 255, 255, 0.08);
   /* 지도 마커의 점을 배경에서 떼어내는 테두리 */
-  --marker-ring: rgba(11, 13, 18, 0.85);
-  --shadow-soft: rgba(0, 0, 0, 0.35);
-  --shadow: rgba(0, 0, 0, 0.45);
-  --shadow-strong: rgba(0, 0, 0, 0.55);
+  --marker-ring: rgba(15, 16, 19, 0.85);
+  --shadow-soft: rgba(0, 0, 0, 0.4);
+  --shadow: rgba(0, 0, 0, 0.55);
+  --shadow-strong: rgba(0, 0, 0, 0.7);
 
   /* 꽉 찬 --accent-2 위에 얹는 글자 */
-  --on-accent-2: #06231b;
+  --on-accent-2: #ffffff;
   /* 옅은 틴트 위에 얹는 글자들 — 배경이 아니라 **글자**다 */
-  --text-accent: #a8c8ff;
-  --text-warn: #f0cf6a;
-  --text-danger: #ffb4b6;
-  --text-danger-strong: #ffd0d1;
+  --text-accent: #83bcf9;
+  --text-positive: #35ce9a;
+  --text-info: #83bcf9;
+  --text-warn: #dab156;
+  --text-danger: #ffa299;
+  --text-danger-strong: #f8c5c3;
   /* 즐겨찾기 별 · 컬링을 꺼 둔 상태 표시 */
-  --star: #f5c451;
-  --text-hot: #ff9d5c;
+  --star: #f5b82e;
+  --text-hot: #ff9e65;
 
-  --radius: 10px;
+  /* 모서리 — 위 '모양' 참고. --radius 는 예전 이름이라 --r-sm 과 같은 값으로 둔다 */
+  --r-xs: 4px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-full: 999px;
+  --radius: var(--r-sm);
+
+  /* 글자 크기 — SEED 의 t2~t9. 줄 높이는 한글 기준으로 짝을 맞춘 값 */
+  --t2: 12px;
+  --t3: 13px;
+  --t4: 14px;
+  --t5: 16px;
+  --t6: 18px;
+  --t7: 20px;
+  --t8: 22px;
+  --t9: 26px;
+
+  --topnav-h: 52px;
 
   /* 아래 가운데 이동 막대(.histbar)가 차지하는 세로 높이 = 막대 46px + 아래 여백 12px.
      스크롤이 끝까지 내려갔을 때 마지막 줄(페이지 번호 등)이 막대에 가리지 않도록,
@@ -86,72 +116,78 @@
   :root:not([data-theme='dark']) {
   color-scheme: light;
 
-  --bg: #f5f6f8;
+  --bg: #ffffff;
   --panel: #ffffff;
-  --panel-2: #eef0f4;
-  --card-cap: #e0e4ec;
-  --line: #dcdfe6;
-  --text: #1a1d24;
-  --muted: #5d6577;
-  /* 글자로도 쓰이므로 흰 바탕에서 읽히는 진하기까지 내린다 (위 설명 참고) */
-  --accent: #1d4ed8;
-  --accent-2: #0b7a5c;
-  --danger: #cf3339;
-  --warn: #a6780c;
+  --panel-2: #f3f4f5;
+  --card-cap: #f7f8f9;
+  --line: #eeeff1;
+  --line-strong: #dcdee3;
+  --raised: #ffffff;
+  --text: #1a1c20;
+  --muted: #555d6d;
+  --subtle: #868b94;
+  --accent: #2272eb;
+  --accent-2: #079171;
+  --danger: #e5302a;
+  --warn: #9b7821;
+  --info: #217cf9;
 
-  --sunken: #e8eaf0;
-  --panel-float: rgba(255, 255, 255, 0.96);
-  --overlay: rgba(20, 24, 34, 0.08);
-  --marker-ring: rgba(255, 255, 255, 0.9);
-  /* 밝은 바탕에서 검정 그림자를 그대로 쓰면 때가 낀 것처럼 보인다 — 묽게, 그리고
-     완전한 검정이 아니라 바탕의 푸른기를 약간 섞는다 */
-  --shadow-soft: rgba(20, 24, 34, 0.1);
-  --shadow: rgba(20, 24, 34, 0.16);
-  --shadow-strong: rgba(20, 24, 34, 0.22);
+  --sunken: #f3f4f5;
+  --panel-float: rgba(255, 255, 255, 0.98);
+  --overlay: rgba(0, 0, 0, 0.05);
+  --marker-ring: rgba(255, 255, 255, 0.95);
+  --shadow-soft: rgba(0, 0, 0, 0.08);
+  --shadow: rgba(0, 0, 0, 0.1);
+  --shadow-strong: rgba(0, 0, 0, 0.14);
 
   --on-accent-2: #ffffff;
-  --text-accent: #1a44bd;
-  --text-warn: #8a6508;
-  --text-danger: #b32d33;
-  --text-danger-strong: #8f2024;
-  --star: #c8890a;
-  --text-hot: #c2500a;
+  --text-accent: #1b64da;
+  --text-positive: #00745f;
+  --text-info: #135fcd;
+  --text-warn: #755b22;
+  --text-danger: #ca1d13;
+  --text-danger-strong: #921708;
+  --star: #e09a00;
+  --text-hot: #c2410c;
   }
 }
 
 :root[data-theme='light'] {
   color-scheme: light;
 
-  --bg: #f5f6f8;
+  --bg: #ffffff;
   --panel: #ffffff;
-  --panel-2: #eef0f4;
-  --card-cap: #e0e4ec;
-  --line: #dcdfe6;
-  --text: #1a1d24;
-  --muted: #5d6577;
-  /* 글자로도 쓰이므로 흰 바탕에서 읽히는 진하기까지 내린다 (위 설명 참고) */
-  --accent: #1d4ed8;
-  --accent-2: #0b7a5c;
-  --danger: #cf3339;
-  --warn: #a6780c;
+  --panel-2: #f3f4f5;
+  --card-cap: #f7f8f9;
+  --line: #eeeff1;
+  --line-strong: #dcdee3;
+  --raised: #ffffff;
+  --text: #1a1c20;
+  --muted: #555d6d;
+  --subtle: #868b94;
+  --accent: #2272eb;
+  --accent-2: #079171;
+  --danger: #e5302a;
+  --warn: #9b7821;
+  --info: #217cf9;
 
-  --sunken: #e8eaf0;
-  --panel-float: rgba(255, 255, 255, 0.96);
-  --overlay: rgba(20, 24, 34, 0.08);
-  --marker-ring: rgba(255, 255, 255, 0.9);
-  /* 밝은 바탕에서 검정 그림자를 그대로 쓰면 때가 낀 것처럼 보인다 — 묽게, 그리고
-     완전한 검정이 아니라 바탕의 푸른기를 약간 섞는다 */
-  --shadow-soft: rgba(20, 24, 34, 0.1);
-  --shadow: rgba(20, 24, 34, 0.16);
-  --shadow-strong: rgba(20, 24, 34, 0.22);
+  --sunken: #f3f4f5;
+  --panel-float: rgba(255, 255, 255, 0.98);
+  --overlay: rgba(0, 0, 0, 0.05);
+  --marker-ring: rgba(255, 255, 255, 0.95);
+  --shadow-soft: rgba(0, 0, 0, 0.08);
+  --shadow: rgba(0, 0, 0, 0.1);
+  --shadow-strong: rgba(0, 0, 0, 0.14);
 
   --on-accent-2: #ffffff;
-  --text-accent: #1a44bd;
-  --text-warn: #8a6508;
-  --text-danger: #b32d33;
-  --text-danger-strong: #8f2024;
-  --star: #c8890a;
-  --text-hot: #c2500a;
+  --text-accent: #1b64da;
+  --text-positive: #00745f;
+  --text-info: #135fcd;
+  --text-warn: #755b22;
+  --text-danger: #ca1d13;
+  --text-danger-strong: #921708;
+  --star: #e09a00;
+  --text-hot: #c2410c;
 }
 
 * {
@@ -164,10 +200,36 @@ body {
   height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI',
-    'Malgun Gothic', system-ui, sans-serif;
-  font-size: 14px;
+  /*
+     Pretendard 는 app/fonts/pretendard 에 들어 있고 layout.tsx 가 불러옵니다.
+     예전에는 이름만 적혀 있고 파일이 없어서, Windows 에서는 전부 맑은 고딕으로 떴습니다.
+     가변 글꼴이라 굵기를 400·500·600·700 어느 것이든 따로 받지 않고 씁니다.
+  */
+  font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+    'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  font-size: var(--t4);
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* 한글은 낱말(어절) 단위로 줄을 바꾼다 — 기본값은 음절마다 끊어서 '기종으/로' 가 된다.
+     아주 긴 영문·주소는 overflow-wrap 이 칸 안에서 끊어 준다 */
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+/* 제목은 굵게, 자간은 조금 좁게 — 한글 제목이 헐거워 보이지 않는 값 */
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* 숫자가 세로로 줄을 맞춰야 하는 자리가 많다 (거리 · 대기 인원 · 투표 수) */
+.num,
+time {
+  font-variant-numeric: tabular-nums;
 }
 
 button,
@@ -178,37 +240,78 @@ textarea {
   color: inherit;
 }
 
+/* 클래스가 없는 글 속 링크 — 브라우저 기본 보라·파랑 대신 정보색 한 가지 */
+a {
+  color: var(--info);
+  text-underline-offset: 2px;
+}
+
+/* 포커스는 한 가지 모양 — 브랜드색 두 겹 링. 마우스 클릭에는 안 뜨고 키보드에만 뜬다 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* ── 상단 네비 ──────────────────────────────────────────── */
 .topnav {
   position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 46px;
-  padding: 0 16px;
+  height: var(--topnav-h);
+  padding: 0 20px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
+/* 글자로 된 이름표. 앞의 네모는 오락실 버튼 — 브랜드색이 네비에 나오는 유일한 자리 */
 .topnav-brand {
-  margin-right: 12px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 20px;
+  font-size: var(--t5);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  white-space: nowrap;
 }
+.topnav-brand::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: inset 0 -3px 0 color-mix(in srgb, #000 22%, transparent);
+  flex: none;
+}
+/* 탭처럼 — 지금 있는 곳은 굵은 글자와 밑줄 한 줄. 배경 알약을 깔지 않는다 */
 .topnav-link {
-  padding: 6px 12px;
-  border-radius: var(--radius);
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: var(--topnav-h);
+  padding: 0 12px;
   color: var(--muted);
   text-decoration: none;
-  font-size: 13px;
+  font-size: var(--t5);
+  font-weight: 500;
+  white-space: nowrap;
 }
 .topnav-link:hover {
   color: var(--text);
 }
 .topnav-link.is-on {
-  background: var(--panel-2);
   color: var(--text);
+  font-weight: 700;
+}
+.topnav-link.is-on::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--text);
 }
 
 /* 데스크톱 폭에서는 그냥 이어지는 한 줄. 모바일 폭에서만 드로어로 접힌다
@@ -256,10 +359,10 @@ textarea {
   position: relative;
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
-  height: calc(100vh - 46px);
+  height: calc(100vh - var(--topnav-h));
   /* iOS 주소창이 접히고 펴지는 만큼을 반영한다 — 100vh 는 펼쳐진 높이로 고정이라
      하단이 잘린다. dvh 를 모르는 브라우저는 위 줄을 그대로 쓴다. */
-  height: calc(100dvh - 46px);
+  height: calc(100dvh - var(--topnav-h));
   transition:
     grid-template-columns 180ms ease,
     grid-template-rows 180ms ease;
@@ -319,7 +422,7 @@ textarea {
   transition: left 180ms ease;
 }
 .sidebar-handle:hover {
-  border-color: var(--accent);
+  background: var(--panel-2);
   color: var(--text);
 }
 .sidebar-handle svg {
@@ -346,22 +449,22 @@ textarea {
 }
 .brand h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--t7);
   letter-spacing: -0.02em;
 }
 .brand p {
   margin: 4px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t3);
 }
 
 /* ── 필터 ───────────────────────────────────────────────── */
 .filters {
-  padding: 14px 16px;
+  padding: 16px;
   border-bottom: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .search,
@@ -382,17 +485,33 @@ input[type='email'],
 select,
 textarea {
   width: 100%;
-  padding: 8px 10px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  min-height: 40px;
+  padding: 9px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
   outline: none;
+  transition: border-color 120ms ease;
 }
+textarea {
+  line-height: 1.6;
+}
+::placeholder {
+  color: var(--subtle);
+  opacity: 1;
+}
+/* 칸의 포커스는 링이 아니라 테두리 한 줄이 글자색으로 진해지는 것 — 칸이 여럿 붙은
+   폼에서 링이 옆 칸을 덮지 않는다 */
 .search:focus,
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: var(--accent);
+  border-color: var(--text);
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
 }
 
 /* 검색창 밑의 '주변으로 지도 이동'. 검색어가 그대로 들어가므로 길면 자른다 */
@@ -417,22 +536,26 @@ textarea:focus {
   flex-wrap: wrap;
   gap: 6px;
 }
+/* 알약. 고른 것은 **먹색으로 뒤집는다** — 브랜드색으로 칠하면 칩 열 개가 주 버튼과
+   같은 무게로 소리를 낸다 */
 .chip {
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  color: var(--muted);
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--text);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--t3);
+  font-weight: 500;
 }
 .chip:hover {
-  border-color: var(--accent);
+  background: var(--panel-2);
 }
 .chip.is-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
 }
 
 /* ══ 한 줄 스크롤 줄 (components/ScrollStrip.tsx) ══════════════
@@ -509,11 +632,26 @@ textarea:focus {
 }
 
 /* ── 버튼 ───────────────────────────────────────────────── */
+/*
+   무게는 네 단계입니다 (docs/DESIGN-GUIDE.md §3-5).
+     .btn-primary  브랜드색 채움 — 화면에 하나
+     .btn          회색 채움 — 나란한 보조 행동
+     .btn-danger   회색 채움 + 빨간 글자 — 되돌릴 수 없는 것
+     .btn-on       초록 채움 — 켜져 있는 토글
+   테두리 · 그림자 없이 바탕만으로 구분합니다. 호버는 한 겹 어둡게(--overlay).
+*/
 .btn {
-  padding: 7px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 7px 14px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
   background: var(--panel-2);
+  font-weight: 600;
+  line-height: 1.4;
   /*
     링크로 만든 버튼(<a class="btn">)의 브라우저 기본 링크색을 여기서 지운다.
     선택자가 아니라 **출처**로 이기는 것이라 `.btn` 한 클래스로 충분하다 — 작성자
@@ -536,31 +674,32 @@ a.btn {
   text-decoration: none;
 }
 .btn:hover:not(:disabled) {
-  border-color: var(--accent);
+  background-image: linear-gradient(var(--overlay), var(--overlay));
+}
+.btn:active:not(:disabled) {
+  background-image: linear-gradient(var(--overlay), var(--overlay)),
+    linear-gradient(var(--overlay), var(--overlay));
 }
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 .btn-sm {
-  padding: 4px 9px;
-  font-size: 12px;
+  min-height: 28px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: var(--t2);
 }
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background-color: var(--accent);
   color: #fff;
 }
 .btn-on {
-  background: var(--accent-2);
-  border-color: var(--accent-2);
+  background-color: var(--accent-2);
   color: var(--on-accent-2);
 }
 .btn-danger {
-  color: var(--danger);
-}
-.btn-danger:hover:not(:disabled) {
-  border-color: var(--danger);
+  color: var(--text-danger);
 }
 
 /* ── 목록 ───────────────────────────────────────────────── */
@@ -576,19 +715,20 @@ a.btn {
   margin: 0;
   padding: 0 8px 24px;
 }
+/* 줄과 줄 사이는 가는 선 하나. 줄마다 둥근 상자를 씌우지 않는다 — 목록이 카드
+   더미로 보이면 눈이 줄을 타고 내려가지 못한다 */
 .arcade-list li {
-  padding: 12px;
-  margin-bottom: 6px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
+  padding: 14px 8px;
+  border-bottom: 1px solid var(--line);
   cursor: pointer;
 }
 .arcade-list li:hover {
-  background: var(--panel-2);
+  background: var(--overlay);
 }
+/* 고른 줄 — 왼쪽 브랜드색 막대 + 옅은 틴트. 지도의 선택 핀과 같은 색이라 둘이 이어진다 */
 .arcade-list li.is-selected {
-  background: var(--panel-2);
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .arcade-head {
@@ -599,12 +739,15 @@ a.btn {
 }
 .arcade-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--t5);
+  letter-spacing: -0.02em;
 }
 .distance {
-  color: var(--accent-2);
-  font-size: 12px;
+  color: var(--text);
+  font-size: var(--t3);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ── 즐겨찾기 별 ────────────────────────────────────────── */
@@ -616,12 +759,12 @@ a.btn {
   border: 0;
   background: none;
   color: var(--muted);
-  font-size: 15px;
+  font-size: var(--t5);
   line-height: 1;
   cursor: pointer;
 }
 .fav-btn:hover {
-  color: var(--accent-2);
+  color: var(--star);
 }
 .fav-btn.is-on {
   /* 담아 둔 곳은 한눈에 — 목록에서 별 하나만 보고 찾는다 */
@@ -656,11 +799,11 @@ a.btn {
 .hours {
   margin: 2px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t3);
 }
 .note {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--t3);
   color: var(--muted);
   border-left: 2px solid var(--line);
   padding-left: 8px;
@@ -676,21 +819,26 @@ a.btn {
   gap: 4px;
   margin-top: 8px;
 }
+/* 네모난 이름표 (SEED Badge). 알약이 아니다 — 알약은 누르는 칩의 모양이라, 읽기만 하는
+   표시가 알약이면 눌러 보게 된다. 색은 회색이 기본이고, 뜻이 있는 것만 색을 입는다 */
 .badge {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
   gap: 3px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  font-size: var(--t2);
+  font-weight: 600;
+  line-height: 1.4;
   white-space: nowrap;
-  background: rgba(53, 110, 230, 0.16);
-  color: var(--text-accent);
+  background: var(--panel-2);
+  color: var(--text);
 }
 .badge-etc {
-  background: rgba(139, 147, 167, 0.16);
+  background: var(--panel-2);
   color: var(--muted);
+  font-weight: 500;
 }
 .badge em {
   font-style: normal;
@@ -729,16 +877,18 @@ a.btn {
 }
 .form h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--t6);
 }
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
+/* 칸 이름 — 칸 위에 굵게. placeholder 가 이름을 대신하지 않는다 */
 .field > span {
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--t3);
+  font-weight: 600;
+  color: var(--text);
 }
 
 .coord-row {
@@ -757,7 +907,7 @@ a.btn {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--t3);
 }
 .check input {
   width: auto;
@@ -767,9 +917,9 @@ a.btn {
   margin: 0;
   padding: 10px 12px 10px 28px;
   border-radius: var(--radius);
-  background: rgba(242, 85, 90, 0.12);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--text-danger);
-  font-size: 12px;
+  font-size: var(--t2);
 }
 /* 기본형 — 그냥 가로로 늘어선 버튼 줄. 뒤에 오는 내용을 밀어내며 자리를 차지한다. */
 .form-actions {
@@ -801,7 +951,7 @@ a.btn {
 
 .machine-group h4 {
   margin: 8px 0 4px;
-  font-size: 11px;
+  font-size: var(--t2);
   color: var(--muted);
   font-weight: 500;
 }
@@ -835,7 +985,7 @@ a.btn {
 .machine-detail input,
 .machine-detail select {
   padding: 3px 5px;
-  font-size: 11px;
+  font-size: var(--t2);
 }
 
 /* ── 지도 ───────────────────────────────────────────────── */
@@ -851,7 +1001,7 @@ a.btn {
 .map-fallback {
   position: relative;
   overflow: hidden;
-  background: radial-gradient(circle at 30% 20%, #1a2030, #0b0d12 70%);
+  background-color: var(--sunken);
   background-image: linear-gradient(var(--line) 1px, transparent 1px),
     linear-gradient(90deg, var(--line) 1px, transparent 1px);
   background-size: 48px 48px;
@@ -928,11 +1078,11 @@ a.btn {
   border: 1px solid var(--line);
   background: var(--panel-float);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .map-badge code {
-  color: var(--accent-2);
-  font-size: 11px;
+  color: var(--text);
+  font-size: var(--t2);
 }
 
 .map-hint {
@@ -944,7 +1094,7 @@ a.btn {
   border-radius: 999px;
   background: var(--accent-2);
   color: var(--on-accent-2);
-  font-size: 12px;
+  font-size: var(--t2);
   font-weight: 600;
 }
 
@@ -988,7 +1138,7 @@ a.btn {
   box-shadow: none;
   border-radius: 999px;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--t2);
   white-space: nowrap;
   cursor: pointer;
 
@@ -1074,11 +1224,19 @@ a.btn {
   display: inline;
 }
 
+/* 고른 곳은 먹색 알약 + 파란 점. 지도 타일은 테마와 상관없이 밝아서 색을 고정한다 —
+   다크 테마에서 --text(흰색)로 뒤집으면 밝은 지도 위에서 흰 알약이 묻힌다 */
 .mk-on {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: #1a1c20;
+  background: #1a1c20;
   color: #fff;
   z-index: 9;
+}
+/* 대체 지도(.map-fallback)는 네이버 타일과 달리 테마를 따라 어두워진다 — 거기서는 글자색으로 뒤집는다 */
+.map-fallback .mk-on {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
 }
 .mk-pick {
   border-color: var(--accent-2);
@@ -1101,11 +1259,12 @@ a.btn {
   display: inline;
 }
 
+/* 점은 브랜드색 — 지도에서 '여기 오락실' 을 말하는 유일한 색 */
 .mk-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent-2);
+  background: var(--accent);
   flex: none;
 }
 /* 점만 있을 때는 조금 크게 + 테두리를 둘러 배경과 구분되게 합니다 */
@@ -1114,7 +1273,9 @@ a.btn {
   height: 9px;
   box-shadow: 0 0 0 1.5px var(--marker-ring);
 }
-.mk-on .mk-dot,
+.mk-on .mk-dot {
+  background: var(--accent);
+}
 .mk-pick .mk-dot {
   background: #fff;
 }
@@ -1129,10 +1290,10 @@ a.btn {
 .tier-layout {
   display: grid;
   grid-template-columns: 1fr 380px;
-  height: calc(100vh - 46px);
+  height: calc(100vh - var(--topnav-h));
   /* iOS 주소창이 접히고 펴지는 만큼을 반영한다 — 100vh 는 펼쳐진 높이로 고정이라
      하단이 잘린다. dvh 를 모르는 브라우저는 위 줄을 그대로 쓴다. */
-  height: calc(100dvh - 46px);
+  height: calc(100dvh - var(--topnav-h));
 }
 .tier-main {
   display: flex;
@@ -1160,9 +1321,9 @@ a.btn {
   border-bottom: 1px solid var(--line);
 }
 .tier-head h1 {
-  margin: 0 0 4px;
-  font-size: 19px;
-  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+  font-size: var(--t8);
+  letter-spacing: -0.03em;
 }
 .tier-head p {
   margin: 0;
@@ -1192,27 +1353,33 @@ a.btn {
   width: auto;
 }
 
+/* 나눈 단추 — 회색 홈 안에서 고른 칸만 흰 판으로 떠오른다 (iOS · 토스의 그 모양) */
 .seg {
-  display: flex;
+  display: inline-flex;
+  gap: 2px;
   margin-bottom: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
+  padding: 3px;
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
 }
 .seg button {
-  padding: 7px 12px;
+  padding: 6px 12px;
   border: none;
-  background: var(--panel-2);
+  border-radius: 6px;
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--t3);
+  font-weight: 500;
 }
-.seg button + button {
-  border-left: 1px solid var(--line);
+.seg button:hover:not(.is-on) {
+  color: var(--text);
 }
 .seg button.is-on {
-  background: var(--accent);
-  color: #fff;
+  background: var(--raised);
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: 0 1px 3px var(--shadow-soft);
 }
 
 .tier-rows {
@@ -1229,17 +1396,17 @@ a.btn {
 .tier-row.is-empty {
   opacity: 0.4;
 }
+/* 등급 이름표 — 왼쪽 색 막대가 등급을 말한다. 바탕을 깔지 않아 곡 칩이 주인공이 된다 */
 .tier-label {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 6px 10px;
-  border-radius: var(--radius);
-  background: var(--panel-2);
+  padding: 4px 0 4px 12px;
   border-left: 3px solid var(--muted);
 }
 .tier-label strong {
-  font-size: 14px;
+  font-size: var(--t5);
+  font-weight: 700;
 }
 
 /* 상위 등급일수록 뜨겁게 — 색은 등급 **코드**가 아니라 '위에서 몇 번째'로 정합니다.
@@ -1252,23 +1419,21 @@ a.btn {
    단계 수가 다른 게임끼리도(펌프 7 · 사볼 8) 위는 빨강 · 아래는 회색으로
    양끝이 맞고, 단계가 늘어도 회색이 중간에 끼지 않습니다.
    순위는 TierBoardView 가 매깁니다 (rankClass). */
-.tier-r1 .tier-label { border-left-color: #ff4d6d; }
-.tier-r2 .tier-label { border-left-color: #ff8b3d; }
-.tier-r3 .tier-label { border-left-color: var(--warn); }
-.tier-r4 .tier-label { border-left-color: #6ac46a; }
-.tier-r5 .tier-label { border-left-color: #35b6d6; }
-.tier-r6 .tier-label { border-left-color: #5a8cf0; }
+.tier-r1 .tier-label { border-left-color: #fa342c; }
+.tier-r2 .tier-label { border-left-color: #ff7a1a; }
+.tier-r3 .tier-label { border-left-color: #d9a400; }
+.tier-r4 .tier-label { border-left-color: #10ab7d; }
+.tier-r5 .tier-label { border-left-color: #1aa3c4; }
+.tier-r6 .tier-label { border-left-color: #217cf9; }
 /* 파랑과 회색 사이 — 8단인 사볼에서만 쓰입니다(펌프는 7단이라 이 칸을 건너뜁니다).
-   채도를 낮춰 둔 것은 개인차(.tier-unique, var(--accent))와 헷갈리지 않게 하려는
-   것이었습니다.
-   ⚠ 그 전제가 약해졌습니다 — accent 가 보라에서 파랑(#356ee6)으로 바뀌면서, 이
-     칸과 바로 위 .tier-r6(#5a8cf0)이 개인차와 같은 계열이 됐습니다. 서열표에서
-     둘을 나란히 보고 구분이 어려우면 r6·r7 을 파랑에서 더 떼어 놓아야 합니다. */
-.tier-r7 .tier-label { border-left-color: #6b7bb8; }
+   채도를 낮춰 둔 것은 개인차(.tier-unique)와 헷갈리지 않게 하려는 것입니다.
+   2026-09-29 에 개인차는 강조색을 버리고 보라(#9061f9),
+   특수패턴은 분홍(#e0457b)으로 따로 뺐습니다 — 등급 색 일곱과 겹치는 계열이 없습니다. */
+.tier-r7 .tier-label { border-left-color: #7a86b8; }
 .tier-rlast .tier-label { border-left-color: var(--muted); }
-.tier-unique    .tier-label { border-left-color: var(--accent); }
+.tier-unique    .tier-label { border-left-color: #9061f9; }
 /* 특수패턴 — 등급이 아니라 표시라서 개인차와 같은 계열로 두되 색을 구분한다 */
-.tier-special   .tier-label { border-left-color: var(--accent-2); }
+.tier-special   .tier-label { border-left-color: #e0457b; }
 .tier-undecided .tier-label { border-left-color: var(--line); }
 
 .tier-charts {
@@ -1281,22 +1446,27 @@ a.btn {
 .chart-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  min-height: 34px;
   padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--panel);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--t3);
+  font-weight: 500;
   max-width: 100%;
 }
 .chart-chip:hover {
-  border-color: var(--accent);
+  background: var(--panel-2);
+}
+.chart-chip:hover {
+  border-color: var(--line-strong);
 }
 .chart-chip.is-on {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #fff;
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
 }
 .chip-title {
   overflow: hidden;
@@ -1347,7 +1517,7 @@ a.btn {
 }
 .detail-empty {
   padding: 24px 16px;
-  font-size: 13px;
+  font-size: var(--t3);
 }
 .detail-head {
   display: flex;
@@ -1357,7 +1527,8 @@ a.btn {
 }
 .detail-head h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--t7);
+  line-height: 1.35;
 }
 /* 이름 + '위치' 버튼 한 줄. 이름이 길면 버튼을 밀어내지 않고 줄바꿈한다 */
 .detail-title {
@@ -1376,7 +1547,7 @@ a.btn {
 .locate-btn {
   flex: none;
   padding: 2px 8px;
-  font-size: 11.5px;
+  font-size: var(--t2);
 }
 .detail-head p {
   margin: 2px 0 0;
@@ -1394,7 +1565,7 @@ a.btn {
   background: var(--panel-2);
   color: var(--text);
   text-decoration: none;
-  font-size: 13px;
+  font-size: var(--t3);
   font-weight: 600;
 }
 .chart-video svg {
@@ -1437,29 +1608,32 @@ a.btn {
   background: var(--panel-2);
 }
 .stat span {
-  font-size: 11px;
+  font-size: var(--t2);
   color: var(--muted);
 }
 .stat strong {
-  font-size: 15px;
+  font-size: var(--t5);
   font-variant-numeric: tabular-nums;
 }
+/* 등급 이름은 글자색 그대로 — 색은 서열표 막대가 맡는다. 뜻이 다른 두 칸만 그 칸의 색 */
 .tier-mark {
-  color: var(--accent-2);
+  color: var(--text);
 }
-.tier-mark.tier-undecided,
+.tier-mark.tier-undecided {
+  color: var(--muted);
+}
 .tier-mark.tier-unique {
-  color: var(--accent);
+  color: #9061f9;
 }
 .tier-mark.tier-special {
-  color: var(--accent-2);
+  color: #e0457b;
 }
 
 .section h3 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--muted);
-  font-weight: 500;
+  margin: 0 0 12px;
+  font-size: var(--t5);
+  color: var(--text);
+  font-weight: 700;
 }
 
 .histogram {
@@ -1494,13 +1668,15 @@ a.btn {
   color: var(--muted);
 }
 
+/* 도움말 한 줄 — 회색 판에 회색 글자. 색을 입히면 경고로 읽힌다 */
 .hint {
   margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  background: rgba(53, 110, 230, 0.12);
-  color: var(--text-accent);
-  font-size: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--t3);
+  line-height: 1.5;
 }
 
 .vote-box {
@@ -1522,7 +1698,7 @@ a.btn {
 .vote-grade {
   margin-left: 6px;
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--t2);
   padding: 2px 7px;
   border-radius: 999px;
   background: var(--accent);
@@ -1576,7 +1752,7 @@ a.btn {
 }
 .board-head h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--t8);
 }
 .board-head p {
   margin: 4px 0 0;
@@ -1588,7 +1764,7 @@ a.btn {
 .game-tabs-wrap {
   /* 아래 여백을 한 곳에만 적는다 — 여백과 화살표가 따로 적히면 한쪽만 바뀌어
      화살표가 탭보다 아래로 처진다. */
-  --tabs-pad: 10px;
+  --tabs-pad: 0px;
   /* 화살표는 여백에 경계선 1px 까지 비켜야 세로 가운데가 탭의 가운데와 맞고,
      경계선도 끊기지 않는다. .scroll-strip 의 기본값 0 을 덮는다. */
   --strip-pad: calc(var(--tabs-pad) + 1px);
@@ -1614,6 +1790,7 @@ a.btn {
   }
 }
 
+/* 밑줄 탭 — 상단 네비와 같은 말투. 알약을 채우면 칩(거르기)과 탭(자리 옮김)이 한 모양이 된다 */
 .game-tab {
   display: inline-flex;
   align-items: baseline;
@@ -1621,27 +1798,26 @@ a.btn {
   /* 줄이 한 줄뿐이므로 탭은 절대 줄어들지 않고 이름도 접히지 않는다 */
   flex: none;
   white-space: nowrap;
-  padding: 6px 12px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: var(--panel);
+  padding: 10px 12px;
+  border: none;
+  background: none;
   color: var(--muted);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--t5);
+  font-weight: 500;
 }
 .game-tab:hover {
   color: var(--text);
-  border-color: var(--line);
 }
 .game-tab.is-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  color: var(--text);
+  font-weight: 700;
+  box-shadow: inset 0 -2px 0 var(--text);
 }
 /* 글 수. 0건인 탭도 남기므로 흐리게 둔다 (첫 글을 쓸 자리가 있어야 한다) */
 .game-tab em {
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--t2);
   opacity: 0.65;
   font-variant-numeric: tabular-nums;
 }
@@ -1700,6 +1876,8 @@ a.btn {
    입력칸이 좁아지는 쪽이 낫다 (입력칸은 flex: 1 1 auto 로 줄어든다). */
 .list-search .btn {
   flex: none;
+  min-height: 40px;
+  padding-inline: 14px;
 }
 
 /* 검색 결과 건수. 검색 중에만 나타나므로 없을 때 자리를 잡아 두지 않는다.
@@ -1727,21 +1905,23 @@ a.btn {
 .board-sort {
   margin-left: auto;
   flex: none;
-  padding: 7px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
-  color: var(--muted);
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-full);
+  background: var(--panel);
+  color: var(--text);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--t3);
+  font-weight: 500;
 }
 .board-sort:hover {
-  border-color: var(--accent);
+  background: var(--panel-2);
 }
 .board-sort.is-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
 }
 
 .board-count {
@@ -1758,28 +1938,29 @@ a.btn {
   margin-top: 16px;
 }
 .page-btn {
-  min-width: 30px;
-  padding: 5px 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
   color: var(--muted);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--t3);
   font-variant-numeric: tabular-nums;
 }
 .page-btn:hover:not(:disabled) {
   color: var(--text);
-  border-color: var(--accent);
+  background: var(--panel-2);
 }
 .page-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
 }
 .page-btn.is-on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--text);
+  color: var(--bg);
+  font-weight: 700;
 }
 .page-of {
   margin-left: 8px;
@@ -1787,28 +1968,31 @@ a.btn {
 }
 
 /* ── 말머리 ─────────────────────────────────────────────── */
+/* 말머리 — .badge 와 같은 네모 이름표. 말머리마다 색이 다른 것은 목록에서 훑어 고르라고 */
 .cat {
   flex-shrink: 0;
-  padding: 1px 7px;
-  border-radius: 4px;
-  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  font-size: var(--t2);
+  font-weight: 600;
+  line-height: 1.4;
   background: var(--panel-2);
   color: var(--muted);
 }
 .cat-guide {
-  background: rgba(34, 211, 166, 0.16);
-  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 16%, transparent);
+  color: var(--text-positive);
 }
 .cat-info {
-  background: rgba(53, 110, 230, 0.16);
-  color: var(--text-accent);
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  color: var(--text-info);
 }
 .cat-ask {
-  background: rgba(226, 185, 59, 0.16);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
   color: var(--text-warn);
 }
 .cat-contest {
-  background: rgba(242, 85, 90, 0.14);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--text-danger);
 }
 /* 공지는 다른 말머리와 축이 다르다 (관리자 글 · 목록 고정) — 유일하게 채운 칩 */
@@ -1825,30 +2009,33 @@ a.btn {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
+/* 글 한 줄 — 카드가 아니라 선으로 나눈 줄. 오락실 목록(.arcade-list)과 같은 말투 */
 .post-list li {
-  padding: 11px 12px;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  background: var(--panel);
+  padding: 16px 4px;
+  border-bottom: 1px solid var(--line);
   cursor: pointer;
 }
 .post-list li:hover {
-  border-color: var(--accent);
+  background: var(--overlay);
 }
 /* ── 고정 공지 ──────────────────────────────────────────── */
 /* 일반 글보다 밝은 판 — 스크롤 없이도 '위에 붙어 있는 글' 로 읽힌다 */
 .post-list li.is-notice {
-  background: var(--panel-2);
+  padding-inline: 12px;
+  border-bottom: none;
+  border-radius: var(--r-sm);
+  background: var(--card-cap);
+}
+.post-list li.is-notice + li.is-notice {
+  margin-top: 4px;
 }
 /* 공지와 일반 글의 경계. 글 카드가 아니라 목록 사이의 선이라서 li 가 아닌
    별도 요소다 — li 에 테두리를 주면 hover 테두리(.post-list li:hover)와 겹친다. */
 .notice-rule {
-  height: 3px;
-  margin: 10px 0;
-  border-radius: 2px;
-  background: var(--line);
+  height: 0;
+  margin: 8px 0 0;
+  background: none;
 }
 /* ── 목록 썸네일 ────────────────────────────────────────────
    글자 칸과 썸네일 칸. 첨부가 없는 글은 썸네일 요소 자체가 없어서 글자가 폭을 다
@@ -1906,7 +2093,8 @@ a.btn {
 }
 .post-row-head h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--t5);
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1914,7 +2102,7 @@ a.btn {
 .post-excerpt {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1926,7 +2114,7 @@ a.btn {
   margin-top: 7px;
 }
 .stat-like.is-on {
-  color: var(--accent-2);
+  color: var(--text-positive);
 }
 
 /* ── 글 상세 ────────────────────────────────────────────── */
@@ -1946,7 +2134,7 @@ a.btn {
 }
 .post-detail-head h1 {
   margin: 8px 0 0;
-  font-size: 19px;
+  font-size: var(--t8);
   letter-spacing: -0.01em;
 }
 .post-detail-head p {
@@ -1999,7 +2187,7 @@ a.btn {
 }
 .post-body {
   padding: 16px 0;
-  font-size: 13.5px;
+  font-size: var(--t5);
   line-height: 1.75;
   /* 본문은 마크다운을 렌더하지 않는다 — 사용자가 쓴 줄바꿈만 그대로 보여준다.
      HTML 을 해석하지 않으므로 XSS 걱정도 없다 (React 가 텍스트로 넣는다). */
@@ -2051,7 +2239,7 @@ a.btn {
 .post-rich h4,
 .rt-content h4 {
   margin: 16px 0 6px;
-  font-size: 14.5px;
+  font-size: var(--t4);
 }
 .post-rich blockquote,
 .rt-content blockquote {
@@ -2067,7 +2255,7 @@ a.btn {
   background: var(--panel-2);
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 12.5px;
+  font-size: var(--t3);
 }
 .post-rich hr,
 .rt-content hr {
@@ -2088,7 +2276,7 @@ a.btn {
 }
 .post-rich a,
 .rt-content a {
-  color: var(--accent-2);
+  color: var(--info);
   text-decoration: underline;
 }
 
@@ -2126,7 +2314,7 @@ a.btn {
 }
 /* 편집 중 선택된 칸 · 열 너비 손잡이 */
 .rt-content .selectedCell {
-  background: rgba(53, 110, 230, 0.18);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .rt-content .column-resize-handle {
   position: absolute;
@@ -2194,7 +2382,7 @@ a.btn {
 .rt-loading {
   padding: 24px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--t3);
 }
 .rt-toolbar {
   border-bottom: 1px solid var(--line);
@@ -2224,7 +2412,7 @@ a.btn {
   color: var(--muted);
   border: 1px solid transparent;
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: var(--t3);
   cursor: pointer;
 }
 .rt-btn:hover:not(:disabled) {
@@ -2250,7 +2438,7 @@ a.btn {
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: var(--t3);
 }
 .rt-narrow {
   max-width: 96px;
@@ -2303,7 +2491,7 @@ a.btn {
   color: var(--muted);
   border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--t2);
   cursor: pointer;
 }
 .rt-ask {
@@ -2321,14 +2509,14 @@ a.btn {
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: var(--t3);
 }
 .rt-content {
   min-height: 220px;
   max-height: 60vh;
   overflow-y: auto;
   padding: 12px;
-  font-size: 13.5px;
+  font-size: var(--t5);
   line-height: 1.75;
   word-break: break-word;
   outline: none;
@@ -2416,7 +2604,7 @@ a.btn {
   margin-left: -1px;
   background: var(--accent-2);
   border-radius: 1px;
-  box-shadow: 0 0 0 1px rgba(34, 211, 166, 0.35);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-2) 35%, transparent);
   pointer-events: none;
   animation: drop-caret-blink 0.9s steps(2, end) infinite;
 }
@@ -2457,7 +2645,7 @@ a.btn {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   outline: none;
-  font-size: 13.5px;
+  font-size: var(--t5);
   line-height: 1.75;
   /* 편집 중에도 저장 결과와 같게 보이도록 (마크다운 해석 없음) */
   white-space: pre-wrap;
@@ -2493,7 +2681,7 @@ a.btn {
   background: var(--accent);
 }
 .editor-area img:hover {
-  border-color: var(--accent);
+  border-color: var(--line-strong);
 }
 
 /* ── 글쓰기 ─────────────────────────────────────────────── */
@@ -2505,7 +2693,7 @@ a.btn {
 .post-form .field label {
   display: block;
   margin-bottom: 5px;
-  font-size: 12px;
+  font-size: var(--t2);
   color: var(--muted);
 }
 .post-form select {
@@ -2514,7 +2702,7 @@ a.btn {
 }
 
 /* 모바일 폭: 링크·플레이어·로그인을 전부 햄버거 드로어 안으로 넣는다.
-   ARCADE 로고와 버거 버튼만 항상 보이는 줄에 남는다. */
+   이름표와 버거 버튼만 항상 보이는 줄에 남는다. */
 @media (max-width: 720px) {
   .topnav-burger {
     display: flex;
@@ -2522,7 +2710,7 @@ a.btn {
   .topnav-links {
     display: none;
     position: absolute;
-    top: 46px;
+    top: var(--topnav-h);
     left: 0;
     right: 0;
     z-index: 200;
@@ -2538,9 +2726,20 @@ a.btn {
     display: flex;
   }
   .topnav-link {
-    padding: 10px 12px;
+    height: 44px;
+    padding: 0 12px;
+    border-radius: var(--r-sm);
   }
-  .topnav-right {
+  /* 드로어는 세로 목록이라 밑줄 대신 바탕으로 지금 자리를 알린다 */
+  .topnav-link.is-on {
+    background: var(--panel-2);
+  }
+  .topnav-link.is-on::after {
+    display: none;
+  }
+  /* .topnav-links 를 앞에 붙여 명시도를 올린다 — 기본 .topnav-right(margin-left: auto)가 이 파일에서
+     이 블록보다 뒤에 있어서, 한 클래스로는 드로어 안에서도 오른쪽 끝으로 밀렸다 */
+  .topnav-links .topnav-right {
     margin-left: 0;
     margin-top: 6px;
     padding-top: 10px;
@@ -2586,19 +2785,18 @@ a.btn {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: 50%;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 15px;
+  font-size: var(--t5);
   line-height: 1;
 }
 .theme-toggle:hover {
-  border-color: var(--line);
   background: var(--panel-2);
   color: var(--text);
 }
@@ -2616,7 +2814,7 @@ a.btn {
 }
 /* 뒤에 붙는 권한 뱃지(.admin-tag, 11px)와 한 줄로 앉아야 해서 크기를 맞춘다 */
 .player-name {
-  font-size: 12px;
+  font-size: var(--t3);
   font-weight: 700;
   /*
     폭을 반드시 묶어 둔다. 소셜 로그인 닉네임은 제공자가 주는 이름이라 100자까지
@@ -2636,42 +2834,51 @@ a.btn {
   align-items: center;
   gap: 6px;
 }
+/* 네비의 '로그인 · 내 정보' 가 지금 그 화면일 때 — 켜짐(초록)이 아니라 '여기' 라는 표시라 먹색 */
+.auth-menu .btn-on {
+  background-color: var(--text);
+  color: var(--bg);
+}
 .admin-tag {
   padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(53, 110, 230, 0.2);
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
   color: var(--text-accent);
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--t2);
   font-weight: 700;
 }
 
 /* ── 로그인 페이지 ─────────────────────────────────────── */
-/* 네비(46px)를 뺀 나머지 높이 한가운데. 폼이 짧아서 위에 붙여 두면
+/* 네비(--topnav-h)를 뺀 나머지 높이 한가운데. 폼이 짧아서 위에 붙여 두면
    넓은 화면에서 왼쪽 위 구석에 매달린 것처럼 보인다. */
 .login-page {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: calc(100vh - 46px);
-  min-height: calc(100dvh - 46px);
+  min-height: calc(100vh - var(--topnav-h));
+  min-height: calc(100dvh - var(--topnav-h));
   /* 카드가 가운데 정렬이라, 아래만 비우면 그만큼 위로 올라간다 — 막대와 겹치지 않는다 */
   padding: 24px 16px calc(24px + var(--histbar-space));
 }
+/* 테두리 상자 없이 가운데 한 줄기. 폼 하나뿐인 화면에서 상자는 할 일이 없다 */
 .login-card {
   width: 100%;
-  max-width: 340px;
+  max-width: 360px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
+  gap: 16px;
+  padding: 8px 0;
 }
 .login-card h1 {
-  margin: 0;
-  font-size: 18px;
+  margin: 0 0 4px;
+  font-size: var(--t8);
+  line-height: 1.35;
+}
+/* 폼 화면의 버튼은 손가락 크기로 */
+.login-card .btn:not(.btn-sm) {
+  min-height: 48px;
+  font-size: var(--t5);
 }
 .login-card p {
   margin: 0;
@@ -2680,7 +2887,7 @@ a.btn {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
+  font-size: var(--t4);
 }
 
 /* ── 소셜 로그인 ───────────────────────────────────────── */
@@ -2706,7 +2913,7 @@ a.btn {
   gap: 10px;
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .oauth-divider::before,
 .oauth-divider::after {
@@ -2730,7 +2937,7 @@ a.btn {
   justify-content: center;
   gap: 8px;
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--t3);
   font-weight: 600;
   border-color: transparent;
 }
@@ -2802,7 +3009,7 @@ a.btn {
 /* 제보 한 줄에 붙는 관리자 삭제 */
 .feed-del {
   padding: 1px 7px;
-  font-size: 11px;
+  font-size: var(--t2);
 }
 
 /* ── 오락실 상세 패널 ───────────────────────────────────── */
@@ -2824,18 +3031,21 @@ a.btn {
   background: var(--panel);
   border-left: 1px solid var(--line);
 }
+/* 섹션 사이는 가는 선이 아니라 굵은 회색 띠 — 한 패널 안에 '다른 일' 이 시작된다는 표시 */
 .arcade-detail .section + .section {
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
+  margin-inline: -16px;
+  padding: 16px 16px 0;
+  border-top: 8px solid var(--panel-2);
 }
 
 .notice {
   margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  background: rgba(34, 211, 166, 0.14);
-  color: var(--accent-2);
-  font-size: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent-2) 12%, transparent);
+  color: var(--text-positive);
+  font-size: var(--t3);
+  font-weight: 500;
 }
 
 /* ── "지금 이 기종" ─────────────────────────────────────── */
@@ -2848,10 +3058,9 @@ a.btn {
   gap: 8px;
 }
 .live-row {
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-2);
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--card-cap);
 }
 .live-head {
   display: flex;
@@ -2883,7 +3092,7 @@ a.btn {
 }
 /* 컨디션에서 고른 값 표시 */
 .picked {
-  color: var(--accent-2);
+  color: var(--text-positive);
   font-weight: 500;
 }
 /* ── 기체 카드 (같은 기종이 2대 이상이면 그만큼 카드가 늘어난다) ── */
@@ -2896,9 +3105,9 @@ a.btn {
   gap: 6px;
 }
 .cabinet-card {
-  padding: 7px 9px;
+  padding: 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   /* live-row(--panel-2) 안에 들어가므로 한 단계 어두운 배경으로 층을 만든다 */
   background: var(--panel);
 }
@@ -2912,7 +3121,7 @@ a.btn {
   gap: 6px;
 }
 .cabinet-no {
-  font-size: 11px;
+  font-size: var(--t2);
   font-weight: 600;
   color: var(--muted);
   /* 호기 번호는 자리를 고정해 카드가 세로로 정렬돼 보이게 한다 */
@@ -2940,7 +3149,7 @@ a.btn {
 }
 .cabinet-fields select {
   padding: 3px 5px;
-  font-size: 11px;
+  font-size: var(--t2);
 }
 
 .presence-row {
@@ -2958,13 +3167,13 @@ a.btn {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  font-size: var(--t2);
   font-variant-numeric: tabular-nums;
 }
 .wait strong {
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .wait em,
 .wait .wait-time {
@@ -2973,23 +3182,23 @@ a.btn {
 }
 /* 대기 구간 색 — lib/community-types.ts WAIT_LEVELS 의 tone 과 1:1 */
 .wait-free {
-  background: rgba(34, 211, 166, 0.18);
-  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 18%, transparent);
+  color: var(--text-positive);
 }
 .wait-low {
-  background: rgba(34, 211, 166, 0.12);
-  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 12%, transparent);
+  color: var(--text-positive);
 }
 .wait-mid {
-  background: rgba(226, 185, 59, 0.16);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
   color: var(--text-warn);
 }
 .wait-high {
-  background: rgba(242, 85, 90, 0.14);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--text-danger);
 }
 .wait-full {
-  background: rgba(242, 85, 90, 0.24);
+  background: color-mix(in srgb, var(--danger) 24%, transparent);
   color: var(--text-danger-strong);
 }
 
@@ -2997,9 +3206,9 @@ a.btn {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  font-size: var(--t2);
   background: var(--panel);
   border: 1px solid var(--line);
 }
@@ -3009,16 +3218,16 @@ a.btn {
 }
 .cond-live.cond-5,
 .cond-live.cond-4 {
-  border-color: rgba(34, 211, 166, 0.5);
-  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2) 50%, transparent);
+  color: var(--text-positive);
 }
 .cond-live.cond-3 {
-  border-color: rgba(226, 185, 59, 0.5);
+  border-color: color-mix(in srgb, var(--warn) 50%, transparent);
   color: var(--text-warn);
 }
 .cond-live.cond-2,
 .cond-live.cond-1 {
-  border-color: rgba(242, 85, 90, 0.5);
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
   color: var(--text-danger);
 }
 
@@ -3035,7 +3244,7 @@ a.btn {
   gap: 4px;
 }
 .wait-name {
-  font-size: 11px;
+  font-size: var(--t2);
   color: var(--muted);
 }
 
@@ -3053,7 +3262,7 @@ a.btn {
 }
 .feed-head h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--t8);
 }
 .feed-head p {
   margin: 4px 0 0;
@@ -3095,7 +3304,7 @@ a.btn {
   grid-template-columns: 76px 1fr;
   row-gap: 2px;
   background: var(--panel-2);
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .feed-compact .feed-meta {
   grid-column: 2;
@@ -3113,24 +3322,24 @@ a.btn {
   border-bottom: 1px solid var(--line);
 }
 .feed-arcade:hover {
-  border-color: var(--accent);
+  border-color: var(--line-strong);
 }
 .feed-machine {
-  color: var(--text-accent);
-  font-size: 12px;
+  color: var(--text);
+  font-size: var(--t2);
 }
 /* 기종 이름에 붙는 '2호기' — 기종보다 한 단계 약하게 */
 .feed-cabinet {
   font-style: normal;
   font-weight: 400;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--t2);
   margin-left: 3px;
 }
 .feed-memo {
   font-style: normal;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .feed-meta {
   display: inline-flex;
@@ -3143,24 +3352,24 @@ a.btn {
   padding: 2px 0;
   text-align: center;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--t2);
   background: var(--panel-2);
   color: var(--muted);
 }
 .kind-queue {
-  background: rgba(53, 110, 230, 0.16);
-  color: var(--text-accent);
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  color: var(--text-info);
 }
 .kind-condition {
-  background: rgba(226, 185, 59, 0.14);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
   color: var(--text-warn);
 }
 .kind-presence {
-  background: rgba(34, 211, 166, 0.14);
-  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 14%, transparent);
+  color: var(--text-positive);
 }
 .kind-absence {
-  background: rgba(242, 85, 90, 0.14);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   color: var(--text-danger);
 }
 
@@ -3172,7 +3381,7 @@ a.btn {
 }
 .star {
   color: var(--line);
-  font-size: 12px;
+  font-size: var(--t2);
   font-style: normal;
 }
 .star.is-on {
@@ -3234,12 +3443,12 @@ a.btn {
 }
 .review-head strong,
 .comment-head strong {
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .review-body,
 .comment-body {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--t2);
   white-space: pre-wrap;
 }
 
@@ -3270,16 +3479,16 @@ a.btn {
 .tag {
   padding: 1px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--t2);
   background: var(--panel);
   color: var(--muted);
 }
 .tag-clear {
-  background: rgba(34, 211, 166, 0.16);
-  color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 16%, transparent);
+  color: var(--text-positive);
 }
 .tag-noclear {
-  background: rgba(139, 147, 167, 0.16);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
 }
 
 /* ── 좁은 화면 ──────────────────────────────────────────── */
@@ -3319,27 +3528,26 @@ a.btn {
 }
 .rank {
   flex: none;
-  min-width: 20px;
-  padding: 1px 5px;
-  border-radius: 6px;
+  min-width: 22px;
+  padding: 1px 6px;
+  border-radius: var(--r-xs);
   background: var(--panel-2);
-  border: 1px solid var(--line);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--t2);
   font-weight: 700;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 /* 1~3위만 색으로 구분한다. 4위 아래는 색을 줘도 서로 구분이 안 된다 */
+/* 1위만 브랜드색 — 지도 순위 뱃지(.mk-rank)와 같은 색이라 목록과 지도가 이어진다 */
 .rank-1 {
   background: var(--accent);
-  border-color: var(--accent);
   color: #fff;
 }
 .rank-2,
 .rank-3 {
-  border-color: var(--accent);
-  color: var(--text);
+  background: var(--text);
+  color: var(--bg);
 }
 
 .score-row {
@@ -3351,18 +3559,20 @@ a.btn {
 .score-bar {
   flex: 1 1 auto;
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--r-full);
   background: var(--panel-2);
   overflow: hidden;
 }
+/* 단색 막대. 두 색 그라데이션은 '점수가 색을 바꾼다' 는 뜻이 없는데 그렇게 읽혔다 */
 .score-bar i {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  background: var(--text);
 }
 .score-num {
   flex: none;
-  font-size: 12px;
+  font-size: var(--t2);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3373,11 +3583,11 @@ a.btn {
   margin-top: 6px;
 }
 .factor {
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
   background: var(--panel-2);
-  font-size: 11px;
+  color: var(--muted);
+  font-size: var(--t2);
 }
 /* 근거가 없는 항목. 감추면 "괜찮다"로 읽히므로 흐리게 남겨 둔다 */
 .factor.is-unknown {
@@ -3391,13 +3601,14 @@ a.btn {
 }
 .seg-sm button {
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--t2);
 }
 
 /* 내 위치 마커 — 등록용 위치 지정(mk-pick)과 헷갈리면 안 되므로 색을 달리한다 */
+/* 주황 — 오락실 점이 강조색(파랑)이라 '나' 는 파랑을 쓸 수 없다. 지도 타일이 늘 밝아 색을 고정 */
 .mk-me {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: #f0561d;
+  background: #f0561d;
   color: #fff;
   z-index: 7;
 }
@@ -3415,7 +3626,7 @@ a.btn {
   flex: none;
   margin-left: auto;
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: var(--t2);
   white-space: nowrap;
 }
 
@@ -3467,8 +3678,8 @@ a.btn {
   flex: none;
 }
 .mk-on .mk-rank {
-  background: #fff;
-  color: var(--accent);
+  background: var(--accent);
+  color: #fff;
 }
 
 /* ══ 챗봇 ════════════════════════════════════════════════ */
@@ -3480,23 +3691,24 @@ a.btn {
   z-index: 60;
   width: 52px;
   height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  font-size: 22px;
-  line-height: 1;
+  /* 먹색 — 브랜드색은 화면의 주 버튼 몫이라, 늘 떠 있는 단추가 그 색을 가져가지 않는다 */
+  background: var(--text);
+  color: var(--bg);
   cursor: pointer;
-  box-shadow: 0 6px 20px var(--shadow);
+  box-shadow: 0 4px 16px var(--shadow);
 }
 .chat-fab:hover {
-  filter: brightness(1.1);
+  background-image: linear-gradient(var(--overlay), var(--overlay));
 }
 .chat-fab.is-open {
   background: var(--panel-2);
   color: var(--text);
-  border: 1px solid var(--line);
-  font-size: 16px;
 }
 
 .chat-panel {
@@ -3512,9 +3724,9 @@ a.btn {
   max-height: calc(100vh - 140px);
   max-height: calc(100dvh - 140px);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--r-md);
   background: var(--panel);
-  box-shadow: 0 16px 44px var(--shadow-strong);
+  box-shadow: 0 8px 32px var(--shadow-strong);
   overflow: hidden;
 }
 .chat-head {
@@ -3524,7 +3736,7 @@ a.btn {
   padding: 10px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--panel-2);
-  font-size: 13px;
+  font-size: var(--t3);
 }
 .chat-body {
   flex: 1 1 auto;
@@ -3549,7 +3761,7 @@ a.btn {
   padding: 8px 11px;
   border-radius: 12px;
   background: var(--panel-2);
-  font-size: 13px;
+  font-size: var(--t3);
   /* 답변은 줄바꿈으로 문단을 만든다 — 마크다운을 렌더하지 않으므로
      공백을 그대로 살려야 목록이 목록으로 읽힌다. */
   white-space: pre-wrap;
@@ -3561,7 +3773,7 @@ a.btn {
   color: #fff;
 }
 .chat-bubble.is-failed {
-  background: rgba(242, 85, 90, 0.14);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
   border: 1px solid var(--danger);
   color: var(--text-danger);
 }
@@ -3591,11 +3803,11 @@ a.btn {
 .chat-sources {
   margin: 0;
   padding-left: 16px;
-  font-size: 11px;
+  font-size: var(--t2);
   color: var(--muted);
 }
 .chat-sources a {
-  color: var(--accent-2);
+  color: var(--info);
 }
 
 /* 문장에서 알아본 "지금 있는 곳" — 오인식이면 체크를 꺼서 뺄 수 있다 */
@@ -3608,7 +3820,7 @@ a.btn {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel-2);
-  font-size: 12px;
+  font-size: var(--t2);
   color: var(--muted);
   cursor: pointer;
 }
@@ -3634,7 +3846,7 @@ a.btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .chat-rank > span {
   flex: none;
@@ -3647,7 +3859,7 @@ a.btn {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  font-size: 12px;
+  font-size: var(--t2);
 }
 
 .chat-input {
@@ -3663,7 +3875,7 @@ a.btn {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel-2);
-  font-size: 13px;
+  font-size: var(--t3);
 }
 .chat-input input:focus {
   outline: none;
@@ -3690,7 +3902,7 @@ a.btn {
   color: var(--muted);
 }
 .small {
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .pad {
   padding: 16px;
@@ -3698,7 +3910,7 @@ a.btn {
 .warn {
   margin: 0;
   color: var(--text-danger);
-  font-size: 12px;
+  font-size: var(--t2);
 }
 
 @media (max-width: 860px) {
@@ -3799,7 +4011,7 @@ a.btn {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: 0 6px 24px var(--shadow-soft);
-  font-size: 12px;
+  font-size: var(--t2);
   line-height: 1.5;
 }
 .perf-title {
@@ -3811,7 +4023,7 @@ a.btn {
 }
 .perf-mode {
   font-weight: 500;
-  font-size: 11px;
+  font-size: var(--t2);
   color: var(--accent-2);
 }
 /* 컬링을 끈 상태는 "지금 일부러 느리게 두고 있다" 는 뜻이라 눈에 띄어야 합니다 */
@@ -3837,7 +4049,7 @@ a.btn {
   font-variant-numeric: tabular-nums;
 }
 .perf-now strong {
-  font-size: 14px;
+  font-size: var(--t4);
 }
 .perf-sub {
   color: var(--muted);
@@ -3870,7 +4082,7 @@ a.btn {
 .perf-table tbody th {
   text-align: left;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--t2);
 }
 .perf-table tbody tr {
   border-top: 1px solid var(--line);
@@ -3878,12 +4090,12 @@ a.btn {
 .perf-empty td {
   color: var(--muted);
   text-align: center;
-  font-size: 11px;
+  font-size: var(--t2);
 }
 .perf-verdict,
 .perf-hint {
   margin: 8px 0 0;
-  font-size: 11px;
+  font-size: var(--t2);
   color: var(--muted);
 }
 .perf-verdict strong {
@@ -3896,7 +4108,7 @@ a.btn {
     right: 8px;
     bottom: 8px;
     width: 210px;
-    font-size: 11px;
+    font-size: var(--t2);
   }
 }
 
@@ -3906,10 +4118,10 @@ a.btn {
   display: flex;
   gap: 10px;
   margin-left: 8px;
-  font-size: 11px;
+  font-size: var(--t2);
 }
 .topnav-legal a {
-  color: var(--muted);
+  color: var(--subtle);
   text-decoration: none;
 }
 .topnav-legal a:hover {
@@ -3924,20 +4136,17 @@ a.btn {
 .legal {
   width: 100%;
   max-width: 720px;
-  padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  line-height: 1.7;
+  padding: 8px 0;
+  line-height: 1.75;
 }
 .legal h1 {
   margin: 0 0 4px;
-  font-size: 22px;
+  font-size: var(--t8);
 }
 .legal h2 {
   margin: 24px 0 8px;
-  font-size: 15px;
-  color: var(--accent-2);
+  font-size: var(--t5);
+  color: var(--text);
 }
 .legal p,
 .legal ul {
@@ -3949,7 +4158,7 @@ a.btn {
 .legal table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--t3);
   margin: 8px 0 12px;
 }
 .legal th,
@@ -3963,10 +4172,10 @@ a.btn {
   background: var(--panel-2);
 }
 .legal a {
-  color: var(--accent-2);
+  color: var(--info);
 }
 .legal code {
-  font-size: 12px;
+  font-size: var(--t2);
   background: var(--panel-2);
   padding: 1px 5px;
   border-radius: 4px;
@@ -3979,7 +4188,7 @@ a.btn {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  font-size: 13px;
+  font-size: var(--t3);
   line-height: 1.5;
 }
 .consent input {
@@ -3987,7 +4196,7 @@ a.btn {
   flex: none;
 }
 .consent a {
-  color: var(--accent-2);
+  color: var(--info);
 }
 /* /account 아래쪽 구역 — 탈퇴(.danger-zone)와 같은 모양이되 경고색이 아니다.
    "다른 기기에서 로그아웃" 은 되돌릴 수 없는 일이 아니라 잠그는 쪽 동작이다. */
@@ -3998,7 +4207,7 @@ a.btn {
 }
 .account-section h2 {
   margin: 0 0 6px;
-  font-size: 14px;
+  font-size: var(--t4);
   color: var(--fg);
 }
 .danger-zone {
@@ -4008,7 +4217,7 @@ a.btn {
 }
 .danger-zone h2 {
   margin: 0 0 6px;
-  font-size: 14px;
+  font-size: var(--t4);
   color: var(--danger);
 }
 .btn-danger {
@@ -4016,7 +4225,7 @@ a.btn {
   color: var(--danger);
 }
 .btn-danger:hover:not(:disabled) {
-  background: rgba(242, 85, 90, 0.12);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 /* ── 관리자 페이지 (/admin/emoticons) ──────────────────────
@@ -4038,7 +4247,7 @@ a.btn {
 }
 .admin-head h1 {
   margin: 0 0 6px;
-  font-size: 22px;
+  font-size: var(--t8);
 }
 .admin-head .eyebrow {
   margin: 0 0 2px;
@@ -4052,7 +4261,7 @@ a.btn {
 }
 .admin-card h2 {
   margin: 0 0 4px;
-  font-size: 15px;
+  font-size: var(--t5);
 }
 .emoticon-upload-row {
   display: flex;
@@ -4092,7 +4301,7 @@ a.btn {
 .admin-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: var(--t4);
 }
 .admin-table th,
 .admin-table td {
@@ -4105,7 +4314,7 @@ a.btn {
 .admin-table th {
   font-weight: 600;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .admin-table tr.is-gone td {
   opacity: 0.55;
@@ -4136,12 +4345,12 @@ a.btn {
   display: inline-block;
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(70, 200, 120, 0.15);
+  background: color-mix(in srgb, var(--accent-2) 15%, transparent);
   color: #3fb26a;
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .admin-badge.is-gone {
-  background: rgba(242, 85, 90, 0.12);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
 }
 .admin-actions {
@@ -4151,7 +4360,7 @@ a.btn {
   margin-left: 6px;
 }
 .account-admin h2 {
-  color: var(--accent);
+  color: var(--text);
 }
 @media (max-width: 600px) {
   .admin-head {
@@ -4165,12 +4374,12 @@ a.btn {
 @media (display-mode: standalone) {
   .topnav {
     padding-top: env(safe-area-inset-top);
-    height: calc(46px + env(safe-area-inset-top));
+    height: calc(var(--topnav-h) + env(safe-area-inset-top));
   }
   .layout,
   .login-page {
-    min-height: calc(100vh - 46px - env(safe-area-inset-top));
-    min-height: calc(100dvh - 46px - env(safe-area-inset-top));
+    min-height: calc(100vh - var(--topnav-h) - env(safe-area-inset-top));
+    min-height: calc(100dvh - var(--topnav-h) - env(safe-area-inset-top));
   }
 }
 .pwa-banner {
@@ -4186,12 +4395,12 @@ a.btn {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  font-size: 13px;
+  box-shadow: 0 8px 24px var(--shadow);
+  font-size: var(--t3);
 }
 .pwa-banner-icon {
-  font-size: 20px;
   flex: none;
+  color: var(--accent);
 }
 .pwa-banner-text {
   flex: 1;
@@ -4202,7 +4411,7 @@ a.btn {
   border: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--t4);
   padding: 4px 6px;
   cursor: pointer;
 }
@@ -4326,11 +4535,11 @@ a.btn {
   border-top: 1px solid var(--line);
   background: var(--panel-2);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t2);
   line-height: 1.5;
 }
 .chat-gate a {
-  color: var(--accent-2);
+  color: var(--info);
 }
 .chat-gate strong {
   color: var(--text);
@@ -4339,16 +4548,16 @@ a.btn {
 /* 목록 카드의 외부 링크 · 상세의 영업시간 줄 */
 .ext-link {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--t2);
 }
 .ext-link a {
-  color: var(--accent-2);
+  color: var(--info);
 }
 .detail-facts {
   margin-top: 2px;
 }
 .detail-facts a {
-  color: var(--accent-2);
+  color: var(--info);
 }
 
 
@@ -4379,11 +4588,11 @@ a.btn {
 .home {
   display: flex;
   flex-direction: column;
-  gap: 32px;
-  padding-bottom: 56px;
+  gap: 40px;
+  padding: 24px 0 72px;
 }
 
-/* 배너는 화면 폭을 꽉 쓰고, 그 아래 내용만 가운데로 모은다 */
+/* 배너도 카드도 같은 940px 기둥 안에 선다. 배너만 화면 끝까지 뻗으면 그것만 '광고판' 이 된다 */
 .home-body,
 .home-news-empty {
   width: 100%;
@@ -4395,7 +4604,7 @@ a.btn {
   padding-block: 32px 0;
 }
 .home-news-empty h1 {
-  font-size: 20px;
+  font-size: var(--t7);
   margin: 0 0 8px;
 }
 
@@ -4404,8 +4613,13 @@ a.btn {
    손으로 만든 드래그보다 폰의 관성 스크롤·키보드·스크린리더가 그대로 삽니다. */
 .news-hero {
   position: relative;
-  /* 참고한 배너처럼 가로로 넓고 낮게. vw 를 섞어 좁은 화면에서 너무 높아지지 않게 한다 */
-  height: clamp(220px, 26vw, 320px);
+  width: calc(100% - 32px);
+  max-width: 908px;
+  margin: 0 auto;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  /* 가로로 넓고 낮게. vw 를 섞어 좁은 화면에서 너무 높아지지 않게 한다 */
+  height: clamp(200px, 24vw, 280px);
 }
 .news-hero-track {
   display: flex;
@@ -4432,7 +4646,7 @@ a.btn {
   width: 100%;
   max-width: 940px;
   margin: 0 auto;
-  padding-inline: 24px;
+  padding: 0 32px 24px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -4445,14 +4659,27 @@ a.btn {
   align-items: center;
   margin: 0;
 }
+/* 배너는 테마와 무관하게 늘 어두우므로 이름표도 밝은 반투명 한 가지로 */
+.news-hero-kicker .badge,
+.news-hero-kicker .cat {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
 .news-hero-title {
   margin: 0;
-  font-size: clamp(22px, 3.4vw, 34px);
+  max-width: 24em;
+  /* 띄어쓰기가 없는 일본어 제목(사볼 공식 소식)은 keep-all 이면 한 낱말로 잡혀 넘친다 */
+  overflow-wrap: anywhere;
+  /* 배너 높이가 고정이라 세 줄까지만 */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: clamp(22px, 3vw, 30px);
   font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.25;
+  letter-spacing: -0.03em;
+  line-height: 1.3;
   text-wrap: balance;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
 }
 .news-hero-title a {
   color: inherit;
@@ -4469,10 +4696,9 @@ a.btn {
 .news-hero-excerpt {
   margin: 0;
   max-width: 54ch;
-  font-size: 14px;
+  font-size: var(--t4);
   line-height: 1.6;
-  color: rgba(242, 245, 250, 0.82);
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.72);
   /* 두 줄까지 — 배너 높이가 고정이라 넘치면 글자가 잘린다 */
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -4482,33 +4708,35 @@ a.btn {
 
 /* 화살표 — 마우스에만 보입니다 (components/NewsHero.tsx 주석 참고).
    손가락은 밀면 그만이고, 좁은 화면에서 제목 위에 단추가 겹치면 읽기만 나빠집니다. */
+/* 오른쪽 아래에 한 쌍으로 둡니다. 예전처럼 양옆 가운데에 두면 긴 제목의 첫 글자를 덮었습니다 */
 .news-hero-arrow {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 40px;
-  height: 40px;
+  bottom: 16px;
+  width: 32px;
+  height: 32px;
   display: none;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid rgba(242, 245, 250, 0.28);
+  border: none;
   border-radius: 50%;
-  background: rgba(10, 14, 22, 0.35);
-  color: #f2f5fa;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
   cursor: pointer;
-  backdrop-filter: blur(2px);
-  transition: background 140ms ease, border-color 140ms ease;
+  transition: background 120ms ease;
+}
+.news-hero-arrow svg {
+  width: 16px;
+  height: 16px;
 }
 .news-hero-arrow.is-prev {
-  left: 16px;
+  right: 56px;
 }
 .news-hero-arrow.is-next {
   right: 16px;
 }
 .news-hero-arrow:hover {
-  background: rgba(10, 14, 22, 0.62);
-  border-color: rgba(242, 245, 250, 0.55);
+  background: rgba(255, 255, 255, 0.26);
 }
 .news-hero-arrow:focus-visible {
   outline: 2px solid #f2f5fa;
@@ -4523,27 +4751,24 @@ a.btn {
 /* 참고한 배너의 짧은 막대 표시 */
 .news-hero-dots {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: 18px;
-  width: 100%;
-  max-width: 940px;
-  padding-inline: 24px;
+  left: 32px;
+  bottom: 30px;
   display: flex;
   gap: 8px;
 }
 .news-hero-dots button {
-  width: 34px;
+  width: 16px;
   height: 3px;
   padding: 0;
   border: none;
   border-radius: 2px;
-  background: rgba(242, 245, 250, 0.32);
+  background: rgba(255, 255, 255, 0.3);
   cursor: pointer;
-  transition: background 160ms ease;
+  transition: background 160ms ease, width 160ms ease;
 }
 .news-hero-dots button.is-on {
-  background: #f2f5fa;
+  width: 28px;
+  background: #fff;
 }
 /* 막대가 3px 이라 손가락으로 못 누른다 — 보이는 크기는 두고 누를 범위만 넓힌다
    (지도 마커 .mk 와 같은 방법) */
@@ -4562,6 +4787,30 @@ a.btn {
   outline-offset: 4px;
 }
 
+/* 폰 — 배너 안쪽 여백을 줄이고, 제목 두 줄 + 요약은 뺀다. 점 표시가 요약 위에 겹쳤다 */
+@media (max-width: 720px) {
+  .news-hero {
+    height: 220px;
+  }
+  .news-hero-slide {
+    align-items: flex-end;
+  }
+  .news-hero-body {
+    padding: 0 20px 44px;
+  }
+  .news-hero-title {
+    font-size: var(--t7);
+    -webkit-line-clamp: 2;
+  }
+  .news-hero-excerpt {
+    display: none;
+  }
+  .news-hero-dots {
+    left: 20px;
+    bottom: 22px;
+  }
+}
+
 /* ── 바로 가기 카드 ─────────────────────────────────────────
    상단 네비와 같은 목적지를, 처음 온 사람이 설명과 함께 고를 수 있게 폅니다. */
 .home-sec-head {
@@ -4571,15 +4820,15 @@ a.btn {
   margin-bottom: 14px;
 }
 .home-sec-head h2 {
-  font-size: 18px;
+  font-size: var(--t7);
   font-weight: 700;
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 .home-more {
   margin-left: auto;
-  font-size: 13px;
-  color: var(--text-accent);
+  font-size: var(--t3);
+  color: var(--muted);
   text-decoration: none;
 }
 .home-more:hover {
@@ -4591,95 +4840,83 @@ a.btn {
   /*
      auto-fit 은 빈 트랙을 접고 남은 트랙이 1fr 로 폭을 나눠 가집니다. 그래서 카드가
      넷이면 넓은 화면에서 4열, 네 장이 최소폭으로도 안 들어가는 폭에서는 2열이 됩니다.
-     최소폭을 150px 로 둔 이유가 이것입니다 — 190px 이면 폰(375px)에서 1열로 떨어져
-     5:4 비주얼이 통째로 세로로 쌓이면서 화면이 한없이 길어집니다.
+     폰(375px)에서 1열로 떨어지지 않게 최소폭을 150px 로 둡니다.
   */
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
+  gap: 8px;
 }
 
-/* 세로형 카드 — 위는 비주얼, 아래는 어두운 띠에 이름과 한 줄 설명.
-   테두리를 두르지 않고 **모서리를 둥글려 잘라내는** 한 덩어리로 둡니다. */
+/*
+   판판한 회색 판 하나 — 테두리 · 그림자 · 떠오르는 효과 없음. 누를 수 있다는 것은
+   호버 때 한 단 짙어지는 바탕과 오른쪽 위 화살표가 말합니다. (예전 판은 그라데이션
+   비주얼 + 설명 띠였고, 그 띠 색을 --card-cap 으로 따로 뒀습니다. 이름은 그대로 두고
+   지금은 판 전체의 바탕으로 씁니다.)
+*/
 .home-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--panel);
+  gap: 4px;
+  min-height: 148px;
+  padding: 20px;
+  border-radius: var(--r-md);
+  background: var(--card-cap);
   text-decoration: none;
   color: inherit;
-  box-shadow: 0 1px 2px var(--shadow-soft);
-  transition: transform 160ms ease, box-shadow 160ms ease;
+  transition: background-color 120ms ease;
 }
 .home-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 20px var(--shadow);
+  background: var(--panel-2);
+}
+.home-card::after {
+  content: '→';
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  color: var(--subtle);
+  font-size: var(--t5);
+  transition: transform 120ms ease, color 120ms ease;
+}
+.home-card:hover::after {
+  color: var(--text);
+  transform: translateX(2px);
 }
 .home-card:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 3px;
+  outline-offset: 2px;
 }
 
-.home-card-visual {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* 참고한 카드처럼 비주얼이 카드의 대부분을 차지한다 */
-  aspect-ratio: 5 / 4;
-  /* 배경은 인라인 style 로 온다 (목적지마다 다르다) */
-  color: rgba(242, 245, 250, 0.5);
-}
-.home-card:hover .home-card-visual {
-  color: rgba(242, 245, 250, 0.78);
-}
-
-.home-card-cap {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 11px 13px 13px;
-  /*
-     공용 --panel-2 가 아니라 전용 --card-cap 입니다 (정의는 테마 토큰 세 곳).
-
-     카드에 테두리를 두지 않아(위 .home-card 주석) 이 띠가 곧 카드 경계입니다.
-     처음엔 --sunken 이었는데, 그 값이 두 테마에서 반대로 놓여 있었습니다 —
-     라이트 #e8eaf0 은 배경(#f5f6f8)보다 어두워 띠로 읽히지만, 다크 #0b0d12 는
-     배경(#0e1015)보다 **더 어두워** 묻혔습니다.
-
-     --panel-2 로 옮겨 양쪽 다 보이게 한 뒤, 대비를 한 단 더 벌린 값입니다.
-     다크는 더 밝게(#2a3242), 라이트는 더 어둡게(#e0e4ec) — 어느 쪽이든 카드
-     배경에서 **멀어지는** 방향입니다. --panel-2 를 직접 건드리지 않는 이유는
-     그 토큰을 이 파일에서 40곳 넘게 쓰기 때문입니다.
-  */
-  background: var(--card-cap);
+.home-card-icon {
+  margin-bottom: auto;
+  color: var(--text);
 }
 .home-card-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  margin-top: 20px;
   font-weight: 700;
-  font-size: 14px;
-  letter-spacing: -0.01em;
-}
-/* 제목 앞의 작은 표식 — 참고한 카드의 점 */
-.home-card-label::before {
-  content: '';
-  width: 4px;
-  height: 4px;
-  border-radius: 1px;
-  background: var(--accent);
-  flex: none;
+  font-size: var(--t5);
+  letter-spacing: -0.02em;
 }
 .home-card-desc {
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--t3);
+  line-height: 1.4;
   /* 두 줄로 묶어 둔다 — 한 장만 세 줄이 되면 그 카드만 키가 커서 줄이 들쭉날쭉해진다 */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  min-height: calc(2 * 1.45em);
+  min-height: calc(2 * 1.4em);
+}
+
+@media (max-width: 720px) {
+  .home-card {
+    min-height: 132px;
+    padding: 16px;
+  }
+  .home-card::after {
+    top: 14px;
+    right: 16px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4688,7 +4925,7 @@ a.btn {
   .news-hero-arrow {
     transition: none;
   }
-  .home-card:hover {
+  .home-card:hover::after {
     transform: none;
   }
   .news-hero-track {
@@ -4737,7 +4974,7 @@ a.btn {
   /* 지도·본문 위에 떠 있으므로 살짝 비칩니다 — 아래가 완전히 가려지지 않게 */
   background: color-mix(in srgb, var(--panel) 92%, transparent);
   backdrop-filter: blur(6px);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 4px 16px var(--shadow);
 }
 .histbar button {
   display: flex;
@@ -4791,7 +5028,7 @@ a.btn {
   gap: 6px;
   flex-wrap: wrap;
   margin: 0 0 8px;
-  font-size: 12.5px;
+  font-size: var(--t3);
   color: var(--muted);
 }
 .guess-tag {
@@ -4800,7 +5037,7 @@ a.btn {
   border-radius: 3px;
   background: var(--panel-2);
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--t2);
   font-weight: 700;
 }
 .guess-list {
@@ -4817,7 +5054,7 @@ a.btn {
   gap: 2px;
 }
 .guess-list strong {
-  font-size: 13.5px;
+  font-size: var(--t3);
 }
 
 /* 리뷰 AI 요약 (components/ArcadeReviews.tsx). 사람이 쓴 리뷰 카드와 **다르게** 보여야
@@ -4834,11 +5071,11 @@ a.btn {
   grid-template-columns: auto 1fr;
   gap: 4px 10px;
   margin: 0;
-  font-size: 13px;
+  font-size: var(--t3);
 }
 .review-summary dt {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t2);
   white-space: nowrap;
   padding-top: 1px;
 }
@@ -4898,7 +5135,7 @@ a.btn {
 /* 지운 이모티콘 자리 — [[emo:3]] 이라는 내부 표기가 그대로 보이지 않게 */
 .emoticon-gone {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--t2);
 }
 
 .emoticon-picker {
@@ -4965,7 +5202,7 @@ a.btn {
   cursor: pointer;
 }
 .emoticon-cell:hover {
-  border-color: var(--accent);
+  border-color: var(--line-strong);
 }
 .emoticon-cell img {
   max-width: 100%;
@@ -4984,7 +5221,7 @@ a.btn {
   border-radius: 50%;
   background: var(--panel);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--t2);
   line-height: 1;
   cursor: pointer;
 }
@@ -5005,7 +5242,7 @@ a.btn {
   margin: 0;
 }
 .emoticon-add input[type='file'] {
-  font-size: 11px;
+  font-size: var(--t2);
   max-width: 100%;
 }
 .emoticon-add-row {

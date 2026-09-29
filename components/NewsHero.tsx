@@ -27,7 +27,7 @@ import type { PostSummary } from '@/lib/board-types';
  * 화면은 그대로 0번인데 위치만 맨 뒤라, 거기서 마지막 칸으로 평범하게 되돌아갑니다.
  *
  * ─── 배경이 없는 글이 대부분입니다 ─────────────────────────
- * 첨부가 있으면 그 이미지를 깔고, 없으면 게임 이름에서 고른 어두운 한랭색으로
+ * 첨부가 있으면 그 이미지를 깔고, 없으면 게임 이름에서 고른 짙은 단색으로
  * 칠합니다. 빈 회색을 깔면 "이미지를 못 불러왔다" 로 읽히는데, 사실은 **글에 사진이
  * 없는** 것이라 다르게 보여야 합니다. 영상 첨부는 배경으로 쓰지 않습니다(mime 확인).
  */
@@ -37,36 +37,36 @@ const AUTO_MS = 6000;
 const SETTLE_MS = 150;
 
 /**
- * 사진이 없는 글에 깔 배경 — **차분한 어두운 한랭색만** 씁니다.
+ * 사진이 없는 글에 깔 배경 — **짙은 단색 넷 중 하나**를 씁니다.
  *
  * 처음엔 게임 이름 해시를 색상환 전체(0~359°)에 뿌렸는데, 형광 초록·붉은색이 나와
- * 앱의 어두운 남색 톤과 따로 놀았습니다. 배경은 제목을 받쳐 주는 바닥이지 그
- * 자체가 주인공이 아니라, 고를 수 있는 폭을 좁혀 두는 쪽이 맞습니다.
+ * 앱 톤과 따로 놀았습니다. 그다음 판은 남색 · 틸 · 인디고 그라데이션이었는데, 그건
+ * 또 "생성된 배너" 처럼 읽혔습니다. 지금은 그라데이션 없이 **판판한 단색**이고, 채도를
+ * 낮춰 제목 뒤로 물러나게 했습니다 (docs/VISUAL-DESIGN.md).
  *
  * 같은 게임이 늘 같은 배경을 받도록 이름 해시로 고릅니다 — 새로고침마다 색이
  * 바뀌면 글이 바뀐 것처럼 보입니다.
  */
 const SLATES = [
-  ['#111a2e', '#1d3357', '#2b4a74'], // 네이비
-  ['#101c26', '#1b3a4a', '#28566a'], // 딥 틸
-  ['#161428', '#292350', '#3b356e'], // 인디고
-  ['#141a1c', '#24383c', '#345054'], // 슬레이트 그린
+  '#24272d', // 먹색
+  '#1a2a40', // 짙은 파랑 — 브랜드색 계열
+  '#1c2923', // 짙은 초록
+  '#2a2330', // 짙은 자주
 ] as const;
 
-function slateOf(seed: string): readonly [string, string, string] {
+function slateOf(seed: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i += 1) h = (h * 31 + seed.charCodeAt(i)) % 997;
-  return SLATES[h % SLATES.length] as unknown as readonly [string, string, string];
+  return SLATES[h % SLATES.length];
 }
 
 function backgroundOf(p: PostSummary): string {
   const img = p.thumbnail && p.thumbnail.mime.startsWith('image/') ? p.thumbnail.url : null;
   // 사진 위에 흰 글씨를 얹으므로 어두운 막을 한 겹 깝니다 — 밝은 사진에서 제목이 사라집니다.
   if (img) {
-    return `linear-gradient(90deg, rgba(8,12,20,.82) 0%, rgba(8,12,20,.45) 55%, rgba(8,12,20,.2) 100%), url(${img}) center/cover no-repeat`;
+    return `linear-gradient(90deg, rgba(12,13,16,.84) 0%, rgba(12,13,16,.5) 55%, rgba(12,13,16,.25) 100%), url(${img}) center/cover no-repeat`;
   }
-  const [a, b, c] = slateOf(p.machineShortName ?? p.categoryLabel);
-  return `linear-gradient(105deg, ${a} 0%, ${b} 58%, ${c} 100%)`;
+  return slateOf(p.machineShortName ?? p.categoryLabel);
 }
 
 /** 슬라이드 한 장의 내용. 맨 뒤 사본은 링크 없이(clone) 그립니다 — 같은 글이 두 번 잡히면 안 됩니다. */

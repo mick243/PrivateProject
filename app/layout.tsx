@@ -5,6 +5,9 @@ import PwaSetup from '@/components/PwaSetup';
 import TopNav from '@/components/TopNav';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
 import { publicAppUrl } from '@/lib/app-url';
+// 글꼴을 globals.css 보다 먼저 — 가변 Pretendard 를 글자 범위별로 나눠 둔 것이라 화면에 나온
+// 글자가 든 조각만 받습니다 (app/fonts/pretendard, OFL-1.1). CSP 가 font-src 'self' 라 CDN 대신 직접 둡니다.
+import './fonts/pretendard/pretendardvariable-dynamic-subset.css';
 import './globals.css';
 
 const TITLE = '오락실 파인더';
@@ -46,7 +49,11 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#161a22',
+  // 주소창 색 — 상단 네비(--panel)와 같은 색. 라이트·다크 각각
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#1b1d22' },
+  ],
   width: 'device-width',
   initialScale: 1,
   // 홈 화면 앱(standalone)에서 노치·홈 인디케이터 뒤까지 그리고, safe-area 는 CSS 가 챙깁니다

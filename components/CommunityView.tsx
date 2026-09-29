@@ -453,7 +453,7 @@ export default function CommunityView() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <button type="submit" className="btn btn-sm btn-primary">
+        <button type="submit" className="btn btn-sm">
           검색
         </button>
         {/* 값이 없을 때 감추지 않고 끄는 이유는 아래 건수 칸과 같다 — 나타나고
