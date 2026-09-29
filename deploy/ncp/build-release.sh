@@ -25,8 +25,14 @@ if [[ ! -f "$BUILD_ENV" ]]; then
 fi
 docker info >/dev/null 2>&1 || { echo "Docker 가 꺼져 있습니다 — Docker Desktop 을 켜 주세요" >&2; exit 2; }
 
-REV="$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo nogit)"
-DIRTY="$(git -C "$APP_DIR" status --porcelain -- . 2>/dev/null | grep -v '^?? deploy/ncp/' | head -1 || true)"
+# 묶음 이름에 붙일 커밋. ⚠ 주 체크아웃의 arcade-finder/ 에는 옛 중첩 저장소(.git)가 따로 있어서,
+# 그냥 `git -C "$APP_DIR"` 로 물으면 바깥 저장소가 아니라 그쪽 커밋이 나온다. 바깥에도 저장소가
+# 있으면 바깥을 본다 (워크트리 · GitHub 클론처럼 하나뿐이면 그대로).
+REPO="$APP_DIR"
+if [[ -e "$APP_DIR/.git" ]] && git -C "$APP_DIR/.." rev-parse --git-dir >/dev/null 2>&1; then REPO="$APP_DIR/.."; fi
+REV="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo nogit)"
+# 커밋 안 된 수정이 앱 폴더 안에 있으면 표시한다 (추적하지 않는 새 파일은 세지 않는다)
+DIRTY="$(git -C "$REPO" status --porcelain --untracked-files=no -- "$(cd "$APP_DIR" && pwd)" 2>/dev/null | head -1 || true)"
 [[ -n "$DIRTY" ]] && REV="$REV-dirty"
 NAME="release-$(date +%Y%m%d-%H%M)-$REV.tgz"
 mkdir -p "$OUT_DIR"
