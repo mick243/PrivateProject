@@ -36,9 +36,11 @@ const POST_ROW = { id: 5, playerId: 42, title: '글', commentCount: 0 };
  * 다르거나 계정이 없으면 로그인이 아닙니다 (lib/auth.ts getSession, H12).
  * 이 파일이 보려는 건 신원이지 회수가 아니라서, 세대 0 으로 답하는 대역을 둡니다.
  */
-vi.mock('@/lib/db', () => ({
-  getDb: async () => ({
-    query: async () => ({ rows: [{ nickname: '테스터', is_admin: false, token_epoch: 0 }] }),
+vi.mock('@/lib/prisma', () => ({
+  getPrismaClient: async () => ({
+    players: {
+      findUnique: async () => ({ nickname: '테스터', is_admin: false, token_epoch: 0 }),
+    },
   }),
 }));
 

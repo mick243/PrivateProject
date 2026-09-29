@@ -1,23 +1,15 @@
 import { cacheReference } from './cache';
-import { getDb, type Queryable } from './db';
+import { arcadesWithMachines } from './typed-sql';
+import { getPrismaClient, num, TX_OPTIONS, type PrismaTx } from './prisma';
 import type { Arcade, ArcadeInput, ArcadeMachine, Machine, MachineGuess } from './types';
 
 /**
- * 오락실 1건 + 보유 기종 목록을 뽑는 공통 SELECT 조각.
+ * 오락실.
  *
- * 두 뷰가 서로 다른 단위로 붙는다:
- *   machine_live       대기   → (오락실, 기종)  줄은 게임 앞에 선다
- *   cabinet_condition  컨디션 → 기체 1대        1호기는 멀쩡한데 2호기만 죽어 있을 수 있다
- *
- * machine_live 는 수명 안의 제보만 담고 LEFT JOIN 이라, 유효한 제보가 없으면
- * live 가 null 로 나가고 UI 는 "지금 대기" 칸을 아예 그리지 않는다. 만료된 값을
- * 0 으로 바꿔 내보내면 "대기 없음" 이라는 없는 정보가 생긴다.
- *
- * cabinet_condition 은 등록값까지 종합한 결과라 기체마다 항상 한 행 있다.
- * 등록값도 제보도 없을 때만 value 가 null 이고, 그때만 "정보 없음" 이다.
- */
-/**
- * 보유 기종·기체를 오락실별로 묶어 주는 CTE 두 개.
+ * 목록·단건 조회는 **TypedSQL** 입니다 (prisma/sql/arcadesWithMachines.sql). haversine
+ * 반경 계산 · 낱말 분해 검색 · 기종 AND 필터 · 두 뷰를 조인한 json_agg 는 Prisma Client
+ * API 로 표현되지 않고, 그 SQL 에는 측정으로 고른 모양이 있습니다 — 아래 주석이 그
+ * 근거입니다. 쓰기(등록·수정·삭제·기종 교체)는 Prisma Client 입니다.
  *
  * ─── 왜 상관 서브쿼리를 버렸나 ───────────────────────────────
  * 예전에는 `MACHINES_SUBQUERY` 라는 상관 서브쿼리 하나였고, 그게 **오락실마다
@@ -30,120 +22,66 @@ import type { Arcade, ArcadeInput, ArcadeMachine, Machine, MachineGuess } from '
  *   기존(상관 서브쿼리)  실행 36.0ms · 버퍼 44,042
  *   지금(CTE 집계)       실행 20.0ms · **버퍼 163**   ← 270분의 1
  *
- * 남은 20ms 는 JSON 을 만드는 값이라 이 방향으로는 더 줄지 않습니다.
- *
  * ─── 왜 하나로 두고 필터를 받나 ─────────────────────────────
- * 목록(listArcades)과 단일 조회(getArcade)가 같은 모양을 씁니다. 단일 조회에서
- * 전체를 집계하면 손해라 `arcadeFilter` 로 좁히고, 목록에서는 NULL 을 줘서
- * 전부 집계합니다. **정의를 둘로 나누지 않는 이유**는 이 프로젝트가 이미
- * 겪은 함정입니다 — 같은 규칙을 두 곳에 적으면 한쪽만 고쳐지고, 그러면
- * 목록과 상세가 다른 오락실을 보여 줍니다.
+ * 목록(listArcades)과 단일 조회(getArcade)가 같은 SQL 을 씁니다. **정의를 둘로
+ * 나누지 않는 이유**는 이 프로젝트가 이미 겪은 함정입니다 — 같은 규칙을 두 곳에
+ * 적으면 한쪽만 고쳐지고, 그러면 목록과 상세가 다른 오락실을 보여 줍니다.
  *
  * ─── 좁히지 않으면 필터 검색이 느려집니다 ───────────────────
  * 집계를 한 번만 하는 것이 **결과가 많을 때** 이깁니다. 반경 검색처럼 30곳만
- * 남는 경우에 전체(기체 5,644)를 집계하면 오히려 손해입니다 — 처음 이 CTE 를
- * 넣었을 때 반경 검색이 8ms → 26ms 로 **3배 느려졌습니다.**
+ * 남는 경우에 전체(기체 5,644)를 집계하면 오히려 손해라(처음 CTE 를 넣었을 때 반경
+ * 검색이 8ms → 26ms 로 3배 느려졌습니다), 집계는 **바깥에서 고른 오락실만** 합니다.
  *
- * 그래서 `scope` 로 **바깥에서 고른 오락실만** 집계합니다. 목록은 `base` CTE 를,
- * 단일 조회는 파라미터를 줍니다. 전체 목록이면 scope 가 939곳이라 전부 집계하고,
- * 좁혀졌으면 그만큼만 집계합니다.
- *
- * `scope` 는 SQL 조각을 만들지만 **사용자 입력이 들어오는 자리가 아닙니다** —
- * 파라미터 자리나 CTE 이름만 넣습니다.
+ * ─── 두 뷰가 서로 다른 단위로 붙습니다 ─────────────────────
+ *   machine_live       대기   → (오락실, 기종)  줄은 게임 앞에 선다
+ *   cabinet_condition  컨디션 → 기체 1대        1호기는 멀쩡한데 2호기만 죽어 있을 수 있다
+ * machine_live 는 수명 안의 제보만 담고 LEFT JOIN 이라, 유효한 제보가 없으면 live 가
+ * null 로 나가고 UI 는 "지금 대기" 칸을 아예 그리지 않습니다. 만료된 값을 0 으로 바꿔
+ * 내보내면 "대기 없음" 이라는 없는 정보가 생깁니다.
  */
-function machinesCte(scope: (arcadeIdColumn: string) => string): string {
-  const only = scope;
-  return `
-    cab_agg AS (
-      SELECT c.arcade_id, c.machine_id,
-             COUNT(c.id)::int AS cabinet_count,
-             json_agg(json_build_object(
-               'id',        c.id,
-               'cabinetNo', c.cabinet_no,
-               'condition', c.condition,
-               -- 등록값도 제보도 없으면 value 가 null 이고, 그때는 표시할 게
-               -- 없으므로 객체 자체를 내보내지 않는다.
-               'conditionSummary', CASE WHEN cc.value IS NULL THEN NULL ELSE json_build_object(
-                 'value',      cc.value,
-                 'reports',    COALESCE(cc.reports, 0),
-                 'reportedAt', cc.reported_at
-               ) END)
-               ORDER BY c.cabinet_no) AS cabinets
-      FROM arcade_cabinets c
-      LEFT JOIN cabinet_condition cc ON cc.cabinet_id = c.id
-      WHERE ${only('c.arcade_id')}
-      GROUP BY c.arcade_id, c.machine_id
+
+type ArcadeRow = Awaited<ReturnType<typeof fetchArcades>>[number];
+
+async function fetchArcades(params: {
+  lat?: number | null;
+  lng?: number | null;
+  tokens?: string[] | null;
+  machineIds?: number[] | null;
+  radiusKm?: number | null;
+  arcadeId?: number | null;
+}) {
+  const prisma = await getPrismaClient();
+  return prisma.$queryRawTyped(
+    arcadesWithMachines(
+      params.lat ?? null,
+      params.lng ?? null,
+      params.tokens ?? [],
+      params.machineIds ?? [],
+      params.radiusKm ?? null,
+      params.arcadeId ?? null,
     ),
-    mach_agg AS (
-      SELECT am.arcade_id,
-             json_agg(json_build_object(
-               'id',        m.id,
-               'name',      m.name,
-               'shortName', m.short_name,
-               'category',  m.category,
-               -- 기체가 0대인 기종도 있습니다. 예전 LATERAL 은 집계라 늘 한 행을
-               -- 냈지만(count 0 · '[]'), GROUP BY 는 행 자체가 없으므로 여기서 메꿉니다.
-               'cabinetCount', COALESCE(cab.cabinet_count, 0),
-               'cabinets',     COALESCE(cab.cabinets, '[]'::json),
-               'live', CASE WHEN ml.machine_id IS NULL THEN NULL ELSE json_build_object(
-                 'waitCount',      ml.wait_count,
-                 'waitReports',    COALESCE(ml.wait_reports, 0),
-                 'waitReportedAt', ml.wait_reported_at
-               ) END)
-               ORDER BY CASE m.category WHEN 'rhythm' THEN 0 ELSE 1 END, m.sort_order, m.id) AS machines
-      FROM arcade_machines am
-      JOIN machines m ON m.id = am.machine_id
-      LEFT JOIN machine_live ml ON ml.arcade_id = am.arcade_id AND ml.machine_id = am.machine_id
-      LEFT JOIN cab_agg cab ON cab.arcade_id = am.arcade_id AND cab.machine_id = am.machine_id
-      WHERE ${only('am.arcade_id')}
-      GROUP BY am.arcade_id
-    )`;
-}
-
-/** 오락실 한 행에 붙는 기종 배열. 기종이 없으면 `[]` */
-const MACHINES_COLUMN = "COALESCE(ma.machines, '[]'::json) AS machines";
-
-interface ArcadeRow {
-  id: number;
-  name: string;
-  address: string;
-  lat: number;
-  lng: number;
-  open_time: string | null;
-  close_time: string | null;
-  is_24h: boolean;
-  phone: string | null;
-  note: string | null;
-  homepage: string | null;
-  distance_km: number | null;
-  rating_avg: number | string | null;
-  review_count: number;
-  machines: ArcadeMachine[] | string;
+  );
 }
 
 function toArcade(row: ArcadeRow): Arcade {
-  const machines =
-    typeof row.machines === 'string'
-      ? (JSON.parse(row.machines) as ArcadeMachine[])
-      : row.machines;
-
   return {
     id: row.id,
     name: row.name,
     address: row.address,
-    lat: Number(row.lat),
-    lng: Number(row.lng),
+    lat: row.lat,
+    lng: row.lng,
     openTime: row.open_time,
     closeTime: row.close_time,
     is24h: row.is_24h,
     phone: row.phone,
     note: row.note,
     homepage: row.homepage ?? null,
-    machines,
-    distanceKm: row.distance_km === null ? null : Number(row.distance_km),
-    // NUMERIC 은 드라이버에 따라 문자열로 올라온다.
-    ratingAvg: row.rating_avg === null ? null : Number(row.rating_avg),
-    reviewCount: Number(row.review_count ?? 0),
+    // json_agg 는 파싱된 값으로 옵니다. 모양은 SQL 이 만든 그대로입니다.
+    machines: (row.machines ?? []) as unknown as ArcadeMachine[],
+    distanceKm: row.distance_km,
+    // NUMERIC 은 Decimal 로 옵니다.
+    ratingAvg: num(row.rating_avg),
+    reviewCount: row.review_count,
   };
 }
 
@@ -176,79 +114,21 @@ export function searchTokens(q: string | null | undefined): string[] | null {
 }
 
 export async function listArcades(params: ListArcadesParams): Promise<Arcade[]> {
-  const db = await getDb();
   const { q = null, machineIds = null, lat = null, lng = null, radiusKm = null } = params;
-
-  // 좌표가 오면 haversine 으로 거리(km)를 계산해 함께 반환한다.
-  // PostGIS 도입 시 이 CTE 를 ST_Distance / ST_DWithin 으로 교체하면 인덱스를 탄다.
-  const sql = `
-    WITH scored AS (
-      SELECT
-        a.*,
-        CASE WHEN $1::float8 IS NULL OR $2::float8 IS NULL THEN NULL ELSE
-          6371 * acos(LEAST(1, GREATEST(-1,
-              cos(radians($1::float8)) * cos(radians(a.lat))
-                * cos(radians(a.lng) - radians($2::float8))
-            + sin(radians($1::float8)) * sin(radians(a.lat))
-          )))
-        END AS distance_km
-      FROM arcades a
-      WHERE ($3::text[] IS NULL
-             -- 낱말마다 이름 또는 주소에 걸려야 한다 (searchTokens 주석).
-             -- "홍대 짱" → 홍대는 주소/지점명에, 짱은 상호에 각각 걸린다.
-             OR (SELECT bool_and(a.name ILIKE '%' || t || '%'
-                              OR a.address ILIKE '%' || t || '%')
-                 FROM unnest($3::text[]) AS t))
-        AND ($4::int[] IS NULL OR a.id IN (
-              SELECT am.arcade_id
-              FROM arcade_machines am
-              WHERE am.machine_id = ANY($4::int[])
-              GROUP BY am.arcade_id
-              HAVING COUNT(DISTINCT am.machine_id) = array_length($4::int[], 1)
-            ))
-    ),
-    -- 반경 필터를 **집계 앞으로** 당깁니다. 예전에는 맨 바깥 WHERE 에 있어서
-    -- 30곳만 남는 반경 검색에서도 base 가 939곳이었고, 그 상태로 집계를 좁히면
-    -- 아무것도 안 좁혀집니다 (실제로 반경 검색이 3배 느려졌습니다).
-    base AS (
-      SELECT * FROM scored s
-      WHERE $5::float8 IS NULL OR s.distance_km IS NULL OR s.distance_km <= $5::float8
-    ),
-    ${machinesCte((col) => `${col} IN (SELECT id FROM base)`)}
-    SELECT b.*, ${MACHINES_COLUMN}
-    FROM base b
-    LEFT JOIN mach_agg ma ON ma.arcade_id = b.id
-    -- id 로 마지막 순위를 못 박습니다. **같은 이름이 267곳(66종류)** 있는데
-    -- (88오락실 ×2 · 게임랜드 ×4 …) 타이브레이커가 없으면 동명 사이의 순서가
-    -- 실행계획에 따라 달라집니다. 사이드바가 10곳씩 페이지를 나누므로, 그때
-    -- 같은 곳이 두 페이지에 나오거나 사라질 수 있습니다.
-    -- (CTE 로 바꾸면서 실제로 순서가 바뀌어 드러난 문제입니다.)
-    ORDER BY b.distance_km ASC NULLS LAST, b.name ASC, b.id ASC`;
-
-  const { rows } = await db.query<ArcadeRow>(sql, [
+  const rows = await fetchArcades({
     lat,
     lng,
-    searchTokens(q),
-    machineIds && machineIds.length ? machineIds : null,
+    tokens: searchTokens(q),
+    // 같은 id 가 두 번 와도(?machines=1,1) SQL 이 중복을 빼고 셉니다.
+    machineIds: machineIds && machineIds.length ? machineIds : null,
     radiusKm,
-  ]);
-
+  });
   return rows.map(toArcade);
 }
 
 export async function getArcade(id: number): Promise<Arcade | null> {
-  const db = await getDb();
-  const { rows } = await db.query<ArcadeRow>(
-    // 목록과 **같은** 집계를 쓰되 그 오락실로 좁힙니다 ($1). 전부 집계하면
-    // 한 곳을 보려고 5,644개 기체를 훑습니다.
-    `WITH ${machinesCte((col) => `${col} = $1::int`)}
-     SELECT b.*, NULL::float8 AS distance_km, ${MACHINES_COLUMN}
-     FROM arcades b
-     LEFT JOIN mach_agg ma ON ma.arcade_id = b.id
-     WHERE b.id = $1`,
-    [id],
-  );
-  return rows[0] ? toArcade(rows[0]) : null;
+  const [row] = await fetchArcades({ arcadeId: id });
+  return row ? toArcade(row) : null;
 }
 
 /**
@@ -260,140 +140,132 @@ export async function getArcade(id: number): Promise<Arcade | null> {
  * (cabinet_no 로 맞춰 UPDATE), 빠진 것만 지운다.
  */
 async function replaceMachines(
-  tx: Queryable,
+  tx: PrismaTx,
   arcadeId: number,
   machines: ArcadeInput['machines'],
 ): Promise<void> {
   const machineIds = machines.map((m) => m.machineId);
 
   // 입력에서 빠진 기종은 제거 — 그 기체들도 FK CASCADE 로 함께 사라진다.
-  await tx.query(
-    `DELETE FROM arcade_machines
-     WHERE arcade_id = $1 AND ($2::int[] IS NULL OR machine_id <> ALL($2::int[]))`,
-    [arcadeId, machineIds.length ? machineIds : null],
-  );
+  await tx.arcade_machines.deleteMany({
+    where: {
+      arcade_id: arcadeId,
+      ...(machineIds.length ? { machine_id: { notIn: machineIds } } : {}),
+    },
+  });
 
   for (const m of machines) {
-    await tx.query(
-      `INSERT INTO arcade_machines (arcade_id, machine_id) VALUES ($1, $2)
-       ON CONFLICT (arcade_id, machine_id) DO UPDATE SET updated_at = now()`,
-      [arcadeId, m.machineId],
-    );
+    await tx.arcade_machines.upsert({
+      where: { arcade_id_machine_id: { arcade_id: arcadeId, machine_id: m.machineId } },
+      create: { arcade_id: arcadeId, machine_id: m.machineId },
+      update: { updated_at: new Date() },
+    });
 
     // 기체가 0대인 기종은 화면에서 통째로 사라지므로 최소 1대는 남긴다.
     const count = Math.max(1, m.cabinets.length);
 
     // 대수를 줄이면 뒤 번호부터 없어진다 (1호기가 남고 3호기가 빠진다).
-    await tx.query(
-      `DELETE FROM arcade_cabinets
-       WHERE arcade_id = $1 AND machine_id = $2 AND cabinet_no > $3`,
-      [arcadeId, m.machineId, count],
-    );
+    await tx.arcade_cabinets.deleteMany({
+      where: { arcade_id: arcadeId, machine_id: m.machineId, cabinet_no: { gt: count } },
+    });
 
     for (let i = 0; i < count; i += 1) {
-      await tx.query(
-        `INSERT INTO arcade_cabinets (arcade_id, machine_id, cabinet_no, condition)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (arcade_id, machine_id, cabinet_no) DO UPDATE
-           SET condition  = EXCLUDED.condition,
-               updated_at = now()`,
-        [arcadeId, m.machineId, i + 1, m.cabinets[i]?.condition ?? null],
-      );
+      const condition = m.cabinets[i]?.condition ?? null;
+      await tx.arcade_cabinets.upsert({
+        where: {
+          arcade_id_machine_id_cabinet_no: {
+            arcade_id: arcadeId,
+            machine_id: m.machineId,
+            cabinet_no: i + 1,
+          },
+        },
+        create: { arcade_id: arcadeId, machine_id: m.machineId, cabinet_no: i + 1, condition },
+        update: { condition, updated_at: new Date() },
+      });
     }
   }
 }
 
 export async function createArcade(input: ArcadeInput): Promise<Arcade> {
-  const db = await getDb();
-  const id = await db.transaction(async (tx) => {
-    const { rows } = await tx.query<{ id: number }>(
-      `INSERT INTO arcades (name, address, lat, lng, open_time, close_time, is_24h, phone, note)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-       RETURNING id`,
-      [
-        input.name,
-        input.address,
-        input.lat,
-        input.lng,
-        input.openTime,
-        input.closeTime,
-        input.is24h,
-        input.phone,
-        input.note,
-      ],
-    );
-    const newId = rows[0].id;
-    await replaceMachines(tx, newId, input.machines);
-    return newId;
-  });
+  const prisma = await getPrismaClient();
+  const id = await prisma.$transaction(async (tx) => {
+    const created = await tx.arcades.create({
+      data: {
+        name: input.name,
+        address: input.address,
+        lat: input.lat,
+        lng: input.lng,
+        open_time: input.openTime,
+        close_time: input.closeTime,
+        is_24h: input.is24h,
+        phone: input.phone,
+        note: input.note,
+      },
+      select: { id: true },
+    });
+    await replaceMachines(tx, created.id, input.machines);
+    return created.id;
+  }, TX_OPTIONS);
 
-  return (await getArcade(id))!;
+  const arcade = await getArcade(id);
+  if (!arcade) throw new Error(`방금 만든 오락실 ${id} 을 다시 읽지 못했습니다`);
+  return arcade;
 }
 
 export async function updateArcade(
   id: number,
   input: ArcadeInput,
 ): Promise<Arcade | null> {
-  const db = await getDb();
-  const updated = await db.transaction(async (tx) => {
-    const { rows } = await tx.query<{ id: number }>(
-      `UPDATE arcades SET
-         name = $2, address = $3, lat = $4, lng = $5,
-         open_time = $6, close_time = $7, is_24h = $8, phone = $9, note = $10,
-         updated_at = now()
-       WHERE id = $1
-       RETURNING id`,
-      [
-        id,
-        input.name,
-        input.address,
-        input.lat,
-        input.lng,
-        input.openTime,
-        input.closeTime,
-        input.is24h,
-        input.phone,
-        input.note,
-      ],
-    );
-    if (!rows[0]) return false;
+  const prisma = await getPrismaClient();
+  const updated = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.arcades.updateMany({
+      where: { id },
+      data: {
+        name: input.name,
+        address: input.address,
+        lat: input.lat,
+        lng: input.lng,
+        open_time: input.openTime,
+        close_time: input.closeTime,
+        is_24h: input.is24h,
+        phone: input.phone,
+        note: input.note,
+        updated_at: new Date(),
+      },
+    });
+    if (count === 0) return false;
     await replaceMachines(tx, id, input.machines);
     return true;
-  });
+  }, TX_OPTIONS);
 
   return updated ? await getArcade(id) : null;
 }
 
 export async function deleteArcade(id: number): Promise<boolean> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
   // arcade_machines 는 ON DELETE CASCADE 로 함께 정리된다.
-  const { rows } = await db.query<{ id: number }>(
-    `DELETE FROM arcades WHERE id = $1 RETURNING id`,
-    [id],
-  );
-  return rows.length > 0;
+  const { count } = await prisma.arcades.deleteMany({ where: { id } });
+  return count > 0;
 }
 
 async function listMachinesUncached(): Promise<Machine[]> {
-  const db = await getDb();
-  const { rows } = await db.query<{
-    id: number;
-    name: string;
-    short_name: string;
-    category: 'rhythm' | 'etc';
-  }>(
-    // 리듬게임 특화 서비스이므로 리듬 기종을 항상 앞에 둔다.
-    // 그 안의 순서는 sort_order — id 는 참조 키라서 순서 조정에 쓸 수 없다.
-    `SELECT id, name, short_name, category FROM machines
-     ORDER BY CASE category WHEN 'rhythm' THEN 0 ELSE 1 END, sort_order, id`,
-  );
+  const prisma = await getPrismaClient();
+  const rows = await prisma.machines.findMany({
+    orderBy: [{ sort_order: 'asc' }, { id: 'asc' }],
+    select: { id: true, name: true, short_name: true, category: true },
+  });
 
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    shortName: r.short_name,
-    category: r.category,
-  }));
+  // 리듬게임 특화 서비스이므로 리듬 기종을 항상 앞에 둔다. 그 안의 순서는 sort_order —
+  // id 는 참조 키라서 순서 조정에 쓸 수 없다. (정렬은 안정적이라 위 순서가 유지된다.)
+  const rank = (category: string) => (category === 'rhythm' ? 0 : 1);
+  return rows
+    .sort((a, b) => rank(a.category) - rank(b.category))
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      shortName: r.short_name,
+      category: r.category as Machine['category'],
+    }));
 }
 
 /**
@@ -406,6 +278,18 @@ export const listMachines = cacheReference(listMachinesUncached, 'machines');
 // ─── 보유 기종 추정 (AI) ─────────────────────────────────────
 
 /**
+ * 이 오락실을 **한 번이라도 검색해 봤는지**. 거르기 전의 날것을 셉니다.
+ *
+ * listMachineGuesses 로는 이 판단을 할 수 없습니다 — 찾은 것이 전부 이미 확정된
+ * 기종이면 빈 배열이 돌아오고, 그러면 "아직 안 해 봤다" 로 읽혀 같은 곳을
+ * 몇 번이고 다시 검색하게 됩니다. 검색은 요청마다 돈이 나갑니다.
+ */
+export async function countMachineGuesses(arcadeId: number): Promise<number> {
+  const prisma = await getPrismaClient();
+  return prisma.arcade_machine_guesses.count({ where: { arcade_id: arcadeId } });
+}
+
+/**
  * 이 오락실의 **추정** 기종. 확정(arcade_machines)과 섞지 않습니다.
  *
  * 목록 쿼리에 얹지 않고 따로 두는 이유: 추정은 상세를 열었을 때만 필요한데,
@@ -415,40 +299,30 @@ export const listMachines = cacheReference(listMachinesUncached, 'machines');
  * 이미 확정된 기종은 빼고 돌려줍니다 — 사람이 확인한 것을 "추정" 으로 다시
  * 물으면 화면이 스스로를 의심하는 꼴이 됩니다.
  */
-/**
- * 이 오락실을 **한 번이라도 검색해 봤는지**. 거르기 전의 날것을 셉니다.
- *
- * listMachineGuesses 로는 이 판단을 할 수 없습니다 — 찾은 것이 전부 이미 확정된
- * 기종이면 빈 배열이 돌아오고, 그러면 "아직 안 해 봤다" 로 읽혀 같은 곳을
- * 몇 번이고 다시 검색하게 됩니다. 검색은 요청마다 돈이 나갑니다.
- */
-export async function countMachineGuesses(arcadeId: number): Promise<number> {
-  const db = await getDb();
-  const { rows } = await db.query<{ n: number | string }>(
-    `SELECT count(*)::int AS n FROM arcade_machine_guesses WHERE arcade_id = $1::int`,
-    [arcadeId],
-  );
-  return Number(rows[0]?.n ?? 0);
-}
-
 export async function listMachineGuesses(arcadeId: number): Promise<MachineGuess[]> {
-  const db = await getDb();
-  const { rows } = await db.query<Record<string, unknown>>(
-    `SELECT g.machine_id, m.name, m.short_name, g.evidence
-       FROM arcade_machine_guesses g
-       JOIN machines m ON m.id = g.machine_id
-      WHERE g.arcade_id = $1::int
-        AND NOT EXISTS (
-              SELECT 1 FROM arcade_machines am
-               WHERE am.arcade_id = g.arcade_id AND am.machine_id = g.machine_id
-            )
-      ORDER BY m.id`,
-    [arcadeId],
-  );
-  return rows.map((r) => ({
-    machineId: Number(r.machine_id),
-    name: r.name as string,
-    shortName: (r.short_name as string | null) ?? null,
-    evidence: r.evidence as string,
-  }));
+  const prisma = await getPrismaClient();
+  const [guesses, confirmed] = await Promise.all([
+    prisma.arcade_machine_guesses.findMany({
+      where: { arcade_id: arcadeId },
+      orderBy: { machine_id: 'asc' },
+      select: {
+        machine_id: true,
+        evidence: true,
+        machines: { select: { name: true, short_name: true } },
+      },
+    }),
+    prisma.arcade_machines.findMany({
+      where: { arcade_id: arcadeId },
+      select: { machine_id: true },
+    }),
+  ]);
+  const confirmedIds = new Set(confirmed.map((c) => c.machine_id));
+  return guesses
+    .filter((g) => !confirmedIds.has(g.machine_id))
+    .map((g) => ({
+      machineId: g.machine_id,
+      name: g.machines.name,
+      shortName: g.machines.short_name ?? null,
+      evidence: g.evidence,
+    }));
 }

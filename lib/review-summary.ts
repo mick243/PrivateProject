@@ -1,7 +1,8 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { EMOTICON_TOKEN_RE } from './community-types';
-import { getDb } from './db';
 import { getEmoticonsByIds } from './emoticons';
+import type { Prisma } from './generated/prisma/client.ts';
+import { getPrismaClient, iso, num } from './prisma';
 import { listReviews } from './reviews';
 import {
   prepareReviewParts,
@@ -118,33 +119,31 @@ export type SummaryLookup =
  * 같아 여기서 못 잡지만, 그때는 lib/reviews.ts 가 줄을 지워 두므로 missing 이 됩니다.
  */
 export async function lookupReviewSummary(arcadeId: number): Promise<SummaryLookup> {
-  const db = await getDb();
-  const { rows } = await db.query<{
-    review_count: number | string;
-    rating_avg: number | string | null;
-    cached_count: number | string | null;
-    summary: ReviewSummary | null;
-    created_at: Date | string | null;
-  }>(
-    `SELECT a.review_count, a.rating_avg,
-            s.review_count AS cached_count, s.summary, s.created_at
-       FROM arcades a
-       LEFT JOIN arcade_review_summaries s ON s.arcade_id = a.id
-      WHERE a.id = $1::int`,
-    [arcadeId],
-  );
-  const r = rows[0];
+  const prisma = await getPrismaClient();
+  const r = await prisma.arcades.findUnique({
+    where: { id: arcadeId },
+    select: {
+      review_count: true,
+      rating_avg: true,
+      arcade_review_summaries: { select: { review_count: true, summary: true, created_at: true } },
+    },
+  });
   if (!r) return { kind: 'no-arcade' };
 
-  const reviewCount = Number(r.review_count);
-  const ratingAvg = r.rating_avg === null ? null : Number(r.rating_avg);
-  if (r.cached_count === null || !r.summary) return { kind: 'missing', reviewCount, ratingAvg };
-  if (Number(r.cached_count) !== reviewCount) return { kind: 'stale', reviewCount, ratingAvg };
+  const reviewCount = r.review_count;
+  const ratingAvg = num(r.rating_avg);
+  const cached = r.arcade_review_summaries;
+  if (!cached || !cached.summary) return { kind: 'missing', reviewCount, ratingAvg };
+  if (cached.review_count !== reviewCount) return { kind: 'stale', reviewCount, ratingAvg };
 
-  const createdAt = r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at);
   return {
     kind: 'ready',
-    view: { summary: r.summary, reviewCount: Number(r.cached_count), ratingAvg, createdAt },
+    view: {
+      summary: cached.summary as unknown as ReviewSummary,
+      reviewCount: cached.review_count,
+      ratingAvg,
+      createdAt: iso(cached.created_at),
+    },
   };
 }
 
@@ -249,21 +248,22 @@ export async function buildReviewSummary(arcadeId: number): Promise<ReviewSummar
     REVIEW_SUMMARY_KEYS.map(({ key }) => [key, tidy(parsed[key])]),
   ) as unknown as ReviewSummary;
 
-  const db = await getDb();
-  const { rows } = await db.query<{ created_at: Date | string; rating_avg: number | string | null }>(
-    `INSERT INTO arcade_review_summaries (arcade_id, review_count, summary, model)
-     VALUES ($1, $2, $3::jsonb, $4)
-     ON CONFLICT (arcade_id)
-       DO UPDATE SET review_count = EXCLUDED.review_count, summary = EXCLUDED.summary,
-                     model = EXCLUDED.model, created_at = now()
-     RETURNING created_at, (SELECT rating_avg FROM arcades WHERE id = $1) AS rating_avg`,
-    [arcadeId, reviews.length, JSON.stringify(summary), MODEL],
-  );
-  const row = rows[0];
+  const prisma = await getPrismaClient();
+  const summaryJson = summary as unknown as Prisma.InputJsonValue;
+  // 저장(UPSERT)과 평점 읽기를 한 트랜잭션 묶음으로 — 옛 SQL 은 RETURNING 안의 서브쿼리 하나였습니다.
+  const [saved, arcade] = await prisma.$transaction([
+    prisma.arcade_review_summaries.upsert({
+      where: { arcade_id: arcadeId },
+      create: { arcade_id: arcadeId, review_count: reviews.length, summary: summaryJson, model: MODEL },
+      update: { review_count: reviews.length, summary: summaryJson, model: MODEL, created_at: new Date() },
+      select: { created_at: true },
+    }),
+    prisma.arcades.findUnique({ where: { id: arcadeId }, select: { rating_avg: true } }),
+  ]);
   return {
     summary,
     reviewCount: reviews.length,
-    ratingAvg: row.rating_avg === null ? null : Number(row.rating_avg),
-    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    ratingAvg: num(arcade?.rating_avg ?? null),
+    createdAt: iso(saved.created_at),
   };
 }

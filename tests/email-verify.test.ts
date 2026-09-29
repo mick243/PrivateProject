@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * 이메일 인증 — **링크 한 장이 무엇을 보증하는가**.
  *
- * 확인하려는 것은 SQL 이 아니라 판정입니다. 그래서 DB 는 대역으로 세우고,
+ * 확인하려는 것은 쿼리가 아니라 판정입니다. 그래서 DB 는 대역으로 세우고,
  * 라우트가 받는 답(ok / expired / used / changed / invalid)이 상황마다 맞게
  * 나오는지만 봅니다.
  *
@@ -27,88 +27,74 @@ interface Row {
 const db = {
   player: { email: null as string | null, email_verified_at: null as Date | null },
   rows: [] as Row[],
-  /** 실제로 실행된 SQL — "원문을 넣지 않았는가" 를 여기서 봅니다 */
-  params: [] as unknown[][],
+  /** DB 로 나간 쓰기 값 전부 — "원문을 넣지 않았는가" 를 여기서 봅니다 */
+  writes: [] as unknown[],
 };
 
-function fakeQuery(sql: string, params: unknown[] = []) {
-  db.params.push(params);
-
-  if (sql.includes('SELECT email, email_verified_at FROM players')) {
-    return { rows: [{ ...db.player }] };
-  }
-  if (sql.includes('max(created_at)')) {
-    const mine = db.rows.filter((r) => r.player_id === params[0]);
-    const last = mine.reduce<Date | null>(
-      (acc, r) => (acc === null || r.created_at > acc ? r.created_at : acc),
-      null,
-    );
-    const hourAgo = Date.now() - 60 * 60 * 1000;
-    return {
-      rows: [
-        {
-          last_at: last,
-          hour_count: String(mine.filter((r) => r.created_at.getTime() > hourAgo).length),
-        },
-      ],
-    };
-  }
-  if (sql.startsWith('DELETE FROM email_verifications')) {
-    db.rows = db.rows.filter((r) => !(r.player_id === params[0] && r.used_at === null));
-    return { rows: [] };
-  }
-  if (sql.includes('INSERT INTO email_verifications')) {
-    db.rows.push({
-      token_hash: params[0] as string,
-      player_id: params[1] as number,
-      email: params[2] as string,
-      expires_at: params[3] as Date,
-      used_at: null,
-      created_at: new Date(),
-    });
-    return { rows: [] };
-  }
-  if (sql.includes('FROM email_verifications v')) {
-    const row = db.rows.find((r) => r.token_hash === params[0]);
-    return {
-      rows: row
-        ? [
-            {
-              player_id: row.player_id,
-              email: row.email,
-              expires_at: row.expires_at,
-              used_at: row.used_at,
-              current_email: db.player.email,
-              verified_at: db.player.email_verified_at,
-            },
-          ]
-        : [],
-    };
-  }
-  if (sql.includes('UPDATE players SET email_verified_at')) {
-    db.player.email_verified_at ??= new Date();
-    return { rows: [] };
-  }
-  if (sql.includes('UPDATE email_verifications SET used_at')) {
-    const row = db.rows.find((r) => r.token_hash === params[0]);
-    if (row) row.used_at = new Date();
-    return { rows: [] };
-  }
-  return { rows: [] };
-}
-
-/** getDb() 가 돌려주는 것 중 이 파일이 쓰는 두 가지만 */
-interface FakeDb {
-  query: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
-  transaction: <T>(fn: (tx: FakeDb) => Promise<T>) => Promise<T>;
-}
-
-const fakeDb: FakeDb = {
-  query: async (sql, params) => fakeQuery(sql, params) as { rows: Record<string, unknown>[] },
-  transaction: async (fn) => fn(fakeDb),
+/**
+ * Prisma 대역. lib/email-verify.ts 가 부르는 메서드만, 그 인자 모양 그대로 받습니다.
+ * SQL 문자열을 파싱하던 옛 대역보다 좁습니다 — 모듈이 다른 메서드를 부르면 여기서 터집니다.
+ */
+const fakeTables = {
+  players: {
+    findUnique: async () => ({ ...db.player }),
+    update: async ({ data }: { data: { email_verified_at: Date } }) => {
+      db.writes.push(data);
+      db.player.email_verified_at ??= data.email_verified_at;
+      return {};
+    },
+  },
+  email_verifications: {
+    aggregate: async ({ where }: { where: { player_id: number } }) => {
+      const mine = db.rows.filter((r) => r.player_id === where.player_id);
+      const last = mine.reduce<Date | null>(
+        (acc, r) => (acc === null || r.created_at > acc ? r.created_at : acc),
+        null,
+      );
+      return { _max: { created_at: last } };
+    },
+    count: async ({ where }: { where: { player_id: number; created_at: { gt: Date } } }) =>
+      db.rows.filter((r) => r.player_id === where.player_id && r.created_at > where.created_at.gt)
+        .length,
+    deleteMany: async ({ where }: { where: { player_id: number; used_at: null } }) => {
+      const before = db.rows.length;
+      db.rows = db.rows.filter((r) => !(r.player_id === where.player_id && r.used_at === null));
+      return { count: before - db.rows.length };
+    },
+    create: async ({ data }: { data: Omit<Row, 'used_at' | 'created_at'> }) => {
+      db.writes.push(data);
+      db.rows.push({ ...data, used_at: null, created_at: new Date() });
+      return {};
+    },
+    findUnique: async ({ where }: { where: { token_hash: string } }) => {
+      const row = db.rows.find((r) => r.token_hash === where.token_hash);
+      if (!row) return null;
+      return {
+        player_id: row.player_id,
+        email: row.email,
+        expires_at: row.expires_at,
+        used_at: row.used_at,
+        players: { email: db.player.email, email_verified_at: db.player.email_verified_at },
+      };
+    },
+    update: async ({ where, data }: { where: { token_hash: string }; data: { used_at: Date } }) => {
+      const row = db.rows.find((r) => r.token_hash === where.token_hash);
+      if (row) row.used_at = data.used_at;
+      return {};
+    },
+  },
 };
 
-vi.mock('@/lib/db', () => ({ getDb: async () => fakeDb }));
+/** 트랜잭션 콜백에는 표 대역만 넘깁니다 — 모듈이 tx 로 부르는 것도 표 메서드뿐입니다 */
+const fakePrisma = {
+  ...fakeTables,
+  $transaction: async <T,>(fn: (tx: typeof fakeTables) => Promise<T>) => fn(fakeTables),
+};
+
+vi.mock('@/lib/prisma', () => ({
+  getPrismaClient: async () => fakePrisma,
+  TX_OPTIONS: {},
+}));
 
 const sent: { to: string; text: string }[] = [];
 vi.mock('@/lib/mailer', () => ({
@@ -126,7 +112,7 @@ const { consumeVerification, issueVerification, sendVerificationMail } = await i
 beforeEach(() => {
   db.player = { email: 'pumlin@example.com', email_verified_at: null };
   db.rows = [];
-  db.params = [];
+  db.writes = [];
   sent.length = 0;
 });
 
@@ -140,8 +126,7 @@ async function issue(): Promise<string> {
 describe('issueVerification — 토큰 발급', () => {
   it('원문을 DB 에 넣지 않는다 — 표가 새도 그 값으로 인증할 수 없어야 한다', async () => {
     const token = await issue();
-    const flat = db.params.flat().map(String);
-    expect(flat).not.toContain(token);
+    expect(JSON.stringify(db.writes)).not.toContain(token);
     // 대신 해시가 들어가 있다 (sha256 = 64자 hex)
     expect(db.rows[0].token_hash).toMatch(/^[0-9a-f]{64}$/);
     expect(db.rows[0].token_hash).not.toBe(token);
@@ -208,6 +193,15 @@ describe('consumeVerification — 링크를 열었을 때', () => {
     db.player.email = 'somewhere-else@example.com';
     expect(await consumeVerification(token)).toBe('changed');
     expect(db.player.email_verified_at).toBeNull();
+  });
+
+  it('이미 확인된 계정이 같은 링크를 다시 열어도 도장 시각은 그대로다 (COALESCE)', async () => {
+    const token = await issue();
+    const stamped = new Date('2026-01-01T00:00:00Z');
+    db.player.email_verified_at = stamped;
+    // 토큰은 미사용이고 주소도 같으니 ok — 다만 기존 도장을 덮지 않는다
+    expect(await consumeVerification(token)).toBe('ok');
+    expect(db.player.email_verified_at).toBe(stamped);
   });
 });
 

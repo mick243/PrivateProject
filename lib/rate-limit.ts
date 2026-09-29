@@ -1,4 +1,5 @@
-import { getDb } from './db';
+import { consumeRateCounter } from './typed-sql';
+import { getPrismaClient } from './prisma';
 
 /**
  * 고정 창 사용량 제한 (`rate_counters`, migrate-054).
@@ -19,7 +20,9 @@ import { getDb } from './db';
  *
  * ─── 원자성 ───
  * 한 문장 UPSERT 로 "창이 지났으면 1 로, 아니면 +1" 을 합니다. 읽고-더하고-쓰기로
- * 나누면 같은 순간의 두 요청이 서로의 증가를 덮어씁니다.
+ * 나누면 같은 순간의 두 요청이 서로의 증가를 덮어씁니다. Prisma Client 의 upsert 는
+ * 이 조건부 갱신을 표현하지 못해 SQL 한 문장을 TypedSQL 로 둡니다
+ * (prisma/sql/consumeRateCounter.sql).
  */
 
 export interface RateLimitResult {
@@ -39,21 +42,8 @@ export interface RateLimitResult {
  * 멈춰 다음 요청이 통과합니다.
  */
 export async function consume(key: string, limit: number, windowMs: number): Promise<RateLimitResult> {
-  const db = await getDb();
-  const { rows } = await db.query<{ count: number | string; window_start: string | Date }>(
-    `INSERT INTO rate_counters (key, window_start, count)
-     VALUES ($1, now(), 1)
-     ON CONFLICT (key) DO UPDATE
-        SET count = CASE WHEN rate_counters.window_start + make_interval(secs => $2::double precision) > now()
-                         THEN rate_counters.count + 1
-                         ELSE 1 END,
-            window_start = CASE WHEN rate_counters.window_start + make_interval(secs => $2::double precision) > now()
-                                THEN rate_counters.window_start
-                                ELSE now() END
-     RETURNING count, window_start`,
-    [key, windowMs / 1000],
-  );
-  const row = rows[0];
+  const prisma = await getPrismaClient();
+  const [row] = await prisma.$queryRawTyped(consumeRateCounter(key, windowMs / 1000));
   const count = Number(row?.count ?? 1);
   const startedAt = row ? new Date(row.window_start).getTime() : Date.now();
   const allowed = count <= limit;
@@ -61,7 +51,9 @@ export async function consume(key: string, limit: number, windowMs: number): Pro
 
   // 낡은 줄은 쓰는 김에 치웁니다 (login_failures 와 같은 방식). 넉넉히 하루 지난 것만.
   if (count === 1) {
-    await db.query(`DELETE FROM rate_counters WHERE window_start < now() - interval '1 day'`).catch(() => {});
+    await prisma.rate_counters
+      .deleteMany({ where: { window_start: { lt: new Date(Date.now() - DAY_MS) } } })
+      .catch(() => {});
   }
 
   return { allowed, count, limit, retryAfterMs };

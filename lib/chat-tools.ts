@@ -9,7 +9,7 @@
  * 반환값은 모델이 읽을 요약 JSON 입니다. 전체 레코드를 그대로 실으면 한 번
  * 검색에 수십 KB 가 들어가 대화가 금방 컨텍스트를 넘깁니다.
  *
- * ⚠ 서버 전용입니다 (getDb → fs). 클라이언트에서 import 하지 마세요.
+ * ⚠ 서버 전용입니다 (getPrismaClient → pg). 클라이언트에서 import 하지 마세요.
  */
 
 import { listArcades, listMachines } from './arcades';

@@ -3,7 +3,7 @@ import { EMOTICON_TOKEN_RE } from './community-types';
 /**
  * 리뷰 AI 요약 — **클라이언트에서도 import 합니다** (*-types.ts 규칙).
  *
- * lib/review-summary.ts 는 getDb 와 @google/genai 를 끌고 오므로 컴포넌트에서
+ * lib/review-summary.ts 는 getPrismaClient 와 @google/genai 를 끌고 오므로 컴포넌트에서
  * 못 씁니다. 화면과 서버가 함께 봐야 하는 모양, 그리고 **입출력이 없는 순수
  * 함수**(prepareReviewParts)만 여기 둡니다 — 순수라야 테스트가 모델 없이 돕니다.
  */

@@ -1,0 +1,12 @@
+-- 채보 캐시 컬럼(avg_vote · convergence · tier_code · special_count) 재계산.
+-- DB 함수(db/schema-tier.sql · migrate-035 · 041)를 부르는 것뿐입니다 — 집계 규칙은 DB 안에 있습니다.
+--
+-- ⚠ 함수를 결과 컬럼에 그대로 두지 마세요 (`SELECT recalc_chart_stats($1) AS done`).
+--   함수가 void 를 돌려주는데 Prisma 드라이버 어댑터는 void 컬럼을 읽지 못해
+--   "Failed to deserialize column of type 'void'" 로 던집니다 — 투표·클리어·특수패턴 저장이
+--   전부 500 이 됐습니다 (2026-09-28 목표 규모 DB 실측으로 발견. 타입 생성은 통과해서
+--   `done: string | null` 로 보였고, 단위 테스트는 DB 를 대역으로 세워 못 봤습니다).
+--   FROM 의 서브쿼리로 부르고 boolean 을 돌려줍니다. 휘발성(VOLATILE) 함수는 PostgreSQL 이
+--   안 쓰는 출력이어도 지우지 않으므로 한 번씩 반드시 실행됩니다.
+-- @param {Int} $1:chartId
+SELECT true AS done FROM (SELECT recalc_chart_stats($1::int)) AS recalc;

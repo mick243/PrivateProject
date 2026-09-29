@@ -1,7 +1,7 @@
 /**
  * 챗봇의 공용 타입과 **의도 판별** 규칙.
  *
- * 서버 모듈(lib/chat-tools.ts)은 getDb → fs 를 끌고 오므로 클라이언트에서
+ * 서버 모듈(lib/chat-tools.ts)은 getPrismaClient → pg 를 끌고 오므로 클라이언트에서
  * import 할 수 없습니다. 화면과 API 가 같은 말을 쓰도록 순수 값만 모읍니다
  * (lib/community-types.ts 와 같은 규칙).
  */

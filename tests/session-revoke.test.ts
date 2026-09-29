@@ -23,19 +23,29 @@ type Row = { nickname: string; is_admin: boolean; token_epoch: number };
 
 const players = new Map<number, Row>();
 
-/** SQL 을 파싱하지 않고, 이 파일이 쓰는 세 가지 모양만 알아봅니다 */
-vi.mock('@/lib/db', () => ({
-  getDb: async () => ({
-    query: async (sql: string, params: unknown[] = []) => {
-      const row = players.get(Number(params[0]));
-      if (sql.includes('token_epoch = token_epoch + 1')) {
-        if (row) row.token_epoch += 1;
-        return { rows: [] };
-      }
-      if (sql.includes('SELECT nickname, is_admin, token_epoch')) {
-        return { rows: row ? [{ ...row }] : [] };
-      }
-      return { rows: [] };
+/**
+ * Prisma 대역 — 이 파일이 쓰는 두 모양만 알아봅니다.
+ *   players.findUnique   세션 판정이 읽는 한 줄 (lib/auth.ts playerRow)
+ *   players.updateMany   회수·비밀번호 변경이 세대 번호를 올리는 자리 (`token_epoch: { increment }`)
+ */
+vi.mock('@/lib/prisma', () => ({
+  getPrismaClient: async () => ({
+    players: {
+      findUnique: async ({ where }: { where: { id: number } }) => {
+        const row = players.get(where.id);
+        return row ? { ...row } : null;
+      },
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id: number };
+        data: { token_epoch?: { increment: number } };
+      }) => {
+        const row = players.get(where.id);
+        if (row && data.token_epoch?.increment) row.token_epoch += data.token_epoch.increment;
+        return { count: row ? 1 : 0 };
+      },
     },
   }),
 }));

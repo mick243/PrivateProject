@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { getDb } from './db';
 import { isMailConfigured, sendMail } from './mailer';
+import { getPrismaClient, TX_OPTIONS } from './prisma';
 
 /**
  * 이메일 인증 — 적어 낸 주소의 주인이 맞는지 확인합니다.
@@ -51,16 +51,16 @@ export async function issueVerification(
   playerId: number,
   options: { skipThrottle?: boolean } = {},
 ): Promise<IssueResult> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
 
-  const { rows } = await db.query<{ email: string | null; email_verified_at: Date | null }>(
-    `SELECT email, email_verified_at FROM players WHERE id = $1`,
-    [playerId],
-  );
-  const player = rows[0];
+  const player = await prisma.players.findUnique({
+    where: { id: playerId },
+    select: { email: true, email_verified_at: true },
+  });
   if (!player) return { ok: false, reason: 'gone' };
   if (!player.email) return { ok: false, reason: 'no-email' };
   if (player.email_verified_at) return { ok: false, reason: 'already-verified' };
+  const email = player.email;
 
   if (!options.skipThrottle) {
     const throttled = await throttleCheck(playerId);
@@ -69,48 +69,49 @@ export async function issueVerification(
 
   const token = randomBytes(32).toString('base64url');
 
-  await db.transaction(async (tx) => {
-    await tx.query(
-      `DELETE FROM email_verifications WHERE player_id = $1 AND used_at IS NULL`,
-      [playerId],
-    );
-    await tx.query(
-      `INSERT INTO email_verifications (token_hash, player_id, email, expires_at)
-       VALUES ($1, $2, $3, $4)`,
-      [hash(token), playerId, player.email, new Date(Date.now() + TTL_MS)],
-    );
-  });
+  await prisma.$transaction(async (tx) => {
+    await tx.email_verifications.deleteMany({ where: { player_id: playerId, used_at: null } });
+    await tx.email_verifications.create({
+      data: {
+        token_hash: hash(token),
+        player_id: playerId,
+        email,
+        expires_at: new Date(Date.now() + TTL_MS),
+      },
+    });
+  }, TX_OPTIONS);
 
-  return { ok: true, token, email: player.email };
+  return { ok: true, token, email };
 }
 
 /**
  * 너무 잦은 재발송인가.
  *
  * 표를 따로 두지 않고 발급 이력을 그대로 셉니다 — 프로세스 메모리에 두면
- * 재시작으로 풀리고 서버가 여러 대면 대수만큼 여유가 생깁니다(lib/auth.ts 의
- * 로그인 시도 제한이 지금 그 상태입니다). 여기서는 어차피 DB 에 쓰는 김에
- * 같은 자리에서 셉니다.
+ * 재시작으로 풀리고 서버가 여러 대면 대수만큼 여유가 생깁니다. 여기서는 어차피
+ * DB 에 쓰는 김에 같은 자리에서 셉니다.
  */
 async function throttleCheck(
   playerId: number,
 ): Promise<{ ok: false; reason: 'too-soon'; retryAfterS: number } | null> {
-  const db = await getDb();
-  const { rows } = await db.query<{ last_at: Date | null; hour_count: string }>(
-    `SELECT max(created_at) AS last_at,
-            count(*) FILTER (WHERE created_at > now() - interval '1 hour') AS hour_count
-       FROM email_verifications
-      WHERE player_id = $1`,
-    [playerId],
-  );
+  const prisma = await getPrismaClient();
+  const [latest, hourCount] = await Promise.all([
+    prisma.email_verifications.aggregate({
+      where: { player_id: playerId },
+      _max: { created_at: true },
+    }),
+    prisma.email_verifications.count({
+      where: { player_id: playerId, created_at: { gt: new Date(Date.now() - 60 * 60 * 1000) } },
+    }),
+  ]);
 
-  const lastAt = rows[0]?.last_at ? new Date(rows[0].last_at).getTime() : 0;
+  const lastAt = latest._max.created_at ? latest._max.created_at.getTime() : 0;
   const sinceLast = Date.now() - lastAt;
   if (lastAt && sinceLast < RESEND_GAP_MS) {
     return { ok: false, reason: 'too-soon', retryAfterS: Math.ceil((RESEND_GAP_MS - sinceLast) / 1000) };
   }
 
-  if (Number(rows[0]?.hour_count ?? 0) >= RESEND_MAX_PER_HOUR) {
+  if (hourCount >= RESEND_MAX_PER_HOUR) {
     // 시간 제한에 걸리면 남은 시간을 정확히 세지 않고 한 시간을 부릅니다 —
     // 정확히 알려 줘 봐야 그 시각에 맞춰 다시 두드리는 데만 쓰입니다.
     return { ok: false, reason: 'too-soon', retryAfterS: 60 * 60 };
@@ -138,57 +139,54 @@ export type ConsumeResult =
  * 보통이고, 링크를 여는 사람이 그 메일함의 주인이라는 것 자체가 증명입니다.
  */
 export async function consumeVerification(token: string): Promise<ConsumeResult> {
-  const db = await getDb();
+  const prisma = await getPrismaClient();
+  const tokenHash = hash(token);
 
-  return db.transaction(async (tx) => {
-    const { rows } = await tx.query<{
-      player_id: number;
-      email: string;
-      expires_at: Date;
-      used_at: Date | null;
-      current_email: string | null;
-      verified_at: Date | null;
-    }>(
-      `SELECT v.player_id, v.email, v.expires_at, v.used_at,
-              p.email AS current_email, p.email_verified_at AS verified_at
-         FROM email_verifications v
-         JOIN players p ON p.id = v.player_id
-        WHERE v.token_hash = $1`,
-      [hash(token)],
-    );
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.email_verifications.findUnique({
+      where: { token_hash: tokenHash },
+      select: {
+        player_id: true,
+        email: true,
+        expires_at: true,
+        used_at: true,
+        players: { select: { email: true, email_verified_at: true } },
+      },
+    });
 
-    const row = rows[0];
     if (!row) return 'invalid';
     if (row.used_at) return 'used';
-    if (new Date(row.expires_at).getTime() <= Date.now()) return 'expired';
+    if (row.expires_at.getTime() <= Date.now()) return 'expired';
     // 보낸 시점의 주소와 지금 주소가 다르면, 이 링크가 보증하는 것은 지금 주소가
     // 아닙니다. 대소문자는 저장 단계에서 이미 맞춰져 있습니다(emailField).
-    if (row.current_email !== row.email) return 'changed';
+    if (row.players.email !== row.email) return 'changed';
 
-    await tx.query(
-      `UPDATE players SET email_verified_at = COALESCE(email_verified_at, now())
-        WHERE id = $1`,
-      [row.player_id],
-    );
-    await tx.query(
-      `UPDATE email_verifications SET used_at = now() WHERE token_hash = $1`,
-      [hash(token)],
-    );
+    // COALESCE(email_verified_at, now()) — 이미 찍힌 도장은 그대로 둡니다.
+    if (row.players.email_verified_at === null) {
+      await tx.players.update({
+        where: { id: row.player_id },
+        data: { email_verified_at: new Date() },
+      });
+    }
+    await tx.email_verifications.update({
+      where: { token_hash: tokenHash },
+      data: { used_at: new Date() },
+    });
     return 'ok';
-  });
+  }, TX_OPTIONS);
 }
 
 /** 지금 확인된 계정인가 — 화면이 배너를 그릴지 정하는 근거 */
 export async function verificationStatus(
   playerId: number,
 ): Promise<{ email: string | null; verified: boolean } | null> {
-  const db = await getDb();
-  const { rows } = await db.query<{ email: string | null; email_verified_at: Date | null }>(
-    `SELECT email, email_verified_at FROM players WHERE id = $1`,
-    [playerId],
-  );
-  if (!rows[0]) return null;
-  return { email: rows[0].email, verified: rows[0].email_verified_at !== null };
+  const prisma = await getPrismaClient();
+  const row = await prisma.players.findUnique({
+    where: { id: playerId },
+    select: { email: true, email_verified_at: true },
+  });
+  if (!row) return null;
+  return { email: row.email, verified: row.email_verified_at !== null };
 }
 
 // ─── 메일 한 통 ──────────────────────────────────────────────

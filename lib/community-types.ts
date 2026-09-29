@@ -1,7 +1,7 @@
 /**
  * 제보 / 리뷰 / 채보 평가의 공용 타입과 라벨 규칙.
  *
- * lib/reports.ts 같은 서버 모듈은 getDb() → fs 를 끌고 오므로 클라이언트에서
+ * lib/reports.ts 같은 서버 모듈은 getPrismaClient() → pg 를 끌고 오므로 클라이언트에서
  * import 할 수 없습니다. 서버·클라이언트가 같은 문구와 같은 구간을 쓰도록
  * 순수 값만 이 파일에 모읍니다 (lib/types.ts · lib/tier-types.ts 와 같은 규칙).
  */

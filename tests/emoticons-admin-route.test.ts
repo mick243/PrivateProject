@@ -13,9 +13,11 @@ import { createSessionToken } from '@/lib/auth';
 const calls: { fn: string; args: unknown[] }[] = [];
 let isAdmin = false;
 
-vi.mock('@/lib/db', () => ({
-  getDb: async () => ({
-    query: async () => ({ rows: [{ nickname: '테스터', is_admin: isAdmin, token_epoch: 0 }] }),
+vi.mock('@/lib/prisma', () => ({
+  getPrismaClient: async () => ({
+    players: {
+      findUnique: async () => ({ nickname: '테스터', is_admin: isAdmin, token_epoch: 0 }),
+    },
   }),
 }));
 

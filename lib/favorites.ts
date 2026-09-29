@@ -1,4 +1,4 @@
-import { getDb } from './db';
+import { getPrismaClient } from './prisma';
 
 /**
  * 즐겨찾기 — "내가 담아 둔 오락실".
@@ -12,40 +12,35 @@ import { getDb } from './db';
  */
 
 export async function listFavoriteIds(playerId: number): Promise<number[]> {
-  const db = await getDb();
-  const { rows } = await db.query<{ arcade_id: number }>(
-    `SELECT arcade_id FROM arcade_favorites
-     WHERE player_id = $1
-     ORDER BY created_at DESC, arcade_id DESC`,
-    [playerId],
-  );
-  return rows.map((r) => Number(r.arcade_id));
+  const prisma = await getPrismaClient();
+  const rows = await prisma.arcade_favorites.findMany({
+    where: { player_id: playerId },
+    orderBy: [{ created_at: 'desc' }, { arcade_id: 'desc' }],
+    select: { arcade_id: true },
+  });
+  return rows.map((r) => r.arcade_id);
 }
 
 /**
  * 담기. 이미 담아 둔 곳이면 아무 일도 하지 않습니다 — 별을 두 번 눌러
- * 에러를 보게 할 이유가 없습니다.
+ * 에러를 보게 할 이유가 없습니다 (`skipDuplicates` = ON CONFLICT DO NOTHING).
  *
- * 없는 오락실·없는 플레이어면 FK 위반(23503)이 그대로 올라갑니다.
+ * 없는 오락실·없는 플레이어면 FK 위반이 그대로 올라갑니다.
  * 라우트가 그걸 404 로 바꿉니다 (lib/pg-errors.ts).
  */
 export async function addFavorite(playerId: number, arcadeId: number): Promise<void> {
-  const db = await getDb();
-  await db.query(
-    `INSERT INTO arcade_favorites (player_id, arcade_id) VALUES ($1, $2)
-     ON CONFLICT (player_id, arcade_id) DO NOTHING`,
-    [playerId, arcadeId],
-  );
+  const prisma = await getPrismaClient();
+  await prisma.arcade_favorites.createMany({
+    data: [{ player_id: playerId, arcade_id: arcadeId }],
+    skipDuplicates: true,
+  });
 }
 
 /** 빼기. 담아 두지 않았던 곳이면 false — 라우트는 그래도 성공으로 답합니다 */
 export async function removeFavorite(playerId: number, arcadeId: number): Promise<boolean> {
-  const db = await getDb();
-  const { rows } = await db.query<{ arcade_id: number }>(
-    `DELETE FROM arcade_favorites
-     WHERE player_id = $1 AND arcade_id = $2
-     RETURNING arcade_id`,
-    [playerId, arcadeId],
-  );
-  return rows.length > 0;
+  const prisma = await getPrismaClient();
+  const { count } = await prisma.arcade_favorites.deleteMany({
+    where: { player_id: playerId, arcade_id: arcadeId },
+  });
+  return count > 0;
 }

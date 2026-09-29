@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { getDb, getDbStatus } from '@/lib/db';
+import { ping } from '@/lib/typed-sql';
+import { getPrismaClient } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -7,47 +8,38 @@ export const dynamic = 'force-dynamic';
 /**
  * GET /api/health — 외부 모니터링(Pulse 등)이 주기적으로 찌르는 상태 점검.
  *
- * 단순히 "살아 있다"가 아니라 **어느 DB 로 돌고 있는지**를 드러내는 것이 핵심이다.
- * lib/db.ts 는 PostgreSQL 에 못 붙으면 PGlite 사본으로 조용히 내려가는데, 그동안 쓴
- * 글·제보는 PostgreSQL 에 반영되지 않는다. 화면은 멀쩡하므로 서버 로그 말고는 알 길이
- * 없다 — 여기서 `checks.db_primary` 로 내보내 모니터링 룰이 잡게 한다.
- *
  * 응답 코드
- *   200 healthy    DB 응답 정상, 의도한 엔진으로 동작 (DATABASE_URL 없는 개발 기본값의 PGlite 포함)
- *   503 degraded   DB 응답은 되지만 PostgreSQL → PGlite 폴백 중. **트래픽을 받으면 안 된다** —
- *                  이 인스턴스가 쓰는 글·제보는 정본에 남지 않는다. 예전에는 "화면은
- *                  되니까" 200 이었는데, 그러면 클러스터 프록시(scripts/start-cluster.mjs)가
- *                  200 만 보고 사본에 쓰는 인스턴스로 요청을 계속 보낸다 (2026-09-13 QA)
+ *   200 healthy    DB 응답 정상
  *   503 unhealthy  DB 조회 실패 — 로드밸런서·프로브가 내리도록
  *
- * `checks` 의 값은 'ok' | 'fail' 만 쓴다. Pulse 프로브가 항목마다 `check.<이름>` 지표(1/0)로
- * 편입하는 규약이라, 여기 항목을 하나 늘리면 대시보드에 차트가 하나 늘어난다.
+ * 예전에는 `degraded`(PostgreSQL → PGlite 폴백 중)가 있었습니다. 앱이 Prisma 로 옮겨
+ * 폴백 자체가 없어졌으므로(lib/prisma.ts) 그 상태도 없습니다 — DB 에 못 붙으면 그냥
+ * unhealthy 입니다. `checks.db_primary` 키는 모니터링 룰이 보는 이름이라 남겨 두고,
+ * 이제 `db` 와 같은 값입니다.
+ *
+ * `checks` 의 값은 'ok' | 'fail' 만 씁니다. Pulse 프로브가 항목마다 `check.<이름>` 지표(1/0)로
+ * 편입하는 규약이라, 여기 항목을 하나 늘리면 대시보드에 차트가 하나 늘어납니다.
  */
 export async function GET() {
   const startedAt = Date.now();
   const checks: Record<'db' | 'db_primary', 'ok' | 'fail'> = { db: 'fail', db_primary: 'fail' };
 
   try {
-    const db = await getDb();
-    await db.query('SELECT 1');
+    const prisma = await getPrismaClient();
+    await prisma.$queryRawTyped(ping());
     checks.db = 'ok';
+    checks.db_primary = 'ok';
   } catch (err) {
     console.error('[health] DB 조회 실패 —', err instanceof Error ? err.message : err);
   }
 
-  // 폴백은 "내려온 이유" 가 있을 때만이다. DATABASE_URL 없이 PGlite 로 도는 개발 기본값은 정상.
-  const status = getDbStatus();
-  const onFallback = Boolean(status.fallbackReason);
-  checks.db_primary = checks.db === 'ok' && !onFallback ? 'ok' : 'fail';
-
-  const overall = checks.db !== 'ok' ? 'unhealthy' : onFallback ? 'degraded' : 'healthy';
+  const overall = checks.db === 'ok' ? 'healthy' : 'unhealthy';
 
   return NextResponse.json(
     {
       status: overall,
       checks,
-      // 사유(fallbackReason)는 DB 호스트·포트가 섞여 있어 공개 응답에 싣지 않는다 — 서버 로그에 있다.
-      db: { driver: status.driver, fallback: onFallback, ...(status.fallbackAt ? { fallbackAt: status.fallbackAt } : {}) },
+      db: { driver: 'postgres', client: 'prisma', fallback: false },
       version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? process.env.APP_VERSION ?? 'dev',
       uptime_s: Math.floor(process.uptime()),
       latency_ms: Date.now() - startedAt,

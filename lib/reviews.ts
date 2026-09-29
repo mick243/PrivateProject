@@ -1,5 +1,6 @@
-import { getDb } from './db';
 import type { ArcadeReview } from './community-types';
+import { recalcArcadeRating } from './typed-sql';
+import { getPrismaClient, iso } from './prisma';
 
 /**
  * 오락실 리뷰 / 평점.
@@ -9,42 +10,49 @@ import type { ArcadeReview } from './community-types';
  * 결국 애플리케이션에서 같은 제약을 다시 구현해야 합니다.
  */
 
-function iso(v: unknown): string {
-  return v instanceof Date ? v.toISOString() : String(v);
-}
+const reviewInclude = { players: { select: { nickname: true } } } as const;
 
-function toReview(r: Record<string, unknown>): ArcadeReview {
+type ReviewRow = {
+  id: number;
+  arcade_id: number;
+  player_id: number;
+  rating: number;
+  body: string | null;
+  created_at: Date;
+  updated_at: Date;
+  players: { nickname: string };
+};
+
+function toReview(r: ReviewRow): ArcadeReview {
   return {
-    id: Number(r.id),
-    arcadeId: Number(r.arcade_id),
-    playerId: Number(r.player_id),
-    nickname: r.nickname as string,
-    rating: Number(r.rating),
-    body: (r.body as string) ?? null,
+    id: r.id,
+    arcadeId: r.arcade_id,
+    playerId: r.player_id,
+    nickname: r.players.nickname,
+    rating: r.rating,
+    body: r.body ?? null,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
   };
 }
 
-const REVIEW_SELECT = `
-  SELECT r.id, r.arcade_id, r.player_id, r.rating, r.body, r.created_at, r.updated_at,
-         p.nickname
-  FROM arcade_reviews r
-  JOIN players p ON p.id = r.player_id`;
-
 export async function listReviews(arcadeId: number): Promise<ArcadeReview[]> {
-  const db = await getDb();
-  const { rows } = await db.query<Record<string, unknown>>(
-    `${REVIEW_SELECT} WHERE r.arcade_id = $1 ORDER BY r.created_at DESC`,
-    [arcadeId],
-  );
+  const prisma = await getPrismaClient();
+  const rows = await prisma.arcade_reviews.findMany({
+    where: { arcade_id: arcadeId },
+    orderBy: { created_at: 'desc' },
+    include: reviewInclude,
+  });
   return rows.map(toReview);
 }
 
-/** 평점 캐시(arcades.rating_avg / review_count) 갱신. 리뷰가 바뀔 때마다 호출. */
+/**
+ * 평점 캐시(arcades.rating_avg / review_count) 갱신. 리뷰가 바뀔 때마다 호출.
+ * 집계는 DB 함수(recalc_arcade_rating)가 합니다 — prisma/sql/recalcArcadeRating.sql.
+ */
 async function recalc(arcadeId: number): Promise<void> {
-  const db = await getDb();
-  await db.query(`SELECT recalc_arcade_rating($1)`, [arcadeId]);
+  const prisma = await getPrismaClient();
+  await prisma.$queryRawTyped(recalcArcadeRating(arcadeId));
 }
 
 export async function upsertReview(input: {
@@ -53,44 +61,41 @@ export async function upsertReview(input: {
   rating: number;
   body: string | null;
 }): Promise<ArcadeReview> {
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number }>(
-    `INSERT INTO arcade_reviews (arcade_id, player_id, rating, body)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (arcade_id, player_id)
-       DO UPDATE SET rating = EXCLUDED.rating, body = EXCLUDED.body, updated_at = now()
-     RETURNING id`,
-    [input.arcadeId, input.playerId, input.rating, input.body],
-  );
+  const prisma = await getPrismaClient();
+  const row = await prisma.arcade_reviews.upsert({
+    where: { arcade_id_player_id: { arcade_id: input.arcadeId, player_id: input.playerId } },
+    create: {
+      arcade_id: input.arcadeId,
+      player_id: input.playerId,
+      rating: input.rating,
+      body: input.body,
+    },
+    update: { rating: input.rating, body: input.body, updated_at: new Date() },
+    include: reviewInclude,
+  });
   await recalc(input.arcadeId);
   await dropSummary(input.arcadeId);
-
-  const { rows: full } = await db.query<Record<string, unknown>>(
-    `${REVIEW_SELECT} WHERE r.id = $1`,
-    [rows[0].id],
-  );
-  return toReview(full[0]);
+  return toReview(row);
 }
 
 export async function deleteReview(arcadeId: number, playerId: number): Promise<boolean> {
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number }>(
-    `DELETE FROM arcade_reviews WHERE arcade_id = $1 AND player_id = $2 RETURNING id`,
-    [arcadeId, playerId],
-  );
+  const prisma = await getPrismaClient();
+  const { count } = await prisma.arcade_reviews.deleteMany({
+    where: { arcade_id: arcadeId, player_id: playerId },
+  });
   await recalc(arcadeId);
   await dropSummary(arcadeId);
-  return rows.length > 0;
+  return count > 0;
 }
 
 /**
  * 리뷰가 바뀌었으니 AI 요약 캐시를 버립니다 (db/migrate-073-review-summaries.sql).
  *
- * lib/review-summary.ts 를 import 하지 않고 SQL 을 직접 씁니다 — 그쪽이 이 파일의
+ * lib/review-summary.ts 를 import 하지 않고 직접 지웁니다 — 그쪽이 이 파일의
  * listReviews 를 쓰므로 서로 import 하면 순환이 됩니다. 다음에 상세를 여는 사람이
  * 새 요약을 만듭니다(GET /api/arcades/:id/reviews/summary).
  */
 async function dropSummary(arcadeId: number): Promise<void> {
-  const db = await getDb();
-  await db.query(`DELETE FROM arcade_review_summaries WHERE arcade_id = $1`, [arcadeId]);
+  const prisma = await getPrismaClient();
+  await prisma.arcade_review_summaries.deleteMany({ where: { arcade_id: arcadeId } });
 }

@@ -137,10 +137,20 @@ export function recordHttp(route: string, status: number, ms: number): void {
 /** 쿼리 하나. SQL 은 지문으로 줄여서 담는다 — 원문은 절대 밖으로 나가지 않는다. */
 export function recordQuery(sql: string, ms: number, ok: boolean): void {
   if (!enabled()) return;
+  recordOperation(fingerprint(sql), ms, ok);
+}
+
+/**
+ * Prisma Client 연산 한 번. SQL 문자열이 없어 지문을 밖에서 받습니다 —
+ * lib/prisma.ts 가 `<연산> <모델>`(예: `findMany posts`)로, TypedSQL 은 그 SQL 의 지문으로 넘깁니다.
+ * 지표 이름 규약(`query.<지문>.qpm …`)은 원시 SQL 시절과 같습니다.
+ */
+export function recordOperation(key: string, ms: number, ok: boolean): void {
+  if (!enabled()) return;
   const state = getState();
   const flags = { error: !ok, slow: ms >= SLOW_QUERY_MS };
   add(state.dbAll, ms, flags);
-  add(bucketFor(state.db, trimKey(fingerprint(sql))), ms, flags);
+  add(bucketFor(state.db, trimKey(key)), ms, flags);
 }
 
 /**
