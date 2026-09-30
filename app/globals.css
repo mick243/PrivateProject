@@ -1036,6 +1036,38 @@ a.btn {
   height: 20px;
   display: block;
 }
+
+/* 지도 위 '선택 취소' — 오른쪽 위 (components/ArcadeFinder.tsx). 모바일·목록 접힘일 때만 뜬다.
+   높이 40px 은 .locate-fab 와 같다 — 손가락으로 누르는 단추라 44px 가깝게. */
+.unselect-fab {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--panel-float);
+  color: var(--text);
+  font-size: var(--t3);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.unselect-fab svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  color: var(--muted);
+}
+.unselect-fab:hover {
+  border-color: var(--line-strong);
+}
 .locate-fab:hover {
   border-color: var(--accent-2);
   color: var(--text);
@@ -1284,6 +1316,72 @@ a.btn {
   border-radius: 999px;
   background: var(--overlay);
   font-size: 10px;
+}
+
+/*
+ * 지역 묶음 — 줌 10 이하에서 점 대신 그린다 (lib/region-cluster.ts).
+ * 이름 + 오락실 수를 담은 알약이고, 좌표(래퍼 원점)가 알약 한가운데에 온다.
+ *
+ * ⚠ 치수(높이·패딩·간격·글자 크기)를 바꾸면 lib/region-cluster.ts 의 estimateLabelBox
+ *   도 고치세요. 이름표끼리 겹치는지를 그 어림으로 판정합니다.
+ *
+ * 색은 고정한다 — 지도 타일은 테마와 상관없이 밝다 (.mk-on 과 같은 이유).
+ * 오락실 점과 같은 파랑이라 "여기 오락실들" 로 읽힌다.
+ */
+.mk-cluster {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  box-sizing: border-box;
+  height: 24px;
+  padding: 0 3px 0 9px;
+  border: 1px solid #1b64da;
+  border-radius: 999px;
+  background: #2272eb;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  color: #fff;
+  font-size: var(--t2);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.mk-cluster:hover {
+  background: #1b64da;
+}
+.mk-cluster-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #fff;
+  color: #1b64da;
+  font-size: 11px;
+  font-weight: 700;
+}
+/* 이름표 자리가 없는 묶음은 숫자만 — 가리키면 이름이 펼쳐진다 (그때 z 가 올라간다) */
+.mk-cluster-compact {
+  padding: 0 3px;
+}
+.mk-cluster-compact .mk-cluster-name {
+  display: none;
+}
+.mk-cluster-compact:hover {
+  padding-left: 9px;
+}
+.mk-cluster-compact:hover .mk-cluster-name {
+  display: inline;
+}
+/* 줌 10~12 — 이름 없이 수만. 가까운 셋을 합친 것이라 가리켜도 펼칠 이름이 없다 */
+.mk-cluster-bare {
+  padding: 0 3px;
 }
 
 /* ══ 체감 난이도 서열표 ═══════════════════════════════════ */
