@@ -120,6 +120,16 @@ systemctl start arcade-finder
 rm /tmp/dev.dump                                          # 계정 정보가 든 파일 — PC 쪽 사본도 지운다
 ```
 
+**첨부 파일도 옮깁니다.** DB 에는 파일 이름(`post_images.storage_key`)만 있고 사진 · 동영상은 PC 의 `uploads/posts/` 에
+있습니다. 안 옮기면 글은 보이는데 첨부만 안 뜹니다. 배포 묶음에는 일부러 넣지 않고, install-release 도 서버의 `uploads/` 는 건드리지 않습니다.
+
+```bash
+# PC
+scp -r uploads/posts root@$IP:/srv/arcade-finder/app/arcade-finder/uploads/
+# 서버 — scp 로 만든 폴더는 root 것이라, 앱(arcade)이 새 첨부를 쓸 수 있게 주인을 바꾼다
+chown -R arcade:arcade /srv/arcade-finder/app/arcade-finder/uploads
+```
+
 ## 5. 외부 콘솔에 주소 등록
 
 주소(`https://223-130-1-2.sslip.io`)가 정해졌으니 다음 세 곳에 넣습니다. 안 하면 그 기능만 조용히 안 됩니다.
