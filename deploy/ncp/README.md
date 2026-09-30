@@ -70,8 +70,9 @@ bash deploy/ncp/make-server-env.sh        # → deploy/ncp/server.env
 
 ```bash
 IP=223.130.1.2
+# release-<새것> 은 build-release.sh 가 마지막에 찍어 준 이름. release-*.tgz 로 쓰면 out/ 의 옛 묶음까지 올라간다
 scp deploy/ncp/bootstrap.sh deploy/ncp/Caddyfile deploy/ncp/install-release.sh \
-    deploy/ncp/out/release-*.tgz deploy/ncp/server.env  root@$IP:/root/
+    deploy/ncp/out/release-<새것>.tgz deploy/ncp/server.env  root@$IP:/root/
 ssh root@$IP
 ```
 
@@ -80,7 +81,7 @@ ssh root@$IP
 ```bash
 cd /root
 sudo SITE_DOMAIN=223-130-1-2.sslip.io bash bootstrap.sh     # 5분 안팎 — Node · PostgreSQL · Caddy
-sudo bash install-release.sh release-*.tgz server.env       # 1분 — 마이그레이션 89개 + 기동 확인
+sudo bash install-release.sh release-<새것>.tgz server.env   # 1분 — 마이그레이션 89개 + 기동 확인 (이름은 끝까지)
 rm server.env                                               # 합쳤으면 지운다 (PC 쪽 사본도)
 cat /root/arcade-finder-secrets.env                         # 관리자 비밀번호 (닉네임 '관리자')
 ```
@@ -163,3 +164,7 @@ sudo bash install-release.sh /root/release-<새것>.tgz
 - **메모리가 모자라다** (`journalctl` 에 heap · killed) — 콘솔에서 서버를 정지하고 스펙을 **c2-g3(2vCPU · 4GB, 월 약 8.4만 원)** 으로 바꾼 뒤,
   `sudo SITE_DOMAIN=… bash bootstrap.sh` 를 다시 돌리면 메모리에 맞춰 인스턴스 2개 · 기본 설정으로 바꿉니다.
 - **`[env] 운영 필수 설정 N건이 빠져`** — `.env.local` 에 빠진 키가 로그에 이름으로 나옵니다 (`lib/env-check.ts`).
+- **`없음: release-….tgz`** — 그 묶음이 서버에 없습니다. 같은 메시지 아래에 서버에 있는 묶음 목록이 나오니, 없으면 PC 에서 다시 scp.
+- **`디스크가 모자랍니다`** — install-release 가 풀기 전에 멈춘 것입니다(아무것도 바뀌지 않음). `ls -la /root /srv/arcade-finder/releases` 에서
+  다 쓴 묶음을 지우고 `apt-get clean` 뒤 다시. 묶음이 수백 MB 가 아니라 1GB 를 넘으면 빌드에 쓸데없는 것이 섞인 것입니다.
+- **`✗ … 번째 줄에서 멈췄습니다`** — 두 스크립트 모두 멈춘 줄과 명령을 찍습니다. 그 위 몇 줄이 실제 원인입니다.
