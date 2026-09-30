@@ -10,7 +10,10 @@
 # 인스턴스가 하나뿐인 작은 서버라 교체하는 10~20초 동안은 접속이 끊긴다.
 # 되돌리기: releases/ 에 남은 이전 묶음으로 이 스크립트를 다시 돌리면 된다 (최근 2개 보존).
 # ⚠ 마이그레이션은 되돌리지 않는다 — 코드를 되돌려도 스키마는 새 것 그대로다.
-set -euo pipefail
+set -Eeuo pipefail
+# set -e 는 멈출 때 아무 말도 하지 않는다. 어느 줄의 무슨 명령에서 멈췄는지 반드시 남긴다.
+# -E 라 $(…) 안에서도 불리는데, 거기서는 파이프 조각을 엉뚱하게 가리키므로 바깥에서만 찍는다
+trap 'rc=$?; [[ $BASH_SUBSHELL -eq 0 ]] && echo "✗ install-release.sh ${LINENO}번째 줄에서 멈췄습니다 (종료 코드 $rc): $BASH_COMMAND" >&2' ERR
 
 if [[ $EUID -ne 0 ]]; then echo "root 로 돌려 주세요: sudo bash $0 <묶음.tgz> [server.env]" >&2; exit 2; fi
 TGZ="${1:?배포 묶음(.tgz) 경로를 주세요}"
@@ -20,7 +23,12 @@ SERVER_ENV="${2:-}"
 ROOT=/srv/arcade-finder
 APP="$ROOT/app/arcade-finder"
 REL="$ROOT/releases"
-[[ -f "$APP/.env.local" ]] || { echo "$APP/.env.local 이 없습니다 — bootstrap.sh 를 먼저 돌려 주세요" >&2; exit 2; }
+# .env.local 은 bootstrap.sh 의 5단계가 만든다. 돌렸는데도 없으면 bootstrap 이 그 전에 멈춘 것이다
+[[ -f "$APP/.env.local" ]] || {
+  echo "$APP/.env.local 이 없습니다 — bootstrap.sh 가 끝까지 돌지 않았습니다." >&2
+  echo "  sudo SITE_DOMAIN=<공인IP-대시>.sslip.io bash bootstrap.sh 를 돌리고, 마지막에 '✔ 준비 끝' 이 나오는지 보세요." >&2
+  exit 2
+}
 step() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
 
 NAME="$(basename "$TGZ" .tgz)"
