@@ -74,4 +74,5 @@ docker run --rm --platform linux/amd64 \
   '
 
 echo "✔ $OUT_DIR/$NAME ($(du -h "$OUT_DIR/$NAME" | cut -f1))"
-echo "  올리기: scp -i <키.pem> \"$OUT_DIR/$NAME\" root@<공인IP>:/root/"
+# NCP 의 .pem 은 SSH 키가 아니라 콘솔에서 root 비밀번호를 푸는 키다 — scp -i 로 주면 거절된다
+echo "  올리기: scp \"$OUT_DIR/$NAME\" root@<공인IP>:/root/   (root 비밀번호로 접속 · 첫 설치면 server.env 도 함께)"
