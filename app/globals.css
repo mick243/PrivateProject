@@ -1036,6 +1036,38 @@ a.btn {
   height: 20px;
   display: block;
 }
+
+/* 지도 위 '선택 취소' — 오른쪽 위 (components/ArcadeFinder.tsx). 모바일·목록 접힘일 때만 뜬다.
+   높이 40px 은 .locate-fab 와 같다 — 손가락으로 누르는 단추라 44px 가깝게. */
+.unselect-fab {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 14px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--panel-float);
+  color: var(--text);
+  font-size: var(--t3);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.unselect-fab svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  color: var(--muted);
+}
+.unselect-fab:hover {
+  border-color: var(--line-strong);
+}
 .locate-fab:hover {
   border-color: var(--accent-2);
   color: var(--text);
@@ -1346,6 +1378,10 @@ a.btn {
 }
 .mk-cluster-compact:hover .mk-cluster-name {
   display: inline;
+}
+/* 줌 10~12 — 이름 없이 수만. 가까운 셋을 합친 것이라 가리켜도 펼칠 이름이 없다 */
+.mk-cluster-bare {
+  padding: 0 3px;
 }
 
 /* ══ 체감 난이도 서열표 ═══════════════════════════════════ */

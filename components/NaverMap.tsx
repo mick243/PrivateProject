@@ -6,7 +6,9 @@ import { drawTally, reportSync, setPerfMap, useCullingOff } from '@/lib/map-perf
 import {
   clusterByRegion,
   clusterLevelForZoom,
+  isCountOnly,
   layoutClusterLabels,
+  mergeNearestClusters,
   zoomForCluster,
   type RegionCluster,
 } from '@/lib/region-cluster';
@@ -118,14 +120,17 @@ const CLUSTER_Z = 110;
 const CLUSTER_LABELED_Z = 120;
 
 /**
- * 지역 묶음 하나 — 이름 + 오락실 수. 앵커 (0,0) 이 알약 한가운데에 오도록
- * .mk-cluster 가 CSS 로 되민다 (app/globals.css).
- * 이름표 자리가 없으면(labeled=false) 숫자만 띄운다 (lib/region-cluster.ts 의 layoutClusterLabels).
+ * 지역 묶음 하나. 앵커 (0,0) 이 알약 한가운데에 오도록 .mk-cluster 가 CSS 로 되민다
+ * (app/globals.css). 모양은 셋이다:
+ *   'full'    이름 + 오락실 수
+ *   'compact' 이름표 자리가 없어 수만 — 가리키면 이름이 펼쳐진다 (layoutClusterLabels)
+ *   'count'   줌 10~12 — 이름 없이 수만 (가까운 셋을 합친 것이라 이름 하나로 말할 수 없다)
  */
-function clusterIcon(cluster: RegionCluster, labeled: boolean): string {
-  return `<div class="mk-cluster${labeled ? '' : ' mk-cluster-compact'}"><span class="mk-cluster-name">${escapeHtml(
-    cluster.label,
-  )}</span><span class="mk-cluster-count">${cluster.count}</span></div>`;
+function clusterIcon(cluster: RegionCluster, shape: 'full' | 'compact' | 'count'): string {
+  const count = `<span class="mk-cluster-count">${cluster.count}</span>`;
+  if (shape === 'count') return `<div class="mk-cluster mk-cluster-bare">${count}</div>`;
+  const name = `<span class="mk-cluster-name">${escapeHtml(cluster.label)}</span>`;
+  return `<div class="mk-cluster${shape === 'compact' ? ' mk-cluster-compact' : ''}">${name}${count}</div>`;
 }
 
 interface HtmlOverlayOptions {
@@ -515,36 +520,52 @@ export default function NaverMap({
 
   /**
    * 지금 줌에서 무엇으로 묶는지 — null 이면 묶지 않고 오락실마다 점을 찍는다.
-   * 11단계 축소(줌 10) 구·동 · 12단계(줌 9) 시·광역시 · 13단계~(줌 8 이하) 도·특별시.
+   * 줌 14~ 점 · 13 구·동 · 10~12 구·동(수만, 셋씩 합침) · 9 시·광역시 · ~8 도·특별시.
    *
    * 계측 패널이 컬링을 끈 동안은 묶지도 않는다 — 그 스위치는 "최적화 이전의 지도"
    * 를 재려는 것이라, 묶음이 끼면 비교가 성립하지 않는다 (`/?perf=1`).
    */
   const clusterLevel = mapZoom === null || cullingOff ? null : clusterLevelForZoom(mapZoom);
+  /** 이름 없이 수만 띄우는 줌인지 (구 · 동, 줌 10~12) — 그때는 가까운 셋을 합친다 */
+  const countOnly = clusterLevel !== null && mapZoom !== null && isCountOnly(clusterLevel, mapZoom);
 
   /** 받은 목록 **전부**를 묶는다 — 화면 안만 묶으면 끌 때마다 숫자가 바뀐다 */
   const regionClusters = useMemo(
     () => (clusterLevel ? clusterByRegion(arcades, clusterLevel) : null),
     [arcades, clusterLevel],
   );
-  /** 묶음을 눌렀을 때 (리스너가 최신 묶음을 읽게 — 누르면 그 묶음의 범위로 당긴다) */
-  const regionClustersRef = useRef(regionClusters);
-  regionClustersRef.current = regionClusters;
 
-  /** 이름까지 띄울 묶음 (나머지는 숫자만). 줌이 바뀌면 이름표끼리의 간격이 바뀐다 */
+  /**
+   * 지도에 올릴 묶음. 수만 띄우는 줌에서는 가까운 셋을 하나로 합친 것이다.
+   * 합치는 거리를 km 로 재므로(MERGE_RADIUS_KM) 줌 10 · 11 · 12 가 같은 결과를 쓴다 —
+   * mapZoom 을 의존성에 넣지 않는다.
+   */
+  const shownClusters = useMemo(
+    () =>
+      regionClusters
+        ? countOnly
+          ? mergeNearestClusters(regionClusters.clusters)
+          : regionClusters.clusters
+        : null,
+    [regionClusters, countOnly],
+  );
+  /** 묶음을 눌렀을 때 (리스너가 최신 묶음을 읽게 — 누르면 그 묶음의 범위로 당긴다) */
+  const shownClustersRef = useRef(shownClusters);
+  shownClustersRef.current = shownClusters;
+
+  /** 이름까지 띄울 묶음 (나머지는 수만). 줌이 바뀌면 이름표끼리의 간격이 바뀐다 */
   const labeledClusters = useMemo(
     () =>
-      regionClusters && mapZoom !== null
-        ? layoutClusterLabels(regionClusters.clusters, mapZoom)
+      shownClusters && mapZoom !== null && !countOnly
+        ? layoutClusterLabels(shownClusters, mapZoom)
         : null,
-    [regionClusters, mapZoom],
+    [shownClusters, mapZoom, countOnly],
   );
 
   /** 그릴 묶음 — 오락실 점과 같은 규칙으로 화면 안(+여백)만 */
   const clustersInView = useMemo(
-    () =>
-      regionClusters && viewport ? regionClusters.clusters.filter((c) => inBox(viewport, c)) : [],
-    [regionClusters, viewport],
+    () => (shownClusters && viewport ? shownClusters.filter((c) => inBox(viewport, c)) : []),
+    [shownClusters, viewport],
   );
 
   /**
@@ -675,7 +696,7 @@ export default function NaverMap({
     const zoomIntoCluster = (key: string) => {
       const m = usableMap(mapRef.current);
       const el = containerRef.current;
-      const cluster = regionClustersRef.current?.clusters.find((c) => c.key === key);
+      const cluster = shownClustersRef.current?.find((c) => c.key === key);
       if (!m || !el || !cluster) return;
       const { bounds } = cluster;
       m.setCenter(
@@ -684,12 +705,12 @@ export default function NaverMap({
           (bounds.minLng + bounds.maxLng) / 2,
         ),
       );
-      m.setZoom(zoomForCluster(cluster, el.clientWidth, el.clientHeight));
+      m.setZoom(zoomForCluster(cluster, el.clientWidth, el.clientHeight, m.getZoom()));
     };
 
     for (const cluster of clustersInView) {
-      const labeled = labeledClusters?.has(cluster.key) ?? true;
-      const content = clusterIcon(cluster, labeled);
+      const labeled = !countOnly && (labeledClusters?.has(cluster.key) ?? true);
+      const content = clusterIcon(cluster, countOnly ? 'count' : labeled ? 'full' : 'compact');
       const z = labeled ? CLUSTER_LABELED_Z : CLUSTER_Z;
       const existing = clusterMarkers.get(cluster.key);
       const shown = clusterShapeRef.current.get(cluster.key);
@@ -732,6 +753,7 @@ export default function NaverMap({
     arcades.length,
     clustersInView,
     labeledClusters,
+    countOnly,
   ]);
 
   // ── 선택한 오락실을 화면 정중앙으로 ────────────────────────

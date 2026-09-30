@@ -2,28 +2,38 @@ import { describe, expect, it } from 'vitest';
 import {
   clusterByRegion,
   clusterLevelForZoom,
+  isCountOnly,
   layoutClusterLabels,
+  MERGE_RADIUS_KM,
+  mergeNearestClusters,
   regionOf,
   zoomForCluster,
   zoomToFit,
+  type RegionCluster,
 } from '@/lib/region-cluster';
 
-describe('clusterLevelForZoom — "N단계 축소" = 줌 21 − N', () => {
-  it('10단계(줌 11) 까지는 묶지 않는다', () => {
+describe('clusterLevelForZoom — 줌마다 묶는 단위', () => {
+  it('줌 14 부터는 묶지 않는다 (점 하나하나)', () => {
     expect(clusterLevelForZoom(21)).toBeNull();
-    expect(clusterLevelForZoom(12)).toBeNull();
-    expect(clusterLevelForZoom(11)).toBeNull();
+    expect(clusterLevelForZoom(14)).toBeNull();
   });
 
-  it('11단계(줌 10) 는 구·동, 12단계(줌 9) 는 시·광역시', () => {
-    expect(clusterLevelForZoom(10)).toBe('district');
+  it('줌 10~13 은 구·동, 줌 9 는 시·광역시', () => {
+    for (const z of [13, 12, 11, 10]) expect(clusterLevelForZoom(z)).toBe('district');
     expect(clusterLevelForZoom(9)).toBe('city');
   });
 
-  it('13단계(줌 8) 부터 끝(줌 6)까지 도·특별시', () => {
+  it('줌 8 부터 끝(줌 6)까지 도·특별시', () => {
     expect(clusterLevelForZoom(8)).toBe('province');
     expect(clusterLevelForZoom(7)).toBe('province');
     expect(clusterLevelForZoom(6)).toBe('province');
+  });
+
+  it('구·동은 줌 10~12 에서만 이름 없이 수만 — 13 과 다른 단위는 이름을 띄운다', () => {
+    for (const z of [10, 11, 12]) expect(isCountOnly('district', z)).toBe(true);
+    expect(isCountOnly('district', 13)).toBe(false);
+    expect(isCountOnly('city', 9)).toBe(false);
+    expect(isCountOnly('province', 8)).toBe(false);
   });
 });
 
@@ -229,11 +239,66 @@ describe('누르면 어디까지 당기나', () => {
     const gyeonggi = { minLat: 36.9, maxLat: 38.2, minLng: 126.4, maxLng: 127.8 };
     // 좁은 지도 칸에서는 경기 전체가 줌 8(도 단위)에서야 들어온다
     expect(zoomToFit(gyeonggi, 400, 300)).toBe(8);
-    expect(zoomForCluster({ level: 'province', bounds: gyeonggi }, 400, 300)).toBe(9);
+    // 전국을 보던 줌 6 에서 눌러도 시 단위(9)까지
+    expect(zoomForCluster({ level: 'province', bounds: gyeonggi }, 400, 300, 6)).toBe(9);
+  });
+
+  it('구·동은 지금보다 한 칸 이상 — 줌 13 에서 누르면 점이 보이는 14 이상', () => {
+    // 여백(80%)을 두고 맞추면 줌 10 — 줌 10 에서 눌렀으면 그 자리에 머물지 않고 11 로
+    const wide = { minLat: 37.4, maxLat: 37.7, minLng: 126.8, maxLng: 127.2 };
+    expect(zoomForCluster({ level: 'district', bounds: wide }, 800, 600, 10)).toBe(11);
+    expect(zoomForCluster({ level: 'district', bounds: wide }, 800, 600, 13)).toBe(14);
   });
 
   it('한 곳짜리 묶음은 15 에서 멈춘다', () => {
     const point = { minLat: 37.5, maxLat: 37.5, minLng: 127, maxLng: 127 };
-    expect(zoomForCluster({ level: 'district', bounds: point }, 800, 600)).toBe(15);
+    expect(zoomForCluster({ level: 'district', bounds: point }, 800, 600, 12)).toBe(15);
+  });
+});
+
+describe('mergeNearestClusters — 수만 띄울 때 가까운 셋을 하나로', () => {
+  /** 경도 0.01° ≈ 0.88km (위도 37.5°) */
+  const c = (key: string, count: number, lat: number, lng: number): RegionCluster => ({
+    key,
+    label: key,
+    level: 'district',
+    lat,
+    lng,
+    count,
+    bounds: { minLat: lat, maxLat: lat, minLng: lng, maxLng: lng },
+  });
+
+  it('많은 곳부터, 가장 가까운 둘을 끌어와 셋을 하나로 — 개수는 더한다', () => {
+    const merged = mergeNearestClusters([
+      c('A', 9, 37.5, 127.0),
+      c('B', 1, 37.5, 127.01), // A 에서 0.9km
+      c('C', 2, 37.5, 127.02), // 1.8km
+      c('D', 3, 37.5, 127.03), // 2.6km — A 의 셋에 못 든다
+    ]);
+    expect(merged.map((m) => [m.key, m.count])).toEqual([
+      ['A+B+C', 12],
+      ['D', 3],
+    ]);
+  });
+
+  it('자리는 속한 오락실 전체의 평균, 범위는 셋을 다 담는다', () => {
+    const [m] = mergeNearestClusters([c('A', 3, 37.5, 127.0), c('B', 1, 37.5, 127.04)]);
+    expect(m.lng).toBeCloseTo(127.01, 6);
+    expect(m.bounds).toEqual({ minLat: 37.5, maxLat: 37.5, minLng: 127.0, maxLng: 127.04 });
+  });
+
+  it(`${MERGE_RADIUS_KM}km 밖은 합치지 않는다 — 외딴 곳이 바다 건너 묶음에 끌려가지 않게`, () => {
+    const merged = mergeNearestClusters([
+      c('울릉', 1, 37.48, 130.9),
+      c('포항', 5, 36.02, 129.34),
+      c('포항2', 1, 36.03, 129.35),
+    ]);
+    expect(merged.map((m) => m.key).sort()).toEqual(['울릉', '포항+포항2']);
+  });
+
+  it('같은 입력이면 같은 결과 — 열쇠가 줌마다 바뀌면 마커를 다시 만든다', () => {
+    const input = [c('A', 2, 37.5, 127.0), c('B', 2, 37.5, 127.01), c('C', 2, 37.5, 127.02)];
+    const once = mergeNearestClusters(input).map((m) => m.key);
+    expect(mergeNearestClusters([...input].reverse()).map((m) => m.key)).toEqual(once);
   });
 });

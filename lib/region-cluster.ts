@@ -12,7 +12,7 @@
  * (2026-09-30 개발 DB 926곳 전부).
  */
 
-import type { Coord, LatLngBox } from './geo';
+import { distanceKm, type Coord, type LatLngBox } from './geo';
 
 // ─── 줌 → 묶는 단위 ───────────────────────────────────────────
 
@@ -20,19 +20,26 @@ export type ClusterLevel = 'province' | 'city' | 'district';
 
 /**
  * 네이버 지도 줌은 6(전국) ~ 21(건물)이고, 확대·축소 슬라이더 한 칸이 줌 한 단계다
- * (2026-09-30 실측 — 슬라이더 16칸, 줌 12 에서 한 번 누를 때마다 11 · 10 …).
- * "N단계 축소" 는 가장 크게 본 21 에서 N번 줄인 것이라 **줌 = 21 − N** 이다.
+ * (2026-09-30 실측 — 슬라이더 16칸). 네이버 범례로는 줌 10 이 '시,군,구', 줌 7 이 '시,도'.
  *
- *   ~10단계 (줌 11 이상) — 묶지 않는다. 오락실 하나하나가 점으로 보인다
- *   11단계  (줌 10)      — 구 · 동          (네이버 범례의 '시,군,구' 가 이 줌이다)
- *   12단계  (줌 9)       — 시 · 광역시
- *   13단계~ (줌 8 이하)   — 도 · 특별시      (범례의 '시,도' 는 줌 7)
+ *   줌 14 이상  — 묶지 않는다. 오락실 하나하나가 점으로 보인다
+ *   줌 13       — 구 · 동 (이름 + 개수)
+ *   줌 10 ~ 12  — 구 · 동 (개수만, 가까운 셋을 하나로 — COUNT_ONLY_MAX_ZOOM)
+ *   줌 9        — 시 · 광역시
+ *   줌 8 이하   — 도 · 특별시
+ *
+ * 처음(2026-09-30 오후)에는 구·동이 줌 10 하나뿐이었다. 써 보니 줌 11~13 에서 점이
+ * 수백 개 깔려 구·동 단위를 넓히고, 넓힌 줌 10~12 에서는 이름표가 서로 덮여 숫자만
+ * 남기기로 했다.
  */
 export const CLUSTER_MAX_ZOOM: Readonly<Record<ClusterLevel, number>> = {
-  district: 10,
+  district: 13,
   city: 9,
   province: 8,
 };
+
+/** 구 · 동 묶음을 이 줌까지는 **개수만** 띄우고 가까운 셋씩 합친다 (mergeNearestClusters) */
+export const COUNT_ONLY_MAX_ZOOM = 12;
 
 /** 이 줌에서 무엇으로 묶는지. null 이면 묶지 않는다 (점 하나하나) */
 export function clusterLevelForZoom(zoom: number): ClusterLevel | null {
@@ -42,11 +49,24 @@ export function clusterLevelForZoom(zoom: number): ClusterLevel | null {
   return null;
 }
 
-/** 묶음을 누르면 **적어도** 여기까지는 당긴다 — 한 단계 안쪽 단위가 보이는 줌 */
-export function zoomInsideLevel(level: ClusterLevel): number {
-  if (level === 'province') return CLUSTER_MAX_ZOOM.city;
-  if (level === 'city') return CLUSTER_MAX_ZOOM.district;
-  return CLUSTER_MAX_ZOOM.district + 1;
+/** 이 줌의 이 단위를 이름 없이 개수만 띄우는지 (그때는 가까운 셋을 합친다) */
+export function isCountOnly(level: ClusterLevel, zoom: number): boolean {
+  return level === 'district' && zoom <= COUNT_ONLY_MAX_ZOOM;
+}
+
+/**
+ * 묶음을 누르면 **적어도** 여기까지는 당긴다.
+ * 도 · 특별시와 시 · 광역시는 한 단계 안쪽 단위가 보이는 줌까지, 구 · 동(줌 10~13 에
+ * 걸쳐 있다)은 지금보다 한 칸 — 줌 13 에서 누르면 점이 보이는 14 가 된다.
+ */
+function zoomFloorFor(level: ClusterLevel, currentZoom: number): number {
+  const inside =
+    level === 'province'
+      ? CLUSTER_MAX_ZOOM.province + 1
+      : level === 'city'
+        ? CLUSTER_MAX_ZOOM.city + 1
+        : 0;
+  return Math.max(Math.floor(currentZoom) + 1, inside);
 }
 
 // ─── 주소 → 구역 ──────────────────────────────────────────────
@@ -426,13 +446,15 @@ export function estimateLabelBox(label: string, count: number, compact: boolean)
 
 /**
  * 이름을 다 띄울 묶음을 고른다 — 나머지는 숫자만 띄운다 (가리키면 이름이 나온다).
+ * 이름을 띄우는 줌(구 · 동 13 · 시 9 · 도 8 이하)에서만 쓴다.
  *
- * 구 · 동은 줌 10 에서 묶는데, 그 줌에서 서울 전체가 폭 300px 남짓이다. 전국 241개
- * 묶음의 이름표를 다 띄우면 114쌍이 서로 겹친다 — 서울 25개 구 중 이름이 온전히
- * 뜨는 것은 7곳이다 (2026-09-30 개발 DB). 지도 이름표가 흔히
- * 하는 대로, **오락실이 많은 곳부터** 자리를 잡고 이미 잡힌 자리에 걸리는 것은
- * 줄여서 띄운다. 빼 버리지는 않는다 — 묶음이 사라지면 그 구의 오락실이 지도에서
- * 없어진 것처럼 보인다.
+ * 지도 이름표가 흔히 하는 대로, **오락실이 많은 곳부터** 자리를 잡고 이미 잡힌 자리에
+ * 걸리는 것은 줄여서 띄운다. 빼 버리지는 않는다 — 묶음이 사라지면 그 구의 오락실이
+ * 지도에서 없어진 것처럼 보인다.
+ *
+ * 2026-09-30 개발 DB 로 잰 것: 구 · 동을 줌 10 에서 이름까지 띄우면 241개 중 114쌍이
+ * 겹쳤다(서울 전체가 폭 300px 남짓) — 그래서 줌 10~12 는 아예 숫자만 띄운다
+ * (isCountOnly). 줌 13 에서는 241개가 다 뜨고, 시 · 광역시(줌 9)는 132개 중 109개가 뜬다.
  */
 export function layoutClusterLabels(
   clusters: readonly RegionCluster[],
@@ -462,6 +484,76 @@ export function layoutClusterLabels(
   return labeled;
 }
 
+// ─── 개수만 띄울 때: 가까운 셋을 하나로 ───────────────────────
+
+/** 몇 개씩 합치나 — 자기 자신 + 가장 가까운 둘 */
+const MERGE_SIZE = 3;
+
+/**
+ * 이만큼(km) 안에 있는 것끼리만 합친다.
+ *
+ * 한도가 없으면 외딴 곳(울릉군 · 섬 지역)이 수십 km 떨어진 묶음과 합쳐져, 그 사이
+ * 바다 위에 숫자가 찍힌다. 서울 25개 구는 두 번째로 가까운 이웃이 전부 5.3km 안에
+ * 있다. 6km 로 두면 전국 241개가 181개로, 서울은 11개(셋 7 · 둘 3 · 하나 1)로 줄고,
+ * 줌 10 에서 숫자끼리 겹치던 35쌍이 0 이 된다 (2026-09-30 개발 DB).
+ *
+ * 화면 거리(px)가 아니라 땅 위 거리로 재는 이유: 그래야 줌 10 · 11 · 12 에서 **같은
+ * 묶음**이 나온다. px 로 재면 줌을 한 칸 바꿀 때마다 짝이 바뀌어 숫자가 뒤섞인다.
+ */
+export const MERGE_RADIUS_KM = 6;
+
+/**
+ * 구 · 동 묶음을 가까운 셋씩 하나로 합친다 (줌 10~12 — 개수만 띄우는 줌).
+ *
+ * 오락실이 많은 묶음부터 차례로, 아직 안 합쳐진 것 중 가장 가까운 둘(MERGE_RADIUS_KM
+ * 안)을 끌어온다. 합친 묶음의 자리는 속한 오락실 전체의 평균이고, 누르면 셋을 다 담는
+ * 범위로 당긴다. 가까운 게 없으면 혼자 남는다.
+ */
+export function mergeNearestClusters(clusters: readonly RegionCluster[]): RegionCluster[] {
+  const order = [...clusters].sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+  const taken = new Set<string>();
+  const out: RegionCluster[] = [];
+
+  for (const seed of order) {
+    if (taken.has(seed.key)) continue;
+    taken.add(seed.key);
+    const near = order
+      .filter((c) => !taken.has(c.key))
+      .map((c) => ({ c, d: distanceKm(seed, c) }))
+      .filter((e) => e.d <= MERGE_RADIUS_KM)
+      .sort((a, b) => a.d - b.d || a.c.key.localeCompare(b.c.key))
+      .slice(0, MERGE_SIZE - 1)
+      .map((e) => e.c);
+    if (near.length === 0) {
+      out.push(seed);
+      continue;
+    }
+    for (const c of near) taken.add(c.key);
+
+    const group = [seed, ...near];
+    const count = group.reduce((n, c) => n + c.count, 0);
+    out.push({
+      // 열쇠는 속한 묶음들의 열쇠 — 같은 셋이면 같은 열쇠라 지도가 마커를 다시 만들지 않는다
+      key: group
+        .map((c) => c.key)
+        .sort()
+        .join('+'),
+      label: group.map((c) => c.label).join(' · '),
+      level: seed.level,
+      lat: group.reduce((s, c) => s + c.lat * c.count, 0) / count,
+      lng: group.reduce((s, c) => s + c.lng * c.count, 0) / count,
+      count,
+      bounds: {
+        minLat: Math.min(...group.map((c) => c.bounds.minLat)),
+        maxLat: Math.max(...group.map((c) => c.bounds.maxLat)),
+        minLng: Math.min(...group.map((c) => c.bounds.minLng)),
+        maxLng: Math.max(...group.map((c) => c.bounds.maxLng)),
+      },
+    });
+  }
+  return out;
+}
+
 // ─── 누르면 어디까지 당기나 ───────────────────────────────────
 
 /** 이보다 더 당기지 않는다 — 한 곳짜리 묶음을 누르면 건물 수준까지 파고든다 */
@@ -483,14 +575,15 @@ export function zoomToFit(box: LatLngBox, widthPx: number, heightPx: number): nu
 }
 
 /**
- * 묶음을 눌렀을 때 갈 줌 — 속한 오락실이 다 보이게, 단 **적어도 한 단계 안쪽**까지.
- * 여백을 조금 두고 맞춘다 (가장자리 점이 화면 끝에 붙지 않게).
+ * 묶음을 눌렀을 때 갈 줌 — 속한 오락실이 다 보이게, 단 **적어도 한 단계 안쪽**까지
+ * (zoomFloorFor). 여백을 조금 두고 맞춘다 (가장자리 점이 화면 끝에 붙지 않게).
  */
 export function zoomForCluster(
   cluster: Pick<RegionCluster, 'level' | 'bounds'>,
   widthPx: number,
   heightPx: number,
+  currentZoom: number,
 ): number {
   const fit = zoomToFit(cluster.bounds, widthPx * 0.8, heightPx * 0.8);
-  return Math.min(FIT_MAX_ZOOM, Math.max(zoomInsideLevel(cluster.level), fit));
+  return Math.min(FIT_MAX_ZOOM, Math.max(zoomFloorFor(cluster.level, currentZoom), fit));
 }

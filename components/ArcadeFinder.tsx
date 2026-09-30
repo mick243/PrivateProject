@@ -1265,6 +1265,33 @@ export default function ArcadeFinder() {
           onStop={stopFollow}
         />
 
+        {/*
+          지도 위 '선택 취소' (오른쪽 위). 선택을 풀 곳이 목록 줄의 '위치 찾기 취소' 뿐인데,
+          그 줄이 눈에 안 들어오는 화면에서만 띄운다 —
+            · 모바일(세로 스택): 선택한 줄을 맨 위로 끌어올리지 않아(ordered 주석) 목록을
+              한참 내려야 그 줄이 나온다. 지도 핀을 눌러 상세를 열었다 닫으면 더 그렇다
+            · 목록을 접었을 때: 줄 자체가 화면에 없다
+          왼쪽 위는 네이버 확대·축소, 아래는 내 위치 · 이동 막대 · 챗봇 자리다.
+        */}
+        {mode.kind === 'list' && selectedId !== null && (stacked || !sidebarOpen) && (
+          <button
+            type="button"
+            className="unselect-fab"
+            onClick={handleClearSelect}
+            aria-label="선택 취소 — 지도의 강조 표시를 끕니다"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M6 6l12 12M18 6L6 18"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+              />
+            </svg>
+            선택 취소
+          </button>
+        )}
+
         {showPerf && <MapPerfPanel />}
       </main>
 
