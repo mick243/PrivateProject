@@ -32,6 +32,8 @@ declare namespace naver.maps {
     constructor(el: HTMLElement | string, options: MapOptions);
     setCenter(latlng: LatLng): void;
     setZoom(zoom: number, animate?: boolean): void;
+    /** 6(전국) ~ 21(건물). 줌이 낮으면 지역 묶음으로 그린다 (lib/region-cluster.ts) */
+    getZoom(): number;
     getCenter(): LatLng;
     /** 화면 픽셀만큼 밀어서 옮긴다. 성능 계측의 '흔들기' 가 쓴다 (lib/map-perf.ts) */
     panBy(offset: Point): void;

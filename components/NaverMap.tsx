@@ -3,6 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { inBox, padBox, type LatLngBox } from '@/lib/geo';
 import { drawTally, reportSync, setPerfMap, useCullingOff } from '@/lib/map-perf';
+import {
+  clusterByRegion,
+  clusterLevelForZoom,
+  layoutClusterLabels,
+  zoomForCluster,
+  type RegionCluster,
+} from '@/lib/region-cluster';
 import type { Arcade } from '@/lib/types';
 import {
   loadNaverMaps,
@@ -101,6 +108,24 @@ function markerIcon(arcade: Arcade, selected: boolean, rank: number | undefined)
     // 뱃지)마다 점 앞에 붙는 것이 달라져서 JS 상수로는 맞출 수 없다.
     anchor: new naver.maps.Point(0, 0),
   };
+}
+
+/*
+ * 지역 묶음 z: 숫자만 띄운 것 110 · 이름까지 띄운 것 120. 둘 다 오락실 점(100)보다
+ * 위, 순위(150)·선택(200)보다 아래 — 멀리서 볼 때도 선택한 곳은 묶음 위에 떠 있다.
+ */
+const CLUSTER_Z = 110;
+const CLUSTER_LABELED_Z = 120;
+
+/**
+ * 지역 묶음 하나 — 이름 + 오락실 수. 앵커 (0,0) 이 알약 한가운데에 오도록
+ * .mk-cluster 가 CSS 로 되민다 (app/globals.css).
+ * 이름표 자리가 없으면(labeled=false) 숫자만 띄운다 (lib/region-cluster.ts 의 layoutClusterLabels).
+ */
+function clusterIcon(cluster: RegionCluster, labeled: boolean): string {
+  return `<div class="mk-cluster${labeled ? '' : ' mk-cluster-compact'}"><span class="mk-cluster-name">${escapeHtml(
+    cluster.label,
+  )}</span><span class="mk-cluster-count">${cluster.count}</span></div>`;
 }
 
 interface HtmlOverlayOptions {
@@ -365,6 +390,15 @@ export default function NaverMap({
   const markerShapeRef = useRef(
     new Map<number, { arcade: Arcade; z: number; content: string }>(),
   );
+  /**
+   * 지역 묶음 알약 (열쇠 = 구역 key). 오락실 마커와 **같은 풀**을 쓴다 — 줌을 빼서
+   * 점 수백 개가 묶음 수십 개로 바뀔 때, 떼어낸 점들이 그대로 묶음으로 갈아 끼워진다.
+   */
+  const clusterMarkersRef = useRef(new Map<string, HtmlOverlay>());
+  /** 묶음마다 지금 그려져 있는 모양 (markerShapeRef 와 같은 이유) */
+  const clusterShapeRef = useRef(
+    new Map<string, { content: string; z: number; lat: number; lng: number }>(),
+  );
   const pickMarkerRef = useRef<HtmlOverlay | null>(null);
   const meMarkerRef = useRef<HtmlOverlay | null>(null);
   const circleRef = useRef<naver.maps.Circle | null>(null);
@@ -380,6 +414,8 @@ export default function NaverMap({
    * null 이면 아직 지도가 준비되지 않은 상태다 (그때는 아무것도 그리지 않는다).
    */
   const [viewport, setViewport] = useState<LatLngBox | null>(null);
+  /** 지금 줌. viewport 와 같이 'idle' 에서 읽는다 — 이 값으로 묶는 단위를 고른다 */
+  const [mapZoom, setMapZoom] = useState<number | null>(null);
 
   // 최신 콜백/모드를 리스너 안에서 참조하기 위한 ref (리스너 재등록 방지)
   const pickingRef = useRef(picking);
@@ -407,6 +443,8 @@ export default function NaverMap({
     const forgetEverything = () => {
       markersRef.current.clear();
       markerShapeRef.current.clear();
+      clusterMarkersRef.current.clear();
+      clusterShapeRef.current.clear();
       poolRef.current = [];
       pickMarkerRef.current = null;
       meMarkerRef.current = null;
@@ -442,7 +480,9 @@ export default function NaverMap({
         // 'idle' 은 끌기·줌이 **멈춘 뒤** 한 번 온다. bounds_changed 로 받으면
         // 끄는 중에 프레임마다 마커를 다시 붙이게 된다.
         naver.maps.Event.addListener(map, 'idle', () => {
-          if (usableMap(map)) setViewport(readViewport(map));
+          if (!usableMap(map)) return;
+          setViewport(readViewport(map));
+          setMapZoom(map.getZoom());
         });
 
         // 인증 실패는 여기까지 온 **뒤에** 온다 — 그때 FallbackMap 으로 넘긴다.
@@ -453,6 +493,7 @@ export default function NaverMap({
         });
 
         setViewport(readViewport(map));
+        setMapZoom(map.getZoom());
         setReady(true);
       })
       .catch(fail);
@@ -462,6 +503,7 @@ export default function NaverMap({
       unsubscribeAuthFailure?.();
       if (naverMapsUsable()) {
         markersRef.current.forEach((m) => m.setMap(null));
+        clusterMarkersRef.current.forEach((m) => m.setMap(null));
         poolRef.current.forEach((m) => m.setMap(null));
         mapRef.current?.destroy();
       }
@@ -472,18 +514,61 @@ export default function NaverMap({
   }, []);
 
   /**
+   * 지금 줌에서 무엇으로 묶는지 — null 이면 묶지 않고 오락실마다 점을 찍는다.
+   * 11단계 축소(줌 10) 구·동 · 12단계(줌 9) 시·광역시 · 13단계~(줌 8 이하) 도·특별시.
+   *
+   * 계측 패널이 컬링을 끈 동안은 묶지도 않는다 — 그 스위치는 "최적화 이전의 지도"
+   * 를 재려는 것이라, 묶음이 끼면 비교가 성립하지 않는다 (`/?perf=1`).
+   */
+  const clusterLevel = mapZoom === null || cullingOff ? null : clusterLevelForZoom(mapZoom);
+
+  /** 받은 목록 **전부**를 묶는다 — 화면 안만 묶으면 끌 때마다 숫자가 바뀐다 */
+  const regionClusters = useMemo(
+    () => (clusterLevel ? clusterByRegion(arcades, clusterLevel) : null),
+    [arcades, clusterLevel],
+  );
+  /** 묶음을 눌렀을 때 (리스너가 최신 묶음을 읽게 — 누르면 그 묶음의 범위로 당긴다) */
+  const regionClustersRef = useRef(regionClusters);
+  regionClustersRef.current = regionClusters;
+
+  /** 이름까지 띄울 묶음 (나머지는 숫자만). 줌이 바뀌면 이름표끼리의 간격이 바뀐다 */
+  const labeledClusters = useMemo(
+    () =>
+      regionClusters && mapZoom !== null
+        ? layoutClusterLabels(regionClusters.clusters, mapZoom)
+        : null,
+    [regionClusters, mapZoom],
+  );
+
+  /** 그릴 묶음 — 오락실 점과 같은 규칙으로 화면 안(+여백)만 */
+  const clustersInView = useMemo(
+    () =>
+      regionClusters && viewport ? regionClusters.clusters.filter((c) => inBox(viewport, c)) : [],
+    [regionClusters, viewport],
+  );
+
+  /**
    * 실제로 그릴 것 — **화면 안(+여백)에 있는 것만**.
    *
    * 선택한 곳은 화면 밖이어도 남긴다. 목록에서 먼 곳을 누르면 아래 effect 가
    * 지도를 그 자리로 옮기는데, 그 사이 한 프레임 동안 마커가 없으면 선택 표시가
    * 깜빡인다. (지도가 멈추면 'idle' 로 viewport 가 갱신돼 자연히 들어온다)
+   *
+   * 묶어서 볼 때는 점을 찍지 않는다. 남는 것은 선택한 곳(묶음 위에 떠서 어디인지
+   * 보인다)과 주소로 구역을 못 읽은 곳(regionClusters.loose)뿐이다.
    */
   const inView = useMemo(() => {
     if (!viewport) return [];
     // 계측 패널이 컬링을 끈 상태 — 최적화 이전처럼 전국을 다 얹는다 (`/?perf=1`).
     if (cullingOff) return arcades;
+    if (regionClusters) {
+      const shown = regionClusters.loose.filter((a) => inBox(viewport, a));
+      const selected = arcades.find((a) => a.id === selectedId);
+      if (selected && !shown.includes(selected)) shown.push(selected);
+      return shown;
+    }
     return arcades.filter((a) => a.id === selectedId || inBox(viewport, a));
-  }, [arcades, viewport, selectedId, cullingOff]);
+  }, [arcades, viewport, selectedId, cullingOff, regionClusters]);
 
   // 사이드바가 같은 범위를 보게 알린다 (여백 포함 — 위 CULL_MARGIN).
   useEffect(() => {
@@ -504,13 +589,25 @@ export default function NaverMap({
     const pool = poolRef.current;
     const nextIds = new Set(inView.map((a) => a.id));
 
-    // 화면에서 빠진 것은 **숨겨서 모아 둔다** (떼어내지 않는다)
+    const clusterMarkers = clusterMarkersRef.current;
+    const nextClusterKeys = new Set(clustersInView.map((c) => c.key));
+
+    // 화면에서 빠진 것은 **숨겨서 모아 둔다** (떼어내지 않는다). 묶음도 먼저 거둬야
+    // 아래에서 새로 붙일 것들이 그 풀을 쓴다.
     markers.forEach((marker, id) => {
       if (!nextIds.has(id)) {
         marker.hide();
         pool.push(marker);
         markers.delete(id);
         markerShapeRef.current.delete(id);
+      }
+    });
+    clusterMarkers.forEach((marker, key) => {
+      if (!nextClusterKeys.has(key)) {
+        marker.hide();
+        pool.push(marker);
+        clusterMarkers.delete(key);
+        clusterShapeRef.current.delete(key);
       }
     });
 
@@ -570,16 +667,72 @@ export default function NaverMap({
       markerShapeRef.current.set(arcade.id, { arcade, z, content: icon.content });
     }
 
+    /**
+     * 묶음을 누르면 — 속한 오락실이 다 보이는 줌까지, 단 적어도 한 단계 안쪽으로
+     * (lib/region-cluster.ts 의 zoomForCluster). 묶음은 목록을 다시 받으면 새 객체가
+     * 되므로 누른 순간의 것을 열쇠로 다시 찾는다 — 리스너가 옛 범위를 붙들지 않게.
+     */
+    const zoomIntoCluster = (key: string) => {
+      const m = usableMap(mapRef.current);
+      const el = containerRef.current;
+      const cluster = regionClustersRef.current?.clusters.find((c) => c.key === key);
+      if (!m || !el || !cluster) return;
+      const { bounds } = cluster;
+      m.setCenter(
+        new naver.maps.LatLng(
+          (bounds.minLat + bounds.maxLat) / 2,
+          (bounds.minLng + bounds.maxLng) / 2,
+        ),
+      );
+      m.setZoom(zoomForCluster(cluster, el.clientWidth, el.clientHeight));
+    };
+
+    for (const cluster of clustersInView) {
+      const labeled = labeledClusters?.has(cluster.key) ?? true;
+      const content = clusterIcon(cluster, labeled);
+      const z = labeled ? CLUSTER_LABELED_Z : CLUSTER_Z;
+      const existing = clusterMarkers.get(cluster.key);
+      const shown = clusterShapeRef.current.get(cluster.key);
+      if (existing) {
+        // 오락실 마커와 같다 — 바뀐 것만 쓴다. 목록을 다시 받으면 평균 자리가 옮겨 갈 수 있다.
+        if (shown?.content !== content) existing.setContent(content);
+        if (shown?.z !== z) existing.setZIndexValue(z);
+        if (shown?.lat !== cluster.lat || shown?.lng !== cluster.lng) {
+          existing.setPosition(new naver.maps.LatLng(cluster.lat, cluster.lng));
+        }
+      } else {
+        const position = new naver.maps.LatLng(cluster.lat, cluster.lng);
+        const anchor = new naver.maps.Point(0, 0);
+        const onClick = () => zoomIntoCluster(cluster.key);
+        const recycled = pool.pop();
+        if (recycled) recycled.reuse({ position, content, anchor, zIndex: z, onClick });
+        clusterMarkers.set(
+          cluster.key,
+          recycled ?? new HtmlOverlayCtor({ position, map, zIndex: z, content, anchor, onClick }),
+        );
+      }
+      clusterShapeRef.current.set(cluster.key, { content, z, lat: cluster.lat, lng: cluster.lng });
+    }
+
     // 모아 둔 것이 화면 하나 분량을 넘으면 그만큼은 진짜로 떼어낸다.
     while (pool.length > MARKER_POOL_MAX) pool.pop()?.setMap(null);
 
     reportSync({
-      markers: markers.size,
+      markers: markers.size + clusterMarkers.size,
       total: arcades.length,
       syncMs: performance.now() - perfT0,
       drawCalls: drawTally.n - perfDraw0,
     });
-  }, [inView, selectedId, ready, onSelect, rankById, arcades.length]);
+  }, [
+    inView,
+    selectedId,
+    ready,
+    onSelect,
+    rankById,
+    arcades.length,
+    clustersInView,
+    labeledClusters,
+  ]);
 
   // ── 선택한 오락실을 화면 정중앙으로 ────────────────────────
   /**
