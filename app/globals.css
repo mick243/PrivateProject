@@ -521,16 +521,6 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.filter-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.filter-row select {
-  width: auto;
-  flex: 1;
-}
-
 .chips {
   display: flex;
   flex-wrap: wrap;

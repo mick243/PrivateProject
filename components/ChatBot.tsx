@@ -63,7 +63,7 @@ function formatOutcome(outcome: SearchOutcome, order: PriorityOrder): string {
   ];
 
   if (!hasOrigin) {
-    lines.push('', '기준점이 없어 거리는 빼고 매겼습니다. 왼쪽 "내 위치"를 켜면 다시 매깁니다.');
+    lines.push('', '기준점이 없어 거리는 빼고 매겼습니다. 지도 왼쪽 아래 내 위치 단추를 켜면 다시 매깁니다.');
   }
 
   if (outcome.stale) {
