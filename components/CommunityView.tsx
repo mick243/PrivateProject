@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  isPostSort,
   POPULAR_MIN_LIKES,
   POSTS_PAGE_SIZE,
   type Board,
@@ -16,6 +17,7 @@ import {
 import { forgetPost, prefetchPost } from '@/lib/post-cache';
 import { usePlayerId } from '@/lib/use-player';
 import { useSearchEnter } from '@/lib/use-search-enter';
+import { savedNumber, savedString, useSessionSnapshot } from '@/lib/use-session-snapshot';
 import GameTabs from './GameTabs';
 import Pagination from './Pagination';
 import ScrollStrip from './ScrollStrip';
@@ -230,6 +232,35 @@ export default function CommunityView() {
   };
   const search = useSearchEnter(submitSearch);
 
+  /*
+   * 새로고침해도 보던 목록으로 — 게임 탭 · 말머리 · 정렬 · 검색어 · 페이지 (lib/use-session-snapshot.ts).
+   * 열어 둔 글은 주소(?post=)가 따로 맡는다.
+   *
+   * 검색어는 조회에 쓰인 값(debouncedQ)을 적고, 되살릴 때 두 값을 함께 넣어 300ms 를 기다리지 않는다.
+   * 페이지가 1로 끌려가지 않는 이유: 위 디바운스 타이머는 화면이 열린 첫 실행에서는 페이지를
+   * 건드리지 않고(searchStarted), 탭 · 말머리의 resetPaging 은 누를 때만 불린다.
+   */
+  useSessionSnapshot(
+    'community:list',
+    { machineId, category, sort, q: debouncedQ, page },
+    (saved) => {
+      if (saved.machineId === null || Number.isInteger(saved.machineId)) {
+        setMachineId(saved.machineId as number | null);
+      }
+      if (saved.category === null || typeof saved.category === 'string') {
+        setCategory(saved.category as string | null);
+      }
+      if (typeof saved.sort === 'string' && isPostSort(saved.sort)) setSort(saved.sort);
+      const savedQ = savedString(saved.q);
+      if (savedQ) {
+        setQ(savedQ);
+        setDebouncedQ(savedQ);
+      }
+      const savedPage = savedNumber(saved.page);
+      if (savedPage !== undefined && Number.isInteger(savedPage) && savedPage >= 1) setPage(savedPage);
+    },
+  );
+
   /**
    * 지우기 — 화면의 값과 조회에 쓰인 값을 함께 비우고 1페이지로 돌린다.
    * setQ 만 하면 목록이 300ms 뒤에야 돌아와 "안 먹었다" 로 읽힌다.
@@ -249,7 +280,14 @@ export default function CommunityView() {
    */
   const term = debouncedQ.trim();
 
+  /**
+   * 조회 순번 — 늦게 도착한 **옛 조건의** 응답이 최신 목록을 덮어쓰지 않게 한다 (ArcadeFinder 의
+   * reqSeq 와 같다). 새로고침 뒤 되살리기(아래 useSessionSnapshot)는 화면이 열리며 나간 기본값
+   * 조회와 되살린 조건의 조회를 거의 동시에 보내므로, 이게 없으면 둘 중 늦게 온 쪽이 이긴다.
+   */
+  const loadSeq = useRef(0);
   const loadPosts = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
       const params = new URLSearchParams({
@@ -263,6 +301,7 @@ export default function CommunityView() {
 
       const res = await fetch(`/api/posts?${params}`);
       const data = await res.json().catch(() => ({}));
+      if (seq !== loadSeq.current) return;
       if (!res.ok) {
         setLoadError(data.error ?? `글 목록을 불러오지 못했습니다 (${res.status})`);
         return;
@@ -286,9 +325,9 @@ export default function CommunityView() {
       setPosts(list);
       setTotal(count);
     } catch {
-      setLoadError('네트워크에 연결하지 못했습니다');
+      if (seq === loadSeq.current) setLoadError('네트워크에 연결하지 못했습니다');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
     // playerId 는 요청에 쓰이지 않지만 의존성에는 남깁니다 — 내 추천 여부를
     // 서버가 세션에서 읽으므로 로그인한 사람이 바뀌면 응답도 달라집니다

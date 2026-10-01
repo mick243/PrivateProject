@@ -71,6 +71,23 @@ export interface MapPaneProps {
    * 거리(street) 수준까지 당깁니다. 기준점(center)은 건드리지 않습니다.
    */
   focusPoint?: { lat: number; lng: number; zoom?: number; nonce: number } | null;
+  /**
+   * 지도를 **처음 만들 때** 이 자리 · 줌으로 연다 — 새로고침 전에 보던 화면 (ArcadeFinder 의
+   * MAP_VIEW_STORE_KEY). 이걸로 열면 "첫 기준점으로 한 번 옮기기" 는 건너뛰고, selectedId 가
+   * 같은 오락실이면 그쪽으로 다시 옮기지도 않는다 — 보던 화면이 이미 그 결과다.
+   * 만든 뒤에 바뀌는 값은 보지 않는다. 대체 지도(FallbackMap)는 쓰지 않는다.
+   */
+  initialView?: MapView | null;
+  /** 지도가 멈출 때마다('idle') 지금 가운데 · 줌을 알린다 — 새로고침 뒤 되살리려고 적어 둔다 */
+  onViewChange?: (view: MapView) => void;
+}
+
+/** 지도의 가운데와 줌. selectedId 는 그 화면에서 선택돼 있던 오락실 (initialView 에서만) */
+export interface MapView {
+  lat: number;
+  lng: number;
+  zoom: number;
+  selectedId?: number | null;
 }
 
 // 지도 SDK 는 브라우저 전용이라 SSR 을 끈다.

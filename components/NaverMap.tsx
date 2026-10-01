@@ -358,6 +358,8 @@ export default function NaverMap({
   focusNonce = 0,
   centerNonce = 0,
   focusPoint = null,
+  initialView = null,
+  onViewChange,
   onSdkError,
 }: MapPaneProps & {
   /** SDK 를 못 띄웠을 때 (인증 실패·타임아웃). MapPane 이 FallbackMap 으로 갈아탄다 */
@@ -410,6 +412,11 @@ export default function NaverMap({
   // 기준점이 처음 잡혔을 때는 한 번 이동해 줘야 하지만, 그 뒤로는 사용자가
   // 지도를 끌어 놓은 자리를 GPS 가 매번 되돌리면 안 된다 (따라가기 모드 제외).
   const hadCenterRef = useRef(false);
+  /**
+   * 새로고침 전 화면(initialView)으로 열었다 — 그다음 처음 잡히는 기준점으로는 옮기지 않는다.
+   * 기준점(되살린 값)이 지도보다 늦게 들어와도 보던 화면을 빼앗지 않으려고 따로 둔다.
+   */
+  const openedFromViewRef = useRef(false);
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -427,6 +434,11 @@ export default function NaverMap({
   const onPickRef = useRef(onPick);
   pickingRef.current = picking;
   onPickRef.current = onPick;
+  // 지도는 SDK 를 받은 **뒤에** 만든다 — 그 사이 되살린 값이 들어올 수 있어 최신 값을 ref 로 읽는다
+  const initialViewRef = useRef(initialView);
+  const onViewChangeRef = useRef(onViewChange);
+  initialViewRef.current = initialView;
+  onViewChangeRef.current = onViewChange;
 
   // ── 지도 초기화 ────────────────────────────────────────────
   useEffect(() => {
@@ -462,12 +474,20 @@ export default function NaverMap({
       .then(() => {
         if (disposed || !containerRef.current) return;
         if (!naverMapsUsable()) throw new Error('SDK 가 로드 직후 내려앉았습니다');
+        // 새로고침 전 화면이 있으면 그 자리 · 줌으로 연다 (MapPaneProps.initialView)
+        const view = initialViewRef.current;
+        if (view) {
+          openedFromViewRef.current = true;
+          // 그 화면에서 선택돼 있던 오락실로는 다시 옮기지 않는다 — 아래 선택 센터링의 열쇠와
+          // 같은 모양으로 '이미 옮겼음' 을 적어 둔다 (focusNonce 는 새 화면에서 0 부터 센다).
+          if (view.selectedId != null) centeredFor.current = `${view.selectedId}:0`;
+        }
         const map = new naver.maps.Map(containerRef.current, {
           center: new naver.maps.LatLng(
-            center?.lat ?? DEFAULT_CENTER.lat,
-            center?.lng ?? DEFAULT_CENTER.lng,
+            view?.lat ?? center?.lat ?? DEFAULT_CENTER.lat,
+            view?.lng ?? center?.lng ?? DEFAULT_CENTER.lng,
           ),
-          zoom: 12,
+          zoom: view?.zoom ?? 12,
           zoomControl: true,
           scaleControl: false,
           mapDataControl: false,
@@ -488,6 +508,8 @@ export default function NaverMap({
           if (!usableMap(map)) return;
           setViewport(readViewport(map));
           setMapZoom(map.getZoom());
+          const c = map.getCenter();
+          onViewChangeRef.current?.({ lat: c.lat(), lng: c.lng(), zoom: map.getZoom() });
         });
 
         // 인증 실패는 여기까지 온 **뒤에** 온다 — 그때 FallbackMap 으로 넘긴다.
@@ -849,15 +871,44 @@ export default function NaverMap({
     };
   }, [ready]);
 
+  // ── 기준점 따라가기 ────────────────────────────────────────
+  /*
+   * 첫 기준점에서 한 번, 그리고 추적 중(followCenter)에는 좌표가 올 때마다 지도를 옮긴다.
+   *
+   * 반경 원과 나눠 둔 이유: 전에는 원을 그리는 effect 안에 있어서, 반경을 '전체'(원 없음)로
+   * 두면 원이 없다는 이유로 일찍 빠져나가 **추적 중인데 지도가 따라가지 않았다** (2026-10-01 —
+   * "위치 추적은 켠 채로 반경만 끄기" 를 만들다 드러남). 따라가기는 원이 있든 없든 같아야 한다.
+   */
+  useEffect(() => {
+    const map = usableMap(mapRef.current);
+    if (!ready || !map) return;
+    if (!center) {
+      hadCenterRef.current = false;
+      return;
+    }
+    const firstCenter = !hadCenterRef.current && !openedFromViewRef.current;
+    if (followCenter || firstCenter) {
+      map.setCenter(new naver.maps.LatLng(center.lat, center.lng));
+    }
+    hadCenterRef.current = true;
+    openedFromViewRef.current = false;
+  }, [center, ready, followCenter]);
+
   // ── 반경 검색 원 ───────────────────────────────────────────
+  /** 직전 반경. '전체'(없음)에서 반경을 다시 건 순간을 알아보려고 둔다 */
+  const prevRadiusRef = useRef<number | null | undefined>(undefined);
   useEffect(() => {
     const map = usableMap(mapRef.current);
     if (!ready || !map) return;
 
+    // 반경을 '전체' 에서 다시 걸면 그 원이 보이게 기준점으로 한 번 옮긴다 — 따라가기를
+    // 떼어 내기 전에도 그렇게 움직였다. 첫 실행(되살린 값 포함)은 기록만 한다.
+    const turnedOn = prevRadiusRef.current !== undefined && !prevRadiusRef.current && !!radiusKm;
+    prevRadiusRef.current = radiusKm;
+
     if (!center || !radiusKm) {
       circleRef.current?.setMap(null);
       circleRef.current = null;
-      hadCenterRef.current = false;
       return;
     }
 
@@ -878,10 +929,8 @@ export default function NaverMap({
       circleRef.current.setCenter(latlng);
       circleRef.current.setRadius(radiusKm * 1000);
     }
-
-    if (followCenter || !hadCenterRef.current) map.setCenter(latlng);
-    hadCenterRef.current = true;
-  }, [center, radiusKm, ready, followCenter]);
+    if (turnedOn) map.setCenter(latlng);
+  }, [center, radiusKm, ready]);
 
   /**
    * 지역 검색으로 기준점이 뛰었을 때 — 이번 한 번은 지도를 세게 옮긴다.

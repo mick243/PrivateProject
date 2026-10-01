@@ -1068,6 +1068,38 @@ a.btn {
 .unselect-fab:hover {
   border-color: var(--line-strong);
 }
+/* 지도 위 '반경 ✕' — 내 위치 단추(.locate-fab) 바로 위 (components/ArcadeFinder.tsx).
+   옆이 아니라 위인 이유: 모바일에서는 그 오른쪽이 아래 가운데 이동 막대(.histbar) 자리다.
+   bottom 64px = 단추 16px + 40px + 간격 8px. 생김새는 .unselect-fab 과 같다. */
+.radius-fab {
+  position: absolute;
+  left: 16px;
+  bottom: 64px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 12px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--panel-float);
+  color: var(--text);
+  font-size: var(--t3);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.radius-fab svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  color: var(--muted);
+}
+.radius-fab:hover {
+  border-color: var(--line-strong);
+}
 .locate-fab:hover {
   border-color: var(--accent-2);
   color: var(--text);

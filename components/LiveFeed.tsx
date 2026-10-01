@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   REPORT_KIND_LABEL,
   timeAgo,
@@ -12,6 +12,7 @@ import {
 } from '@/lib/community-types';
 import type { Machine } from '@/lib/types';
 import { useSearchEnter } from '@/lib/use-search-enter';
+import { savedString, useSessionSnapshot } from '@/lib/use-session-snapshot';
 import { useIsAdmin } from '@/lib/use-session';
 
 /**
@@ -102,6 +103,22 @@ export default function LiveFeed() {
   };
   const search = useSearchEnter(submitSearch);
 
+  // 새로고침해도 고른 필터 그대로 — 종류 · 기간 · 기종 · 검색어 (lib/use-session-snapshot.ts)
+  useSessionSnapshot('live:feed', { kindKey, hours, machineId, q: debouncedQ }, (saved) => {
+    if (typeof saved.kindKey === 'string' && KIND_FILTERS.some((f) => f.key === saved.kindKey)) {
+      setKindKey(saved.kindKey);
+    }
+    if (RANGES.some((r) => r.hours === saved.hours)) setHours(saved.hours as number | null);
+    if (saved.machineId === '' || Number.isInteger(saved.machineId)) {
+      setMachineId(saved.machineId as number | '');
+    }
+    const savedQ = savedString(saved.q);
+    if (savedQ) {
+      setQ(savedQ);
+      setDebouncedQ(savedQ);
+    }
+  });
+
   /**
    * 지우기 — 화면의 값과 조회에 쓰인 값을 **함께** 비운다.
    *
@@ -121,7 +138,13 @@ export default function LiveFeed() {
    */
   const term = debouncedQ.trim();
 
+  /**
+   * 조회 순번 — 늦게 도착한 옛 조건의 응답이 최신 목록을 덮어쓰지 않게 한다. 새로고침 뒤
+   * 되살리기(아래 useSessionSnapshot)는 기본값 조회와 되살린 조건의 조회를 거의 동시에 보낸다.
+   */
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     const filter = KIND_FILTERS.find((f) => f.key === kindKey);
     // sinceHours 를 **빼면** 기간 조건이 없는 조회입니다 ('전체').
     const params = new URLSearchParams({ limit: '80' });
@@ -134,6 +157,7 @@ export default function LiveFeed() {
     try {
       const res = await fetch(`/api/reports?${params}`);
       const data = await res.json().catch(() => ({}));
+      if (seq !== loadSeq.current) return;
       if (!res.ok) {
         setLoadError(data.error ?? `제보를 불러오지 못했습니다 (${res.status})`);
         return;
@@ -143,9 +167,9 @@ export default function LiveFeed() {
       setFetchedAt(Date.now());
     } catch {
       // 30초마다 다시 시도하므로 옛 목록은 그대로 두고 문구만 띄운다
-      setLoadError('네트워크에 연결하지 못했습니다');
+      if (seq === loadSeq.current) setLoadError('네트워크에 연결하지 못했습니다');
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [kindKey, hours, machineId, term]);
 
