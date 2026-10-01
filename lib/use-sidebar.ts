@@ -14,6 +14,10 @@ import { useCallback, useState } from 'react';
  * 고정된 뒤에는 그 값이 쓰일 자리가 없어졌습니다 — 저장된 '열림' 을 되살리면
  * 켤 때마다 접혀 있어야 한다는 규칙과 그대로 부딪힙니다. 규칙이 둘이면 화면은
  * 반드시 한쪽을 어깁니다.
+ *
+ * 예외는 **같은 창에서 새로고침했을 때**입니다(2026-10-01). 그건 앱을 켠 게 아니라 보던 화면을
+ * 다시 읽은 것이라, 펼쳐 둔 목록은 펼친 채로 돌아옵니다 — 되살리는 쪽은 ArcadeFinder 의
+ * VIEW_STORE_KEY(sessionStorage)이고, 창을 닫으면 사라지므로 위 규칙과 부딪히지 않습니다.
  */
 export function useSidebarOpen(): {
   open: boolean;

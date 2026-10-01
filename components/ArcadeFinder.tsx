@@ -29,9 +29,16 @@ import { useFavorites } from '@/lib/use-favorites';
 import { useIsAdmin } from '@/lib/use-session';
 import { useLiveLocation } from '@/lib/use-live-location';
 import { usePriorityOrder } from '@/lib/use-priority';
+import { useSearchEnter } from '@/lib/use-search-enter';
+import {
+  savedCoord,
+  savedNumber,
+  savedString,
+  useSessionSnapshot,
+} from '@/lib/use-session-snapshot';
 import { useSidebarOpen } from '@/lib/use-sidebar';
 import ScrollStrip from './ScrollStrip';
-import MapPane, { type Coord } from './MapPane';
+import MapPane, { type Coord, type MapView } from './MapPane';
 import ArcadeList from './ArcadeList';
 import Pagination from './Pagination';
 import ArcadeForm from './ArcadeForm';
@@ -46,13 +53,16 @@ const MapPerfPanel = dynamic(() => import('./MapPerfPanel'), { ssr: false });
 
 const RADIUS_OPTIONS = [1, 3, 5, 10, 30];
 
+/** 처음 열었을 때 · 위치 추적을 다시 켤 때의 반경(km) */
+const DEFAULT_RADIUS_KM = 5;
+
 /**
  * "반경 전체" — 기준점은 있지만 반경으로 자르지 않는 상태.
  *
  * 지역 검색으로 이동한 직후의 기본값입니다. 이동하자마자 5km 로 잘라 버리면
  * "그 동네에 뭐가 있나" 를 보러 온 사람이 원 밖을 볼 수 없습니다 — 목록은
  * 어차피 지도 화면으로 좁혀지므로(inViewport) 반경 없이도 주변만 보입니다.
- * 좁히고 싶을 때만 위의 옵션에서 고릅니다.
+ * 좁히고 싶을 때만 지도 위 반경 칩에서 고릅니다.
  */
 const RADIUS_NONE = 0;
 
@@ -101,6 +111,59 @@ const MAP_RANK_TOP = 3;
  */
 const SELECTED_STORE_KEY = 'arcade-finder:selected';
 
+/**
+ * 새로고침해도 돌아오는 화면 상태 — 검색어 · 기종 · 반경 · 위치 추적 · 기준점 · 정렬 · 목록 펼침
+ * (lib/use-session-snapshot.ts). 선택한 오락실은 위 SELECTED_STORE_KEY 가 따로 맡는다.
+ * 목록 페이지는 남기지 않는다 — 목록이 "지도에 보이는 곳" 이라 지도가 다시 그려지고 GPS 가
+ * 들어오는 동안 1페이지로 돌아가는 규칙(아래 setPage(1) effect)과 부딪힌다.
+ */
+const VIEW_STORE_KEY = 'arcade-finder:view';
+
+/** 새로고침 전에 보던 지도의 가운데 · 줌. 지도가 멈출 때마다 적는다 (state 를 거치지 않는다) */
+const MAP_VIEW_STORE_KEY = 'arcade-finder:map';
+
+/** sessionStorage 에 남은 선택 (SELECTED_STORE_KEY) — 없거나 깨졌으면 null */
+function storedSelectedId(): number | null {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SELECTED_STORE_KEY) ?? 'null') as {
+      id?: unknown;
+    } | null;
+    return typeof saved?.id === 'number' && Number.isInteger(saved.id) ? saved.id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 이 화면으로 **돌아온** 것인가(새로고침 · 다른 탭에 다녀옴), 딥링크로 **다른 오락실을 보러** 왔나.
+ *
+ * 실시간 피드의 `/finder?arcade=3` 처럼 남아 있는 선택과 다른 오락실로 들어왔으면 새로 온 것이다 —
+ * 그때 옛 필터를 되살리면 그 오락실이 걸러져 지도가 찾아가지 못할 수 있다. 상세를 연 채 새로고침하면
+ * 주소에 남은 `?arcade=` 가 남아 있는 선택과 같으므로 돌아온 것으로 본다.
+ */
+function isReturnVisit(initialArcadeId: number | null): boolean {
+  return initialArcadeId === null || storedSelectedId() === initialArcadeId;
+}
+
+/**
+ * 새로고침 전에 보던 지도 화면. 지도는 서버에서 그리지 않으므로(MapPane 의 ssr:false) 첫 렌더에서
+ * 바로 읽어도 hydration 과 어긋나지 않는다 — 그래야 지도를 만드는 순간 이미 손에 있다.
+ */
+function readStoredMapView(initialArcadeId: number | null): MapView | null {
+  if (typeof window === 'undefined' || !isReturnVisit(initialArcadeId)) return null;
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(MAP_VIEW_STORE_KEY) ?? 'null') as {
+      zoom?: unknown;
+    } | null;
+    const at = savedCoord(saved);
+    const zoom = savedNumber(saved?.zoom);
+    if (!at || zoom === undefined) return null;
+    return { ...at, zoom, selectedId: storedSelectedId() };
+  } catch {
+    return null;
+  }
+}
+
 type Mode = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; arcade: Arcade };
 
 /**
@@ -123,6 +186,19 @@ export default function ArcadeFinder() {
   const initialArcadeId = Number(searchParams.get('arcade')) || null;
   /** `/?perf=1` — 지도 성능 계측 패널. 개발용이라 주소로만 켜진다 */
   const showPerf = searchParams.get('perf') === '1';
+
+  /** 새로고침 전에 보던 지도 화면 — 지도를 처음 만들 때만 쓴다 (readStoredMapView 주석) */
+  const [initialMapView] = useState(() => readStoredMapView(initialArcadeId));
+  const saveMapView = useCallback((view: MapView) => {
+    try {
+      sessionStorage.setItem(
+        MAP_VIEW_STORE_KEY,
+        JSON.stringify({ lat: view.lat, lng: view.lng, zoom: view.zoom }),
+      );
+    } catch {
+      // 저장이 막혀도 지도 동작에는 지장이 없다
+    }
+  }, []);
 
   /**
    * 오락실 레코드(이름·주소·좌표·보유 기종)를 고치는 건 관리자만이다.
@@ -154,7 +230,7 @@ export default function ArcadeFinder() {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [machineIds, setMachineIds] = useState<number[]>([]);
-  const [radiusKm, setRadiusKm] = useState<number>(5);
+  const [radiusKm, setRadiusKm] = useState<number>(DEFAULT_RADIUS_KM);
 
   // ── 기준점 ────────────────────────────────────────────────
   // 두 갈래다. GPS 추적 중이면 실시간 좌표가, 아니면 마지막으로 붙잡아 둔
@@ -701,22 +777,35 @@ export default function ArcadeFinder() {
   );
 
   // ── 위치 ───────────────────────────────────────────────────
-  const startFollow = () => {
+  /** 추적만 켠다 — 반경은 건드리지 않는다 (새로고침 되살리기가 저장된 반경 그대로 켤 때 쓴다) */
+  const beginFollow = () => {
     setFollow(true);
     live.start();
   };
 
-  /** 추적만 끄고 마지막 좌표는 기준점으로 남긴다 */
-  const stopFollow = () => {
-    setFixedCenter(live.coord ?? fixedCenter);
-    setFollow(false);
-    live.stop();
+  /**
+   * 내 위치 추적 켜기 (지도의 내 위치 단추).
+   * 끌 때 반경을 풀므로(stopFollow), 반경이 없으면 처음 켤 때처럼 기본 반경으로 건다 —
+   * 안 그러면 한 번 껐다 켠 뒤로는 원이 다시 나오지 않는다.
+   */
+  const startFollow = () => {
+    beginFollow();
+    setRadiusKm((r) => (r === RADIUS_NONE ? DEFAULT_RADIUS_KM : r));
   };
 
-  const clearCenter = () => {
+  /**
+   * 추적 끄기 = **위치 해제**. 기준점 · 반경 · "○○ 주변을 보는 중" 안내까지 모두 지운다.
+   *
+   * 전에는 마지막 좌표를 기준점으로 남기고, 기준점을 지우는 것은 사이드바의 '위치 해제' 가
+   * 따로 맡았다. 그 줄(내 위치 · 반경 선택 · 위치 해제)을 지도 쪽 단추와 겹친다며 걷어 낸 뒤로는
+   * (2026-10-01) 이 단추가 위치를 지우는 유일한 길이라, 끄면 위치를 쓰기 전으로 돌아간다.
+   * 원이 남아 "꺼진 게 맞나" 가 되던 것(같은 날 먼저 고침)도 함께 풀린다.
+   */
+  const stopFollow = () => {
     setFollow(false);
     live.stop();
     setFixedCenter(null);
+    setRadiusKm(RADIUS_NONE);
     setPlaceNotice(null);
   };
 
@@ -765,7 +854,7 @@ export default function ArcadeFinder() {
     setFixedCenter({ lat: arcade.lat, lng: arcade.lng });
     setRadiusKm(RADIUS_NONE);
     setQ('');
-    setPlaceNotice(`'${arcade.name}' 주변을 보는 중 — 필요하면 위에서 반경을 걸 수 있습니다.`);
+    setPlaceNotice(`'${arcade.name}' 주변을 보는 중 — 필요하면 지도 왼쪽 아래 반경 칩에서 반경을 걸 수 있습니다.`);
     setFocusPoint((prev) => ({
       lat: arcade.lat,
       lng: arcade.lng,
@@ -817,7 +906,7 @@ export default function ArcadeFinder() {
       setSelectedId(null);
       closeDetail();
       setCenterNonce((n) => n + 1);
-      setPlaceNotice(`'${data.place.name}' 주변을 보는 중 — 필요하면 위에서 반경을 걸 수 있습니다.`);
+      setPlaceNotice(`'${data.place.name}' 주변을 보는 중 — 필요하면 지도 왼쪽 아래 반경 칩에서 반경을 걸 수 있습니다.`);
     } catch {
       setPlaceNotice('네트워크 오류로 지역을 찾지 못했습니다');
     } finally {
@@ -829,6 +918,43 @@ export default function ArcadeFinder() {
     setMachineIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+
+  // ── 새로고침해도 그 자리로 ─────────────────────────────────
+  // 적어 두는 것과 되살리는 것은 VIEW_STORE_KEY 주석. 위치 추적이 켜져 있었으면 다시 켠다 —
+  // 브라우저가 위치 권한을 다시 물을 수 있다(권한을 '허용' 으로 둔 사이트면 묻지 않는다).
+  useSessionSnapshot(
+    VIEW_STORE_KEY,
+    { q, machineIds, radiusKm, follow, center: fixedCenter, sort, placeNotice, sidebarOpen },
+    (saved) => {
+      if (!isReturnVisit(initialArcadeId)) return;
+      const savedQ = savedString(saved.q);
+      if (savedQ) {
+        setQ(savedQ);
+        setDebouncedQ(savedQ); // 300ms 를 기다리지 않고 그 검색어로 바로 조회한다
+      }
+      if (Array.isArray(saved.machineIds)) {
+        setMachineIds(saved.machineIds.filter((id): id is number => Number.isInteger(id)));
+      }
+      const radius = savedNumber(saved.radiusKm);
+      if (radius === RADIUS_NONE || (radius !== undefined && RADIUS_OPTIONS.includes(radius))) {
+        setRadiusKm(radius);
+      }
+      const center = savedCoord(saved.center);
+      if (center) {
+        setFixedCenter(center);
+        // "○○ 주변을 보는 중" 은 그 기준점의 설명이라 기준점이 있을 때만 되살린다
+        const notice = savedString(saved.placeNotice);
+        if (notice) setPlaceNotice(notice);
+      }
+      if (saved.sort === 'score' || saved.sort === 'distance' || saved.sort === 'rating') {
+        setSort(saved.sort);
+      }
+      if (saved.sidebarOpen === true) setSidebarOpen(true);
+      // startFollow 가 아니다 — 그쪽은 반경이 없으면 기본 반경을 거는데, 되살릴 때는 저장된
+      // 반경('반경 탐색 해제' 포함)을 그대로 둬야 한다.
+      if (saved.follow === true) beginFollow();
+    },
+  );
 
   // ── 액션 ───────────────────────────────────────────────────
   // 등록·수정 폼은 사이드바 안에 뜬다. 접어 둔 채로 열면 아무 일도 일어나지
@@ -1052,6 +1178,9 @@ export default function ArcadeFinder() {
     }
     void jumpToPlace();
   };
+  // 엔터 = jumpBySearch. 모바일 키보드의 입력 키 · 한글 조합 중 엔터까지 받고, 터치
+  // 화면에서는 키보드를 내려 지도가 보이게 한다 (lib/use-search-enter.ts).
+  const search = useSearchEnter(() => jumpBySearch());
 
   const layoutClass = [
     'layout',
@@ -1087,16 +1216,14 @@ export default function ArcadeFinder() {
         {mode.kind === 'list' ? (
           <>
             <section className="filters">
+              {/* Enter = 첫 매치 지점 또는 지역으로 이동 (topMatch 주석).
+                  지도 앱들의 손버릇 그대로다. */}
               <input
+                {...search.inputProps}
                 className="search"
                 placeholder="오락실 이름 · 주소 · 지역(역/동/로) 검색"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => {
-                  // Enter = 첫 매치 지점 또는 지역으로 이동 (topMatch 주석).
-                  // 지도 앱들의 손버릇 그대로다.
-                  if (e.key === 'Enter') jumpBySearch();
-                }}
               />
 
               {isPlaceQuery(q) && (
@@ -1115,41 +1242,13 @@ export default function ArcadeFinder() {
               )}
               {placeNotice && <p className="notice">{placeNotice}</p>}
 
-              <div className="filter-row">
-                {follow ? (
-                  <button type="button" className="btn btn-on" onClick={stopFollow}>
-                    따라가는 중
-                  </button>
-                ) : (
-                  <button type="button" className="btn" onClick={startFollow}>
-                    내 위치
-                  </button>
-                )}
-                <select
-                  value={radiusKm}
-                  onChange={(e) => setRadiusKm(Number(e.target.value))}
-                  disabled={!origin}
-                >
-                  {/* 옆의 '해제' 버튼(기준점 제거)과 헷갈리지 않게 '전체' 로 쓴다 */}
-                  <option value={RADIUS_NONE}>반경 전체</option>
-                  {RADIUS_OPTIONS.map((r) => (
-                    <option key={r} value={r}>
-                      반경 {r}km
-                    </option>
-                  ))}
-                </select>
-                {origin && (
-                  <button type="button" className="btn btn-sm" onClick={clearCenter}>
-                    해제
-                  </button>
-                )}
-              </div>
-
+              {/* 여기 있던 '내 위치 · 반경 선택 · 위치 해제' 줄은 지웠다 (2026-10-01) — 지도 위의
+                  내 위치 단추(켜기 · 끄기 = 위치 해제)와 반경 칩(바꾸기 · 해제)이 같은 일을 한다.
+                  모바일은 목록을 접은 채 지도만 보며 쓰는 게 기본이라 지도 쪽이 남았다. */}
               <LocationStatusLine
                 follow={follow}
                 status={live.status}
                 accuracyM={live.accuracyM}
-                hasOrigin={origin !== null}
                 onGoToMyLocation={goToMyLocation}
               />
               {live.error && <p className="warn">{live.error}</p>}
@@ -1254,6 +1353,8 @@ export default function ArcadeFinder() {
           followCenter={follow}
           rankById={mode.kind === 'list' ? rankById : null}
           onViewportChange={setMapViewport}
+          initialView={initialMapView}
+          onViewChange={saveMapView}
         />
 
         {/* 지도 왼쪽 아래 플로팅 버튼. .map-pane 이 position:relative 라
@@ -1264,6 +1365,45 @@ export default function ArcadeFinder() {
           onStart={startFollow}
           onStop={stopFollow}
         />
+
+        {/*
+          지도 위 반경 칩 (내 위치 단추 바로 위) — 누르면 반경을 **바꾸거나**, 맨 끝의
+          '반경 탐색 해제' 로 끈다. 위치 추적은 그대로 둔다.
+          모바일은 목록을 접은 채 지도와 내 위치 단추만 보며 쓰는 게 기본이라 지도 위에 둔다
+          (2026-10-01). 처음엔 '반경 5km ✕' 단추였는데, 반경을 보여 주는 칩인지 끄는 단추인지
+          헷갈렸다. native select 라 휴대폰에서는 운영체제의 고르기 화면이 뜬다.
+          **기준점이 있으면 반경이 없어도 띄운다**('반경 없음 ▾') — 사이드바의 반경 선택 상자를
+          걷어 낸 뒤로는 이게 반경을 거는 유일한 곳이라, 감추면 지역 검색으로 옮긴 뒤나 반경을
+          푼 뒤에 다시 걸 방법이 없다.
+        */}
+        {mode.kind === 'list' && origin && (
+          <label className="radius-fab" title="검색 반경 — 바꾸거나 해제">
+            <select
+              value={radiusKm}
+              onChange={(e) => setRadiusKm(Number(e.target.value))}
+              aria-label="검색 반경 — 바꾸거나 해제합니다 (위치 추적은 그대로)"
+            >
+              {RADIUS_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  반경 {r}km
+                </option>
+              ))}
+              {/* 반경이 걸려 있으면 '끄는 동작', 없으면 칩에 보이는 '지금 상태' 로 읽혀야 한다 */}
+              <option value={RADIUS_NONE}>{radiusKm > 0 ? '반경 탐색 해제' : '반경 없음'}</option>
+            </select>
+            {/* 눌러서 고르는 칸이라는 표시 (▾). 글자 위를 눌러도 select 가 받도록 클릭은 통과시킨다 */}
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M6 9l6 6 6-6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </label>
+        )}
 
         {/*
           지도 위 '선택 취소' (오른쪽 위). 선택을 풀 곳이 목록 줄의 '위치 찾기 취소' 뿐인데,
@@ -1359,7 +1499,7 @@ function listHint({
       : `화면 안에서 ${SIDEBAR_MAX_ITEMS}곳까지만 보여 줍니다. 지도를 확대하거나 검색·기종으로 걸러 보세요.`;
   }
   if (offscreen > 0) return `${offscreen}곳은 화면 밖에 있습니다.`;
-  if (!hasOrigin) return "'내 위치' 를 켜면 가까운 순으로 정리됩니다.";
+  if (!hasOrigin) return '지도 왼쪽 아래 내 위치 단추를 켜면 가까운 순으로 정리됩니다.';
   if (!canFavorite) return '로그인하면 즐겨찾기한 곳이 목록 맨 위에 옵니다.';
   return null;
 }
@@ -1448,13 +1588,11 @@ function LocationStatusLine({
   follow,
   status,
   accuracyM,
-  hasOrigin,
   onGoToMyLocation,
 }: {
   follow: boolean;
   status: ReturnType<typeof useLiveLocation>['status'];
   accuracyM: number | null;
-  hasOrigin: boolean;
   /** 추적 중인 좌표로 지도를 되돌린다 (추적 중일 때만 버튼이 붙는다) */
   onGoToMyLocation: () => void;
 }) {
@@ -1473,8 +1611,8 @@ function LocationStatusLine({
       </p>
     );
   }
-  if (!follow && hasOrigin) {
-    return <p className="muted small">마지막 위치를 기준점으로 쓰고 있습니다</p>;
-  }
+  // '마지막 위치를 기준점으로 쓰고 있습니다' 줄은 지웠다 — 추적을 끄면 기준점까지 지우므로
+  // (stopFollow) 그 상태가 더는 없다. 추적 없이 남는 기준점은 지역 검색 · 지점 이동 것이고,
+  // 그건 위의 "○○ 주변을 보는 중" 안내가 이미 말한다.
   return null;
 }

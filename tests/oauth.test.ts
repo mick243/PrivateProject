@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { GET as startOAuth } from '@/app/api/auth/oauth/[provider]/route';
+import { GET as oauthCallback } from '@/app/api/auth/oauth/[provider]/callback/route';
+import { GET as verifyEmail } from '@/app/api/auth/verify/route';
+import { appUrl } from '@/lib/app-url';
 import { safeNext } from '@/lib/auth-types';
 import {
   authorizeUrl,
@@ -10,7 +14,7 @@ import {
   redirectUri,
   sealState,
 } from '@/lib/oauth';
-import { oauthErrorMessage } from '@/lib/oauth-types';
+import { ENABLED_OAUTH_PROVIDERS, OAUTH_PROVIDERS, oauthErrorMessage } from '@/lib/oauth-types';
 
 /**
  * 소셜 로그인에서 **틀려도 조용한** 부분만 골라 봅니다.
@@ -82,6 +86,82 @@ describe('redirectUri — 콘솔에 등록한 주소와 한 글자도 달라선 
       'kakao',
     );
     expect(uri).toBe('https://a.com/api/auth/oauth/kakao/callback');
+  });
+});
+
+describe('되돌아오는 주소 — 프록시 뒤에서 내부 주소로 튕기지 않는다', () => {
+  // `next start -H 127.0.0.1 -p 3001` 뒤에서 라우트가 받는 request.url 은 이렇습니다.
+  // 2026-10-01 실서버가 `/login` 대신 `https://localhost:3001/login` 으로 돌려보냈습니다.
+  const internal = (path: string) =>
+    new Request(`https://localhost:3001${path}`, {
+      headers: { host: 'arcade.example.com', 'x-forwarded-proto': 'https' },
+    });
+  const ctx = (provider: string) => ({ params: Promise.resolve({ provider }) });
+
+  it('appUrl 은 APP_URL 위에 경로를 얹는다', () => {
+    process.env.APP_URL = 'https://arcade.example.com/';
+    expect(appUrl(internal('/x'), '/login?next=%2F').toString()).toBe(
+      'https://arcade.example.com/login?next=%2F',
+    );
+  });
+
+  it('시작 — 키가 없으면 바깥 주소의 /login 으로', async () => {
+    process.env.APP_URL = 'https://arcade.example.com';
+    const res = await startOAuth(internal('/api/auth/oauth/google?next=/community'), ctx('google'));
+    expect(res.headers.get('location')).toBe(
+      'https://arcade.example.com/login?next=%2Fcommunity&error=unconfigured',
+    );
+  });
+
+  it('콜백 — 실패해도 바깥 주소의 /login 으로', async () => {
+    process.env.APP_URL = 'https://arcade.example.com';
+    // state 쿠키가 없으니 토큰 교환 전에 끝납니다 (제공자·DB 를 부르지 않음)
+    const res = await oauthCallback(
+      internal('/api/auth/oauth/google/callback?code=c&state=s'),
+      ctx('google'),
+    );
+    expect(res.headers.get('location')).toBe(
+      'https://arcade.example.com/login?next=%2F&error=state',
+    );
+  });
+
+  it('인증 메일 링크 — 결과 화면도 바깥 주소로', async () => {
+    process.env.APP_URL = 'https://arcade.example.com';
+    // 토큰이 없으면 DB 를 보지 않고 invalid 로 끝납니다
+    const res = await verifyEmail(internal('/api/auth/verify'));
+    expect(res.headers.get('location')).toBe(
+      'https://arcade.example.com/verify-email?status=invalid',
+    );
+  });
+});
+
+describe('켜 둔 제공자 — ENABLED_OAUTH_PROVIDERS 에서 빼면 키가 있어도 막힌다', () => {
+  const req = (path: string) => new Request(`http://localhost:3000${path}`);
+  const ctx = (provider: string) => ({ params: Promise.resolve({ provider }) });
+  // 지금 꺼 둔 것 (2026-10-01 카카오). 다시 켜서 비면 아래 두 건은 건너뜁니다.
+  const disabled = OAUTH_PROVIDERS.filter((p) => !ENABLED_OAUTH_PROVIDERS.includes(p));
+
+  it('켜 둔 목록은 아는 제공자 안에서만 고른다', () => {
+    for (const p of ENABLED_OAUTH_PROVIDERS) expect(OAUTH_PROVIDERS).toContain(p);
+  });
+
+  it.skipIf(disabled.length === 0)('시작 — 꺼 둔 제공자는 제공자로 보내지 않는다', async () => {
+    const p = disabled[0];
+    process.env[providerSpec(p).clientIdEnv] = 'id';
+    process.env[providerSpec(p).clientSecretEnv] = 'secret';
+    const res = await startOAuth(req(`/api/auth/oauth/${p}?next=/`), ctx(p));
+    expect(res.headers.get('location')).toBe(
+      'http://localhost:3000/login?next=%2F&error=unconfigured',
+    );
+  });
+
+  it.skipIf(disabled.length === 0)('콜백 — 꺼 둔 제공자로 돌아온 요청도 받지 않는다', async () => {
+    const p = disabled[0];
+    process.env[providerSpec(p).clientIdEnv] = 'id';
+    const res = await oauthCallback(req(`/api/auth/oauth/${p}/callback?code=c&state=s`), ctx(p));
+    expect(res.headers.get('location')).toBe(
+      'http://localhost:3000/login?next=%2F&error=unconfigured',
+    );
   });
 });
 

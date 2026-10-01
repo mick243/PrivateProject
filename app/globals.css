@@ -521,16 +521,6 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
-.filter-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.filter-row select {
-  width: auto;
-  flex: 1;
-}
-
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -1067,6 +1057,64 @@ a.btn {
 }
 .unselect-fab:hover {
   border-color: var(--line-strong);
+}
+/* 지도 위 반경 칩 — 내 위치 단추(.locate-fab) 바로 위 (components/ArcadeFinder.tsx).
+   옆이 아니라 위인 이유: 모바일에서는 그 오른쪽이 아래 가운데 이동 막대(.histbar) 자리다.
+   bottom 64px = 단추 16px + 40px + 간격 8px. 겉모습은 .unselect-fab 과 같은 알약이고,
+   속은 native select 다 — 공용 select 규칙(폭 100% · 테두리 · 바탕)을 여기서 걷어 낸다. */
+.radius-fab {
+  position: absolute;
+  left: 16px;
+  bottom: 64px;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--panel-float);
+  color: var(--text);
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.radius-fab:hover {
+  border-color: var(--line-strong);
+}
+.radius-fab select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: auto;
+  height: 100%;
+  min-height: 0;
+  /* 오른쪽은 ▾ 자리 */
+  padding: 0 34px 0 14px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  /* 16px 아래면 iOS Safari 가 누를 때 화면을 확대해 버린다 */
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.radius-fab select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* 펼친 목록의 바탕 · 글자. select 바탕을 투명으로 둔 탓에 데스크톱 크롬이 목록을 흰 바탕에
+   그리면서 글자색은 다크 테마의 밝은 색을 그대로 물려받아 거의 안 보였다 (2026-10-01).
+   테마 토큰으로 못박는다 — 라이트면 흰 바탕 · 진한 글자, 다크면 어두운 바탕 · 밝은 글자.
+   휴대폰의 고르기 화면은 운영체제가 그려서 이 값을 쓰지 않는다. */
+.radius-fab option {
+  background-color: var(--panel);
+  color: var(--text);
+}
+.radius-fab svg {
+  position: absolute;
+  right: 12px;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  pointer-events: none;
 }
 .locate-fab:hover {
   border-color: var(--accent-2);

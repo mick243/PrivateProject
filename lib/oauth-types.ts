@@ -6,10 +6,23 @@
  * (lib/auth-types.ts 와 같은 규칙).
  */
 
-/** 버튼에 그려지는 순서이기도 합니다 */
+/** 코드가 아는 제공자 전부 — lib/oauth.ts 의 PROVIDERS 표와 짝입니다 */
 export const OAUTH_PROVIDERS = ['google', 'kakao', 'naver'] as const;
 
 export type OAuthProviderId = (typeof OAUTH_PROVIDERS)[number];
+
+/**
+ * 지금 **켜 둔** 제공자 — 버튼에 그려지는 순서이기도 합니다.
+ *
+ * 여기서 빠진 제공자는 버튼이 사라지고, 주소를 직접 쳐서 들어와도 시작 · 콜백 라우트가
+ * `/login?error=unconfigured` 로 돌려보냅니다(서버에 키가 들어 있어도). 표(PROVIDERS)와
+ * 키는 그대로 두므로 다시 켤 때는 주석 한 줄만 풀면 됩니다.
+ */
+export const ENABLED_OAUTH_PROVIDERS: readonly OAuthProviderId[] = [
+  'google',
+  // 'kakao', // 2026-10-01 잠시 끔 — 카카오 개발자 콘솔 설정(리다이렉트 URI · 사이트 도메인 · 동의 항목)을 마치면 주석을 풉니다
+  'naver',
+];
 
 /** 버튼에 적히는 이름. 브랜드 표기라서 번역하지 않습니다 */
 export const OAUTH_LABELS: Record<OAuthProviderId, string> = {
@@ -20,6 +33,11 @@ export const OAUTH_LABELS: Record<OAuthProviderId, string> = {
 
 export function isOAuthProvider(value: string): value is OAuthProviderId {
   return (OAUTH_PROVIDERS as readonly string[]).includes(value);
+}
+
+/** 켜 둔 제공자인가 — 라우트 입구에서 isOAuthProvider 다음에 봅니다 */
+export function isOAuthEnabled(provider: OAuthProviderId): boolean {
+  return ENABLED_OAUTH_PROVIDERS.includes(provider);
 }
 
 /**

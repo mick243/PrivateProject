@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { appUrl } from '@/lib/app-url';
 import { linkOAuthAccount, readCookie, setSessionCookie } from '@/lib/auth';
 import { safeNext } from '@/lib/auth-types';
 import {
@@ -8,7 +9,12 @@ import {
   openState,
   redirectUri,
 } from '@/lib/oauth';
-import { isOAuthProvider, OAUTH_STATE_COOKIE, type OAuthErrorCode } from '@/lib/oauth-types';
+import {
+  isOAuthEnabled,
+  isOAuthProvider,
+  OAUTH_STATE_COOKIE,
+  type OAuthErrorCode,
+} from '@/lib/oauth-types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,14 +47,14 @@ export async function GET(request: Request, ctx: Ctx) {
 
   const fail = (code: OAuthErrorCode) => {
     const res = NextResponse.redirect(
-      new URL(`/login?next=${encodeURIComponent(next)}&error=${code}`, request.url),
+      appUrl(request, `/login?next=${encodeURIComponent(next)}&error=${code}`),
     );
     // 한 번 쓴 state 는 성공이든 실패든 지웁니다 (재사용 방지).
     res.cookies.set(OAUTH_STATE_COOKIE, '', { path: '/', maxAge: 0 });
     return res;
   };
 
-  if (!isOAuthProvider(provider)) return fail('unconfigured');
+  if (!isOAuthProvider(provider) || !isOAuthEnabled(provider)) return fail('unconfigured');
   // 사용자가 인가 화면에서 '취소' 를 누른 경우. 에러가 아니라 선택입니다.
   if (url.searchParams.get('error')) return fail('denied');
 
@@ -91,7 +97,7 @@ export async function GET(request: Request, ctx: Ctx) {
     const landing = needsNickname ? `/welcome?next=${encodeURIComponent(next)}` : next;
 
     const res = await setSessionCookie(
-      NextResponse.redirect(new URL(landing, request.url)),
+      NextResponse.redirect(appUrl(request, landing)),
       user.playerId,
     );
     res.cookies.set(OAUTH_STATE_COOKIE, '', { path: '/', maxAge: 0 });
