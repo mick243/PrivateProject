@@ -11,6 +11,7 @@ import {
   type ReportKind,
 } from '@/lib/community-types';
 import type { Machine } from '@/lib/types';
+import { useSearchEnter } from '@/lib/use-search-enter';
 import { useIsAdmin } from '@/lib/use-session';
 
 /**
@@ -91,8 +92,15 @@ export default function LiveFeed() {
    * 뜨고 있는 타이머는 굳이 끄지 않는다. 300ms 뒤에 같은 값으로 한 번 더
    * setDebouncedQ 가 불리지만, 값이 같으면 React 가 리렌더를 건너뛰므로
    * 조회는 한 번이다.
+   *
+   * 값은 입력칸에서 바로 받는다 — 한글 조합 중에 누른 엔터면 확정된 마지막 글자가
+   * 아직 q 에 없을 수 있다 (lib/use-search-enter.ts).
    */
-  const submitSearch = () => setDebouncedQ(q);
+  const submitSearch = (value: string) => {
+    setQ(value);
+    setDebouncedQ(value);
+  };
+  const search = useSearchEnter(submitSearch);
 
   /**
    * 지우기 — 화면의 값과 조회에 쓰인 값을 **함께** 비운다.
@@ -208,11 +216,13 @@ export default function LiveFeed() {
         </button>
       </header>
 
-      {/* <form> 인 이유는 엔터다 — 검색 버튼이 옆에 있으면 엔터로도 눌리기를
-          기대하게 되고, form 의 기본 동작이 그걸 공짜로 해 준다. onKeyDown 에
-          Enter 를 따로 적으면 같은 일을 버튼과 두 곳에서 관리하게 된다. */}
-      <form className="list-search" onSubmit={(e) => { e.preventDefault(); submitSearch(); }}>
+      {/* 엔터는 form 의 기본 제출에 맡기지 않고 useSearchEnter 가 받는다 — 모바일
+          키보드의 입력 키 · 한글 조합 중 엔터에서 기본 제출이 안 먹거나, 먹어도
+          키보드가 결과를 가린 채 남았다 (lib/use-search-enter.ts). <form> 은 검색
+          버튼(submit)을 위해 남긴다. */}
+      <form className="list-search" onSubmit={(e) => { e.preventDefault(); search.submit(); }}>
         <input
+          {...search.inputProps}
           className="search"
           type="search"
           aria-label="제보 검색"

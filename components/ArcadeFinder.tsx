@@ -29,6 +29,7 @@ import { useFavorites } from '@/lib/use-favorites';
 import { useIsAdmin } from '@/lib/use-session';
 import { useLiveLocation } from '@/lib/use-live-location';
 import { usePriorityOrder } from '@/lib/use-priority';
+import { useSearchEnter } from '@/lib/use-search-enter';
 import { useSidebarOpen } from '@/lib/use-sidebar';
 import ScrollStrip from './ScrollStrip';
 import MapPane, { type Coord } from './MapPane';
@@ -1052,6 +1053,9 @@ export default function ArcadeFinder() {
     }
     void jumpToPlace();
   };
+  // 엔터 = jumpBySearch. 모바일 키보드의 입력 키 · 한글 조합 중 엔터까지 받고, 터치
+  // 화면에서는 키보드를 내려 지도가 보이게 한다 (lib/use-search-enter.ts).
+  const search = useSearchEnter(() => jumpBySearch());
 
   const layoutClass = [
     'layout',
@@ -1087,16 +1091,14 @@ export default function ArcadeFinder() {
         {mode.kind === 'list' ? (
           <>
             <section className="filters">
+              {/* Enter = 첫 매치 지점 또는 지역으로 이동 (topMatch 주석).
+                  지도 앱들의 손버릇 그대로다. */}
               <input
+                {...search.inputProps}
                 className="search"
                 placeholder="오락실 이름 · 주소 · 지역(역/동/로) 검색"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => {
-                  // Enter = 첫 매치 지점 또는 지역으로 이동 (topMatch 주석).
-                  // 지도 앱들의 손버릇 그대로다.
-                  if (e.key === 'Enter') jumpBySearch();
-                }}
               />
 
               {isPlaceQuery(q) && (

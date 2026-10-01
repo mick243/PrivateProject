@@ -15,6 +15,7 @@ import {
 } from '@/lib/board-types';
 import { forgetPost, prefetchPost } from '@/lib/post-cache';
 import { usePlayerId } from '@/lib/use-player';
+import { useSearchEnter } from '@/lib/use-search-enter';
 import GameTabs from './GameTabs';
 import Pagination from './Pagination';
 import ScrollStrip from './ScrollStrip';
@@ -217,12 +218,17 @@ export default function CommunityView() {
    *
    * 뜨고 있는 타이머는 굳이 끄지 않는다. 300ms 뒤에 같은 값으로 한 번 더
    * 불리지만 값이 같으면 React 가 리렌더를 건너뛴다.
+   *
+   * 값은 입력칸에서 바로 받는다 — 한글 조합 중에 누른 엔터면 확정된 마지막 글자가
+   * 아직 q 에 없을 수 있다 (lib/use-search-enter.ts).
    */
-  const submitSearch = () => {
-    setDebouncedQ(q);
+  const submitSearch = (value: string) => {
+    setQ(value);
+    setDebouncedQ(value);
     setPage(1);
     searchStarted.current = true;
   };
+  const search = useSearchEnter(submitSearch);
 
   /**
    * 지우기 — 화면의 값과 조회에 쓰인 값을 함께 비우고 1페이지로 돌린다.
@@ -443,9 +449,11 @@ export default function CommunityView() {
           맞다. 말머리·정렬 줄과 한 줄에 합치지 않는 이유: 말머리 칩이 기종
           수만큼 늘어나는 줄이라, 거기에 입력창을 끼우면 좁은 화면에서 검색창이
           칩 사이 어딘가로 밀려간다. */}
-      {/* <form> 인 이유는 엔터다 (components/LiveFeed.tsx 의 같은 줄 주석 참고) */}
-      <form className="list-search" onSubmit={(e) => { e.preventDefault(); submitSearch(); }}>
+      {/* 엔터는 useSearchEnter 가, 검색 버튼은 form 이 받는다
+          (components/LiveFeed.tsx 의 같은 줄 주석 참고) */}
+      <form className="list-search" onSubmit={(e) => { e.preventDefault(); search.submit(); }}>
         <input
+          {...search.inputProps}
           className="search"
           type="search"
           aria-label="글 검색"
