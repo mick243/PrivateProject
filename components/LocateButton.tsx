@@ -13,7 +13,8 @@ import type { LocationStatus } from '@/lib/use-live-location';
  * 알 수 없기 때문입니다:
  *   idle      회색 조준점. 누르면 추적 시작
  *   locating  점멸. 첫 좌표를 기다리는 중 (실내에서는 몇 초 걸립니다)
- *   tracking  초록. 누르면 추적을 멈추고 마지막 좌표를 기준점으로 남깁니다
+ *   tracking  초록. 누르면 추적을 멈추고 마지막 좌표를 기준점으로 남깁니다 — 반경은 함께 풉니다
+ *             (ArcadeFinder 의 stopFollow). 다시 켜면 반경이 없을 때 기본 5km 로 겁니다.
  */
 export default function LocateButton({
   following,
@@ -32,7 +33,7 @@ export default function LocateButton({
   const label = locating
     ? '위치 확인 중'
     : tracking
-      ? '내 위치 추적 중 — 눌러서 멈춤'
+      ? '내 위치 추적 중 — 눌러서 멈춤 (반경도 함께 해제)'
       : '내 위치 추적';
 
   return (

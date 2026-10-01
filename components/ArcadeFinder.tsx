@@ -53,6 +53,9 @@ const MapPerfPanel = dynamic(() => import('./MapPerfPanel'), { ssr: false });
 
 const RADIUS_OPTIONS = [1, 3, 5, 10, 30];
 
+/** 처음 열었을 때 · 위치 추적을 다시 켤 때의 반경(km) */
+const DEFAULT_RADIUS_KM = 5;
+
 /**
  * "반경 전체" — 기준점은 있지만 반경으로 자르지 않는 상태.
  *
@@ -227,7 +230,7 @@ export default function ArcadeFinder() {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [machineIds, setMachineIds] = useState<number[]>([]);
-  const [radiusKm, setRadiusKm] = useState<number>(5);
+  const [radiusKm, setRadiusKm] = useState<number>(DEFAULT_RADIUS_KM);
 
   // ── 기준점 ────────────────────────────────────────────────
   // 두 갈래다. GPS 추적 중이면 실시간 좌표가, 아니면 마지막으로 붙잡아 둔
@@ -774,16 +777,32 @@ export default function ArcadeFinder() {
   );
 
   // ── 위치 ───────────────────────────────────────────────────
-  const startFollow = () => {
+  /** 추적만 켠다 — 반경은 건드리지 않는다 (새로고침 되살리기가 저장된 반경 그대로 켤 때 쓴다) */
+  const beginFollow = () => {
     setFollow(true);
     live.start();
   };
 
-  /** 추적만 끄고 마지막 좌표는 기준점으로 남긴다 */
+  /**
+   * 내 위치 추적 켜기 (지도의 내 위치 단추 · 사이드바 '내 위치').
+   * 끌 때 반경을 풀므로(stopFollow), 반경이 없으면 처음 켤 때처럼 기본 반경으로 건다 —
+   * 안 그러면 한 번 껐다 켠 뒤로는 원이 다시 나오지 않는다.
+   */
+  const startFollow = () => {
+    beginFollow();
+    setRadiusKm((r) => (r === RADIUS_NONE ? DEFAULT_RADIUS_KM : r));
+  };
+
+  /**
+   * 추적 끄기. 마지막 좌표는 기준점으로 남기고(거리순 정렬이 이어진다) **반경은 푼다** —
+   * 남겨 두면 내 위치 단추를 껐는데도 원이 그 자리에 그대로 있어 "꺼진 게 맞나" 가 된다
+   * (2026-10-01). 기준점까지 지우는 것은 사이드바의 '위치 해제'(clearCenter)다.
+   */
   const stopFollow = () => {
     setFixedCenter(live.coord ?? fixedCenter);
     setFollow(false);
     live.stop();
+    setRadiusKm(RADIUS_NONE);
   };
 
   const clearCenter = () => {
@@ -934,7 +953,9 @@ export default function ArcadeFinder() {
         setSort(saved.sort);
       }
       if (saved.sidebarOpen === true) setSidebarOpen(true);
-      if (saved.follow === true) startFollow();
+      // startFollow 가 아니다 — 그쪽은 반경이 없으면 기본 반경을 거는데, 되살릴 때는 저장된
+      // 반경('반경 탐색 해제' 포함)을 그대로 둬야 한다.
+      if (saved.follow === true) beginFollow();
     },
   );
 
@@ -1240,7 +1261,7 @@ export default function ArcadeFinder() {
                   disabled={!origin}
                 >
                   {/* 옆의 '위치 해제' 버튼(기준점 제거)과 헷갈리지 않게 '전체' 로 쓴다.
-                      위치 추적은 켠 채로 반경만 끄는 길이 이것이고, 지도 위 '반경 ✕' 칩도 같은 일을 한다 */}
+                      위치 추적은 켠 채로 반경만 끄는 길이 이것이고, 지도 위 반경 칩도 같은 일을 한다 */}
                   <option value={RADIUS_NONE}>반경 전체</option>
                   {RADIUS_OPTIONS.map((r) => (
                     <option key={r} value={r}>
@@ -1249,7 +1270,7 @@ export default function ArcadeFinder() {
                   ))}
                 </select>
                 {/* '해제' 만 적혀 있으면 반경만 끄는 단추로 읽힌다 — 실제로는 위치 추적까지 끄고
-                    기준점을 지운다. 반경만 끄는 것은 옆 선택 상자의 '반경 전체' 와 지도 위 칩이다 */}
+                    기준점을 지운다. 반경만 끄는 것은 옆 선택 상자의 '반경 전체' 와 지도 위 반경 칩이다 */}
                 {origin && (
                   <button
                     type="button"
@@ -1385,29 +1406,40 @@ export default function ArcadeFinder() {
         />
 
         {/*
-          지도 위 '반경 ✕' (내 위치 단추 바로 위). 위치 추적은 켠 채로 반경만 끈다.
-          사이드바의 선택 상자('반경 전체')와 같은 일인데, 모바일은 목록을 접은 채 지도와 내 위치
-          단추만 보며 쓰는 게 기본이라 거기까지 가야 끌 수 있으면 없는 기능이나 같다 (2026-10-01).
-          반경을 다시 거는 것은 사이드바에서 한다.
+          지도 위 반경 칩 (내 위치 단추 바로 위) — 누르면 반경을 **바꾸거나**, 맨 끝의
+          '반경 탐색 해제' 로 끈다. 위치 추적은 그대로 둔다.
+          사이드바의 선택 상자와 같은 일인데, 모바일은 목록을 접은 채 지도와 내 위치 단추만 보며
+          쓰는 게 기본이라 거기까지 가야 바꿀 수 있으면 없는 기능이나 같다 (2026-10-01).
+          처음엔 '반경 5km ✕' 단추였는데, 반경을 보여 주는 칩인지 끄는 단추인지 헷갈렸다.
+          native select 라 휴대폰에서는 운영체제의 고르기 화면이 뜬다. 반경이 없으면 감춘다 —
+          다시 거는 것은 사이드바 또는 내 위치 단추를 다시 켤 때(startFollow)다.
         */}
         {mode.kind === 'list' && origin && radiusKm > 0 && (
-          <button
-            type="button"
-            className="radius-fab"
-            onClick={() => setRadiusKm(RADIUS_NONE)}
-            aria-label={`반경 ${radiusKm}km 해제 — 위치 추적은 그대로 둡니다`}
-            title="반경 해제 (위치 추적은 그대로)"
-          >
-            반경 {radiusKm}km
+          <label className="radius-fab" title="검색 반경 — 바꾸거나 해제">
+            <select
+              value={radiusKm}
+              onChange={(e) => setRadiusKm(Number(e.target.value))}
+              aria-label="검색 반경 — 바꾸거나 해제합니다 (위치 추적은 그대로)"
+            >
+              {RADIUS_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  반경 {r}km
+                </option>
+              ))}
+              <option value={RADIUS_NONE}>반경 탐색 해제</option>
+            </select>
+            {/* 눌러서 고르는 칸이라는 표시 (▾). 글자 위를 눌러도 select 가 받도록 클릭은 통과시킨다 */}
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path
-                d="M6 6l12 12M18 6L6 18"
+                d="M6 9l6 6 6-6"
+                fill="none"
                 stroke="currentColor"
                 strokeWidth="2.2"
                 strokeLinecap="round"
+                strokeLinejoin="round"
               />
             </svg>
-          </button>
+          </label>
         )}
 
         {/*
