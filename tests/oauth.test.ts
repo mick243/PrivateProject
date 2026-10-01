@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { GET as startOAuth } from '@/app/api/auth/oauth/[provider]/route';
+import { GET as oauthCallback } from '@/app/api/auth/oauth/[provider]/callback/route';
+import { GET as verifyEmail } from '@/app/api/auth/verify/route';
+import { appUrl } from '@/lib/app-url';
 import { safeNext } from '@/lib/auth-types';
 import {
   authorizeUrl,
@@ -82,6 +86,52 @@ describe('redirectUri — 콘솔에 등록한 주소와 한 글자도 달라선 
       'kakao',
     );
     expect(uri).toBe('https://a.com/api/auth/oauth/kakao/callback');
+  });
+});
+
+describe('되돌아오는 주소 — 프록시 뒤에서 내부 주소로 튕기지 않는다', () => {
+  // `next start -H 127.0.0.1 -p 3001` 뒤에서 라우트가 받는 request.url 은 이렇습니다.
+  // 2026-10-01 실서버가 `/login` 대신 `https://localhost:3001/login` 으로 돌려보냈습니다.
+  const internal = (path: string) =>
+    new Request(`https://localhost:3001${path}`, {
+      headers: { host: 'arcade.example.com', 'x-forwarded-proto': 'https' },
+    });
+  const ctx = (provider: string) => ({ params: Promise.resolve({ provider }) });
+
+  it('appUrl 은 APP_URL 위에 경로를 얹는다', () => {
+    process.env.APP_URL = 'https://arcade.example.com/';
+    expect(appUrl(internal('/x'), '/login?next=%2F').toString()).toBe(
+      'https://arcade.example.com/login?next=%2F',
+    );
+  });
+
+  it('시작 — 키가 없으면 바깥 주소의 /login 으로', async () => {
+    process.env.APP_URL = 'https://arcade.example.com';
+    const res = await startOAuth(internal('/api/auth/oauth/google?next=/community'), ctx('google'));
+    expect(res.headers.get('location')).toBe(
+      'https://arcade.example.com/login?next=%2Fcommunity&error=unconfigured',
+    );
+  });
+
+  it('콜백 — 실패해도 바깥 주소의 /login 으로', async () => {
+    process.env.APP_URL = 'https://arcade.example.com';
+    // state 쿠키가 없으니 토큰 교환 전에 끝납니다 (제공자·DB 를 부르지 않음)
+    const res = await oauthCallback(
+      internal('/api/auth/oauth/kakao/callback?code=c&state=s'),
+      ctx('kakao'),
+    );
+    expect(res.headers.get('location')).toBe(
+      'https://arcade.example.com/login?next=%2F&error=state',
+    );
+  });
+
+  it('인증 메일 링크 — 결과 화면도 바깥 주소로', async () => {
+    process.env.APP_URL = 'https://arcade.example.com';
+    // 토큰이 없으면 DB 를 보지 않고 invalid 로 끝납니다
+    const res = await verifyEmail(internal('/api/auth/verify'));
+    expect(res.headers.get('location')).toBe(
+      'https://arcade.example.com/verify-email?status=invalid',
+    );
   });
 });
 

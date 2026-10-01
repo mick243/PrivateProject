@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { appUrl } from '@/lib/app-url';
 import { consumeVerification } from '@/lib/email-verify';
 
 export const runtime = 'nodejs';
@@ -23,5 +24,5 @@ export async function GET(request: Request) {
 
   // 토큰을 그대로 둔 채 이동하면 주소창·히스토리·Referer 에 남습니다.
   // 이미 써 버린 1회용 값이지만, 남길 이유도 없습니다.
-  return NextResponse.redirect(new URL(`/verify-email?status=${status}`, request.url));
+  return NextResponse.redirect(appUrl(request, `/verify-email?status=${status}`));
 }

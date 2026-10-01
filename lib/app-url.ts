@@ -32,3 +32,16 @@ export function appOrigin(request: Request): string {
   if (host) return `${proto || 'http'}://${host}`;
   return new URL(request.url).origin;
 }
+
+/**
+ * 라우트에서 **우리 화면으로 돌려보내는** 주소 (`NextResponse.redirect` 의 인자).
+ *
+ * `new URL(path, request.url)` 로 만들면 안 됩니다. `next start -H 127.0.0.1 -p 3001`
+ * 뒤에서는 request.url 이 Host 헤더가 아니라 **Next 가 붙은 주소**로 만들어져서
+ * (`https://localhost:3001/…`), 브라우저가 그 주소로 튕겨 나갑니다. 실서버에서
+ * 소셜 로그인이 끝나자마자 "연결할 수 없음" 이 뜬 원인이 이것입니다 (2026-10-01).
+ * 개발 서버는 내부 주소와 바깥 주소가 같아서 드러나지 않습니다.
+ */
+export function appUrl(request: Request, path: string): URL {
+  return new URL(path, appOrigin(request));
+}

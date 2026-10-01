@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { appUrl } from '@/lib/app-url';
 import { safeNext } from '@/lib/auth-types';
 import {
   authorizeUrl,
@@ -32,7 +33,7 @@ export async function GET(request: Request, ctx: Ctx) {
 
   const back = (error: string) =>
     NextResponse.redirect(
-      new URL(`/login?next=${encodeURIComponent(next)}&error=${error}`, request.url),
+      appUrl(request, `/login?next=${encodeURIComponent(next)}&error=${error}`),
     );
 
   if (!isOAuthProvider(provider)) return back('unconfigured');

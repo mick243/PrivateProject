@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { appUrl } from '@/lib/app-url';
 import { linkOAuthAccount, readCookie, setSessionCookie } from '@/lib/auth';
 import { safeNext } from '@/lib/auth-types';
 import {
@@ -41,7 +42,7 @@ export async function GET(request: Request, ctx: Ctx) {
 
   const fail = (code: OAuthErrorCode) => {
     const res = NextResponse.redirect(
-      new URL(`/login?next=${encodeURIComponent(next)}&error=${code}`, request.url),
+      appUrl(request, `/login?next=${encodeURIComponent(next)}&error=${code}`),
     );
     // 한 번 쓴 state 는 성공이든 실패든 지웁니다 (재사용 방지).
     res.cookies.set(OAUTH_STATE_COOKIE, '', { path: '/', maxAge: 0 });
@@ -91,7 +92,7 @@ export async function GET(request: Request, ctx: Ctx) {
     const landing = needsNickname ? `/welcome?next=${encodeURIComponent(next)}` : next;
 
     const res = await setSessionCookie(
-      NextResponse.redirect(new URL(landing, request.url)),
+      NextResponse.redirect(appUrl(request, landing)),
       user.playerId,
     );
     res.cookies.set(OAUTH_STATE_COOKIE, '', { path: '/', maxAge: 0 });
