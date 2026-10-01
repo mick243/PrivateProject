@@ -10,7 +10,7 @@ import {
   sealState,
   OAUTH_STATE_TTL_S,
 } from '@/lib/oauth';
-import { isOAuthProvider, OAUTH_STATE_COOKIE } from '@/lib/oauth-types';
+import { isOAuthEnabled, isOAuthProvider, OAUTH_STATE_COOKIE } from '@/lib/oauth-types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,7 +36,8 @@ export async function GET(request: Request, ctx: Ctx) {
       appUrl(request, `/login?next=${encodeURIComponent(next)}&error=${error}`),
     );
 
-  if (!isOAuthProvider(provider)) return back('unconfigured');
+  // 꺼 둔 제공자(ENABLED_OAUTH_PROVIDERS 에서 빠진 것)는 키가 있어도 보내지 않습니다.
+  if (!isOAuthProvider(provider) || !isOAuthEnabled(provider)) return back('unconfigured');
 
   const credentials = oauthCredentials(provider);
   // 키가 없으면 제공자로 보내지 않습니다 — 보내 봐야 그쪽 에러 화면만 보게 됩니다.

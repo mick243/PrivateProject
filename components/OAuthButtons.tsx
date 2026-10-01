@@ -1,7 +1,8 @@
-import { OAUTH_LABELS, OAUTH_PROVIDERS, type OAuthProviderId } from '@/lib/oauth-types';
+import { ENABLED_OAUTH_PROVIDERS, OAUTH_LABELS, type OAuthProviderId } from '@/lib/oauth-types';
 
 /**
- * 소셜 로그인 버튼 줄 (Google · 카카오 · 네이버).
+ * 소셜 로그인 버튼 줄 (Google · 카카오 · 네이버 중 **켜 둔 것만** —
+ * lib/oauth-types.ts 의 ENABLED_OAUTH_PROVIDERS. 2026-10-01 부터 카카오는 꺼 둠).
  *
  * `<a>` 입니다 — fetch 가 아니라 **주소창이 통째로 제공자에게 넘어가야** 합니다.
  * 인가 화면은 우리 도메인 밖이라 XHR 로는 열 수 없고, 사용자도 지금 어디에
@@ -32,7 +33,7 @@ export default function OAuthButtons({
         <span>또는</span>
       </p>
       <div className="oauth-list">
-        {OAUTH_PROVIDERS.map((id) => (
+        {ENABLED_OAUTH_PROVIDERS.map((id) => (
           <a
             key={id}
             className={`btn btn-oauth btn-oauth-${id}`}

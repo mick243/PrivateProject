@@ -9,7 +9,12 @@ import {
   openState,
   redirectUri,
 } from '@/lib/oauth';
-import { isOAuthProvider, OAUTH_STATE_COOKIE, type OAuthErrorCode } from '@/lib/oauth-types';
+import {
+  isOAuthEnabled,
+  isOAuthProvider,
+  OAUTH_STATE_COOKIE,
+  type OAuthErrorCode,
+} from '@/lib/oauth-types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,7 +54,7 @@ export async function GET(request: Request, ctx: Ctx) {
     return res;
   };
 
-  if (!isOAuthProvider(provider)) return fail('unconfigured');
+  if (!isOAuthProvider(provider) || !isOAuthEnabled(provider)) return fail('unconfigured');
   // 사용자가 인가 화면에서 '취소' 를 누른 경우. 에러가 아니라 선택입니다.
   if (url.searchParams.get('error')) return fail('denied');
 
