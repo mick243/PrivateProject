@@ -1110,6 +1110,14 @@ a.btn {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+/* 펼친 목록의 바탕 · 글자. select 바탕을 투명으로 둔 탓에 데스크톱 크롬이 목록을 흰 바탕에
+   그리면서 글자색은 다크 테마의 밝은 색을 그대로 물려받아 거의 안 보였다 (2026-10-01).
+   테마 토큰으로 못박는다 — 라이트면 흰 바탕 · 진한 글자, 다크면 어두운 바탕 · 밝은 글자.
+   휴대폰의 고르기 화면은 운영체제가 그려서 이 값을 쓰지 않는다. */
+.radius-fab option {
+  background-color: var(--panel);
+  color: var(--text);
+}
 .radius-fab svg {
   position: absolute;
   right: 12px;
