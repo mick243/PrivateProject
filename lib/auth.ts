@@ -7,6 +7,7 @@ import {
 import { promisify } from 'node:util';
 import { NextResponse } from 'next/server';
 import { SESSION_COOKIE, type SessionUser } from './auth-types';
+import { emailForStorage, isEmailMaskingOn, maskEmail } from './email-mask';
 import { noteLoginFailure as noteLoginFailureSql } from './typed-sql';
 import { isUniqueViolation, violatedConstraint } from './pg-errors';
 import { getPrismaClient } from './prisma';
@@ -473,24 +474,32 @@ export async function createAccount(
     이름은 대소문자만 다른 것도 같은 이름으로 봅니다 (migrate-027 의 lower() 인덱스와
     같은 기준 — 여기만 바이트 일치로 보면 안내 없이 23505 로 떨어집니다).
     `mode: 'insensitive'` 가 그 lower() 비교입니다.
+
+    이메일을 가려서 저장하는 동안(lib/email-mask.ts)에는 이메일 중복을 보지 않습니다 —
+    가린 값은 여러 사람의 주소가 같은 모양이 되어, 그걸로 막으면 남의 가입을 막습니다.
   */
+  const masking = isEmailMaskingOn();
   const dup = await prisma.players.findMany({
     where: {
       OR: [
         { nickname: { equals: name, mode: 'insensitive' } },
-        { email: { equals: email, mode: 'insensitive' } },
+        ...(masking ? [] : [{ email: { equals: email, mode: 'insensitive' as const } }]),
       ],
     },
     select: { nickname: true, email: true, email_verified_at: true },
   });
   const lower = (s: string | null) => (s ?? '').toLowerCase();
   if (dup.some((p) => lower(p.nickname) === name.toLowerCase())) return { ok: false, reason: 'taken' };
-  if (dup.some((p) => lower(p.email) === email.toLowerCase() && p.email_verified_at !== null)) {
+  if (!masking && dup.some((p) => lower(p.email) === email.toLowerCase() && p.email_verified_at !== null)) {
     return { ok: false, reason: 'email-taken' };
   }
 
   const created = await prisma.players.create({
-    data: { nickname: name, password_hash: await hashPassword(password), email },
+    data: {
+      nickname: name,
+      password_hash: await hashPassword(password),
+      email: masking ? maskEmail(email) : email,
+    },
     select: { id: true },
   });
   // 가입으로 관리자가 되지는 않습니다. is_admin 은 DB 기본값 FALSE 그대로 둡니다.
@@ -585,9 +594,15 @@ export async function linkOAuthAccount(params: {
   if (playerId === null) throw new Error('닉네임을 정할 수 없습니다');
 
   // 같은 신원이 그 사이 연결됐다면 조용히 넘어갑니다 (ON CONFLICT DO NOTHING).
+  // 이메일은 참고용 사본이라 가리는 동안에는 가린 값만 남깁니다 (lib/email-mask.ts).
   await prisma.player_identities.createMany({
     data: [
-      { provider: params.provider, provider_uid: params.providerUid, player_id: playerId, email: params.email },
+      {
+        provider: params.provider,
+        provider_uid: params.providerUid,
+        player_id: playerId,
+        email: emailForStorage(params.email),
+      },
     ],
     skipDuplicates: true,
   });

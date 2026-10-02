@@ -3887,6 +3887,8 @@ a.btn {
 .chat-body {
   flex: 1 1 auto;
   overflow-y: auto;
+  /* 대화 끝까지 굴린 손가락이 뒤의 페이지·지도를 이어서 굴리지 않게 */
+  overscroll-behavior: contain;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -4028,14 +4030,51 @@ a.btn {
   border-color: var(--accent);
 }
 
+/* 16px 아래면 iOS Safari 가 칸을 누를 때 화면을 확대해 버린다 (.radius-fab select 와 같은 이유).
+   손가락 화면에서만 — 마우스 화면에서는 말풍선과 같은 크기로 둔다 */
+@media (pointer: coarse) {
+  .chat-input input,
+  .chat-rank select {
+    font-size: 16px;
+  }
+}
+
+/* 키보드가 올라와 있으면(태블릿) 패널을 보이는 영역 안으로 끌어올린다 — 아래에 붙여 둔
+   채면 입력창이 키보드 밑에 깔린다. 값은 lib/use-visual-viewport.ts 가 쓴다 */
+@media (min-width: 521px) {
+  .chat-panel[data-keyboard] {
+    top: calc(var(--vv-top) + 10px);
+    bottom: auto;
+    height: calc(var(--vv-h) - 20px);
+    max-height: none;
+  }
+}
+
 @media (max-width: 520px) {
-  /* 좁은 화면에서는 패널이 화면을 거의 채운다 — 360px 고정이면 잘린다 */
+  /* 좁은 화면에서는 화면의 2/3 쯤 — 폭은 양옆 10px 만 남기고, 높이는 70%. 위쪽으로 지도가
+     보이게 둔다 (꽉 채우면 지도가 사라지고, 1/4 이면 대화가 몇 줄 안 보였다).
+     너무 낮은 화면에서는 입력창 · 1·2·3순위 칸이 안 들어가서 바닥값을 둔다.
+     떠 있는 단추(.chat-fab) 바로 위에 붙는다 — 단추가 홈 인디케이터만큼 올라가므로 같이.
+     z-index 는 같은 60 인 하단 고정 줄(.histbar · .pwa-banner)보다 위 — 키보드가 올라와 패널이
+     내려앉으면 그 줄과 겹치는데, 같은 값이면 DOM 이 뒤인 그쪽이 입력창을 덮는다 */
   .chat-panel {
+    --chat-h: max(70dvh, 320px);
+    z-index: 70;
     right: 10px;
     left: 10px;
-    bottom: 76px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
     width: auto;
     max-width: none;
+    height: var(--chat-h);
+  }
+  /* 키보드가 올라오면 보이는 영역의 아래 끝(= 키보드 위)으로 옮긴다. 보이는 영역이
+     패널보다 낮으면 그만큼 줄인다. 값은 lib/use-visual-viewport.ts 가 쓴다 */
+  .chat-panel[data-keyboard] {
+    --chat-kb-h: min(var(--chat-h), calc(var(--vv-h) - 20px));
+    top: calc(var(--vv-top) + var(--vv-h) - 10px - var(--chat-kb-h));
+    bottom: auto;
+    height: var(--chat-kb-h);
+    max-height: none;
   }
   .chat-fab {
     right: 14px;

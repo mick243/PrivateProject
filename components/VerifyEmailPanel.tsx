@@ -63,6 +63,8 @@ export default function VerifyEmailPanel() {
     email: string | null;
     verified: boolean;
     mailConfigured: boolean;
+    /** 이메일을 가려서 저장하는 중 — 확인 메일을 보내지 않습니다 (lib/email-mask.ts) */
+    masked: boolean;
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -131,6 +133,12 @@ export default function VerifyEmailPanel() {
             <p className={message.tone === 'ok' ? 'notice' : 'warn'}>{message.title}</p>
             <p className="muted small">{message.body}</p>
           </>
+        ) : state?.masked ? (
+          // 보내지 않은 메일을 보냈다고 적지 않습니다 (SignupForm 머리말과 같은 이유)
+          <p className="muted small">
+            시험 기간에는 이메일 주소의 앞부분을 가려서 저장하므로 확인 메일을 보내지
+            않습니다. 확인하지 않아도 둘러보기와 글쓰기는 그대로 됩니다.
+          </p>
         ) : (
           <p className="muted small">
             가입할 때 적은 주소로 확인 메일을 보냈습니다. 메일의 링크를 열면 확인이
@@ -159,7 +167,7 @@ export default function VerifyEmailPanel() {
         {notice && <p className="notice">{notice}</p>}
         {error && <p className="warn">{error}</p>}
 
-        {user && state && !state.verified && state.email && !state.mailConfigured && (
+        {user && state && !state.verified && state.email && !state.masked && !state.mailConfigured && (
           <p className="muted small">
             지금은 메일 발송이 설정되어 있지 않습니다. 개발 환경이라면 서버 콘솔에
             링크가 찍힙니다.
@@ -167,7 +175,7 @@ export default function VerifyEmailPanel() {
         )}
 
         <div className="form-actions">
-          {user && state && !state.verified && state.email && (
+          {user && state && !state.verified && state.email && !state.masked && (
             <button type="button" className="btn btn-primary" disabled={busy} onClick={resend}>
               {busy ? '보내는 중…' : '확인 메일 다시 보내기'}
             </button>

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatSearch } from './ChatBotHost';
 import { useSession } from '@/lib/use-session';
+import { useVisualViewportBox } from '@/lib/use-visual-viewport';
 import {
   RANK_LABELS,
   isArcadeSearchIntent,
@@ -89,8 +90,12 @@ export default function ChatBot() {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const panelRef = useRef<HTMLElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // 키보드가 올라와도 패널이 보이는 영역 안에 있게 (globals.css 의 .chat-panel[data-keyboard])
+  useVisualViewportBox(panelRef, open);
 
   // 새 말풍선이 붙으면 항상 맨 아래를 보여 준다.
   useEffect(() => {
@@ -98,8 +103,10 @@ export default function ChatBot() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, open]);
 
+  // 터치 화면에서는 열자마자 포커스를 주지 않는다 — 키보드가 패널보다 먼저 올라와
+  // 인사말을 덮고, iOS 는 그 순간 화면을 밀어 올린다. 쓰려는 사람은 입력창을 누른다.
   useEffect(() => {
-    if (open) inputRef.current?.focus();
+    if (open && !window.matchMedia('(pointer: coarse)').matches) inputRef.current?.focus();
   }, [open]);
 
   // ── 자유 질문 → 서버 ───────────────────────────────────────
@@ -323,7 +330,7 @@ export default function ChatBot() {
       </button>
 
       {open && (
-        <section className="chat-panel" role="dialog" aria-label="오락실 도우미">
+        <section ref={panelRef} className="chat-panel" role="dialog" aria-label="오락실 도우미">
           <header className="chat-head">
             <strong>오락실 도우미</strong>
             <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>

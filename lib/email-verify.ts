@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { isEmailMaskingOn } from './email-mask';
 import { isMailConfigured, sendMail } from './mailer';
 import { getPrismaClient, TX_OPTIONS } from './prisma';
 
@@ -195,7 +196,8 @@ export type SendResult =
   | { ok: true; email: string }
   | {
       ok: false;
-      reason: 'no-email' | 'already-verified' | 'gone' | 'too-soon' | 'send-failed';
+      /** masked — 이메일을 가려서 저장하는 중이라 보낼 주소가 없다 (lib/email-mask.ts) */
+      reason: 'no-email' | 'already-verified' | 'gone' | 'too-soon' | 'send-failed' | 'masked';
       retryAfterS?: number;
     };
 
@@ -208,12 +210,17 @@ export type SendResult =
  * **가입 응답을 붙잡지 마세요.** 메일 API 가 느리거나 죽으면 가입이 통째로
  * 실패합니다. 라우트에서 `after()` 로 감싸 응답을 먼저 보내고 이걸 뒤에서
  * 돌립니다 (재발송은 반대 — 사용자가 결과를 보고 있으므로 기다립니다).
+ *
+ * 이메일을 가려서 저장하는 동안에는 **토큰도 만들지 않고** 돌아갑니다. 가린 주소로는 받는
+ * 사람이 없고, 발급 기록을 남기면 그 표에도 주소 사본이 하나 더 생깁니다.
  */
 export async function sendVerificationMail(
   playerId: number,
   baseUrl: string,
   options: { throttle?: boolean } = {},
 ): Promise<SendResult> {
+  if (isEmailMaskingOn()) return { ok: false, reason: 'masked' };
+
   const issued = await issueVerification(playerId, { skipThrottle: !options.throttle });
   if (!issued.ok) return { ok: false, reason: issued.reason, retryAfterS: issued.retryAfterS };
 
