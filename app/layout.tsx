@@ -3,6 +3,7 @@ import ChatBotHost from '@/components/ChatBotHost';
 import HistoryBar from '@/components/HistoryBar';
 import PwaSetup from '@/components/PwaSetup';
 import TopNav from '@/components/TopNav';
+import ZoomReset from '@/components/ZoomReset';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
 import { publicAppUrl } from '@/lib/app-url';
 // 글꼴을 globals.css 보다 먼저 — 가변 Pretendard 를 글자 범위별로 나눠 둔 것이라 화면에 나온
@@ -85,6 +86,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             모든 화면에 있어야 하므로 페이지가 아니라 레이아웃에 답니다. */}
         <HistoryBar />
         <PwaSetup />
+        {/* 로그인처럼 화면만 바꾸는 이동에서 iOS 확대가 다음 화면까지 남지 않게 (components/ZoomReset.tsx) */}
+        <ZoomReset />
       </body>
     </html>
   );

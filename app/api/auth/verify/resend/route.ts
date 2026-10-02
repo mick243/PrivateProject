@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { appOrigin } from '@/lib/app-url';
 import { requirePlayer } from '@/lib/auth';
+import { isEmailMaskingOn } from '@/lib/email-mask';
 import { isMailConfigured, sendVerificationMail, verificationStatus } from '@/lib/email-verify';
 
 export const runtime = 'nodejs';
@@ -9,8 +10,9 @@ export const dynamic = 'force-dynamic';
 /**
  * 인증 메일 다시 보내기.
  *
- * GET — 지금 상태 `{email, verified, mailConfigured}`. 화면이 배너를 그릴지,
- *       "다시 보내기" 버튼을 열지 정하는 근거입니다.
+ * GET — 지금 상태 `{email, verified, mailConfigured, masked}`. 화면이 배너를 그릴지,
+ *       "다시 보내기" 버튼을 열지 정하는 근거입니다. masked 는 이메일을 가려서 저장하는
+ *       중이라는 뜻입니다 — 그동안은 보낼 주소가 없어 버튼을 열지 않습니다 (lib/email-mask.ts).
  * POST — 한 통 더 보냅니다.
  *
  * 둘 다 **로그인이 필요합니다.** 확인 자체(`/api/auth/verify`)는 토큰이 증명이라
@@ -32,12 +34,23 @@ export async function GET(request: Request) {
   const status = await verificationStatus(guard.playerId);
   if (!status) return NextResponse.json({ error: '계정을 찾을 수 없습니다' }, { status: 404 });
 
-  return NextResponse.json({ ...status, mailConfigured: isMailConfigured() });
+  return NextResponse.json({
+    ...status,
+    mailConfigured: isMailConfigured(),
+    masked: isEmailMaskingOn(),
+  });
 }
 
 export async function POST(request: Request) {
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
+
+  if (isEmailMaskingOn()) {
+    return NextResponse.json(
+      { error: '시험 기간에는 이메일을 가려서 저장하고 있어 확인 메일을 보낼 수 없습니다' },
+      { status: 409 },
+    );
+  }
 
   const status = await verificationStatus(guard.playerId);
   if (!status) return NextResponse.json({ error: '계정을 찾을 수 없습니다' }, { status: 404 });
