@@ -81,7 +81,7 @@ tar -xzf "$REL/$NAME.tgz" -C "$STAGE"
   || { echo "묶음이 이상합니다 — package.json · .next · node_modules 가 다 있어야 합니다" >&2; drop_copy; exit 1; }
 # 비밀이 든 묶음은 넣지 않는다 — 2026-09-29 묶음에 옛 워크트리의 .env.local 이 실렸다 (build-release.sh 도 막는다).
 # head 로 자르면 find 가 SIGPIPE 로 끝나 pipefail 에 걸리므로 awk 로 자른다
-leak="$(find "$STAGE" -path "$STAGE/node_modules" -prune -o -name ".env*" ! -name ".env.example" -print -o -name "*.pem" -print -o -name .claude -print | awk 'NR <= 5')"
+leak="$(find "$STAGE" -path "$STAGE/node_modules" -prune -o -name ".env*" ! -name ".env.example" -print -o -name "*.env" -print -o -name "*.pem" -print -o -name .claude -print | awk 'NR <= 5')"
 if [[ -n "$leak" ]]; then
   echo "이 묶음에는 들어가면 안 되는 파일이 있어 넣지 않습니다 — PC 에서 build-release.sh 최신 판으로 다시 빌드하세요:" >&2
   sed "s#^$STAGE/#  #" <<<"$leak" >&2

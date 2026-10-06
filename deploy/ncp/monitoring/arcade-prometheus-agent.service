@@ -1,0 +1,38 @@
+# /etc/systemd/system/arcade-prometheus-agent.service — install-monitoring.sh 가 넣는다
+#
+#   systemctl status arcade-prometheus-agent · journalctl -u arcade-prometheus-agent -f
+#
+# 긁어서 Grafana Cloud 로 보내기만 한다(agent 모드 — 저장 · 질의 없음). 보내지 못한 것은 WAL 에 두었다가 다시 보낸다.
+[Unit]
+Description=오락실 파인더 감시 — Prometheus agent (Grafana Cloud 로 전송)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=arcade-monitor
+Group=arcade-monitor
+# Go 의 GC 가 이 선을 보고 일찍 치운다. 아래 MemoryMax 보다 넉넉히 낮게
+Environment=GOMEMLIMIT=96MiB
+ExecStart=/opt/arcade-monitoring/bin/prometheus --agent \
+  --config.file=/etc/arcade-monitoring/prometheus.yml \
+  --storage.agent.path=/var/lib/arcade-monitoring/agent \
+  --storage.agent.retention.max-time=6h \
+  --web.listen-address=127.0.0.1:9090
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+
+# 1GB 서버 — 넘치면 이 서비스만 죽고 다시 뜬다 (앱 · DB 를 밀어내지 않게).
+# 리허설(1GB 컨테이너) 실측: 프로세스 메모리 28MB + 실행 파일(144MB)의 페이지 캐시 95MB. 캐시는 메모리가
+# 모자라면 커널이 먼저 비우는 것이라, 상한을 그 합보다 낮게 잡으면 평소에도 계속 조인다
+MemoryHigh=192M
+MemoryMax=256M
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/arcade-monitoring
+
+[Install]
+WantedBy=multi-user.target

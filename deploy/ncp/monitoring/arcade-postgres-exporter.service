@@ -1,0 +1,30 @@
+# /etc/systemd/system/arcade-postgres-exporter.service — install-monitoring.sh 가 넣는다
+#
+# DB 지표. 붙는 계정은 arcade_monitor(pg_monitor 역할 · 접속 3개까지) — 통계 뷰를 읽기만 한다.
+[Unit]
+Description=오락실 파인더 감시 — postgres_exporter
+After=network-online.target postgresql.service
+
+[Service]
+User=arcade-monitor
+Group=arcade-monitor
+# DATA_SOURCE_NAME (감시 계정 비밀번호) — root 와 arcade-monitor 만 읽는다
+EnvironmentFile=/etc/arcade-monitoring/postgres-exporter.env
+Environment=GOMEMLIMIT=24MiB
+# 표마다 지표를 내는 수집기 둘은 끈다 — 리허설에서 이 둘만 990개(표 60여 개 × 지표 약 16개)로 이 exporter 의
+# 60%였고 표가 늘면 같이 는다. 대시보드 · 알림은 쓰지 않는다. 표별 seq scan · dead tuple 을 볼 때만 켜기
+ExecStart=/opt/arcade-monitoring/bin/postgres_exporter --web.listen-address=127.0.0.1:9187 \
+  --no-collector.stat_user_tables --no-collector.statio_user_tables
+Restart=always
+RestartSec=10
+
+MemoryHigh=40M
+MemoryMax=64M
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

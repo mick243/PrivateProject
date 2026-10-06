@@ -2,8 +2,17 @@
 #
 # Caddy 는 이 주소로 Let's Encrypt 인증서를 스스로 받고(80 · 443 이 열려 있어야 함) 갱신한다.
 # 무료 주소(1-2-3-4.sslip.io)도 된다. 도메인을 사면 이 줄의 주소만 바꾸고 systemctl reload caddy.
+{
+	# 요청 수 · 응답 코드 · 지연을 관리 포트(localhost:2019/metrics)로 낸다 — 서버 안의 수집기만 읽는다
+	# (deploy/ncp/monitoring). 수집기를 깔지 않았어도 켜 두는 비용은 거의 없다
+	metrics
+}
+
 __SITE_DOMAIN__ {
 	encode zstd gzip
+
+	# 앱의 Prometheus 지표는 서버 안의 수집기가 127.0.0.1:3001 로 직접 긁는다. 밖에서는 토큰이 있어도 열지 않는다
+	respond /api/metrics* 404
 
 	# 첨부 업로드 한도(lib/uploads.ts)보다 넉넉히 — 영상 한 개가 수십 MB 다
 	request_body {

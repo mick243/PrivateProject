@@ -1,6 +1,7 @@
 # 로컬 감시 — Prometheus · Grafana
 
-> 2026-10-06 작성. **PC 전용**입니다. 운영 서버(NCP Micro 1GB)에는 아직 올리지 않습니다 — 맨 아래 "운영으로 가져가려면".
+> 2026-10-06 작성. **PC 전용**입니다. 운영 서버(NCP Micro 1GB)는 방식이 다릅니다 — 서버 안 수집기가 Grafana Cloud 로 보냅니다
+> ([deploy/ncp/README.md §9](../deploy/ncp/README.md)). 대시보드 JSON 은 둘이 같이 씁니다.
 
 PC 에서 돌리는 `npm run dev`(또는 `start:cluster`)를 Prometheus 가 15초마다 긁고, Grafana 가 대시보드로 보여 줍니다.
 개발 DB(PostgreSQL 18)는 postgres_exporter 가 따로 봅니다. 셋 다 Docker 컨테이너이고 앱은 컨테이너 밖에서 돕니다.
@@ -57,8 +58,11 @@ docker compose down -v      # 지표까지 지우기
 
 ## 3. 대시보드 읽는 법
 
-맨 위 여섯 칸이 한눈에 볼 것입니다(앱 상태 · 초당 요청 · 응답 p95 · 5xx 비율 · DB 풀 대기 · 울리는 알림). 그 아래 네 줄은
-요청 → DB → Node 프로세스 → PostgreSQL 순서입니다.
+맨 위 여덟 칸이 한눈에 볼 것입니다(앱 상태 · 초당 요청 · 응답 p95 · 5xx 비율 · DB 풀 대기 · 메모리 여유 · 디스크 여유 · 울리는 알림).
+그 아래 줄은 서버 · Caddy → 요청 → DB → Node 프로세스 → PostgreSQL 순서입니다. **메모리 · 디스크 여유와 "서버 · Caddy" 줄은
+운영 서버에서만 찹니다**(node_exporter · Caddy 지표) — 로컬에서는 "운영만" · No data 가 정상입니다.
+
+맨 위 **데이터 소스** 칸은 로컬에서는 그대로 두면 됩니다(기본 Prometheus). Grafana Cloud 에 가져갔을 때 스택의 Prometheus 를 고르는 칸입니다.
 
 **느릴 때는 "느린 이유 가르기" 패널부터** 보세요. 세 선을 겹쳐 둔 것입니다.
 
@@ -121,13 +125,14 @@ K6_PROMETHEUS_RW_SERVER_URL=http://localhost:9090/api/v1/write K6_PROMETHEUS_RW_
 | PostgreSQL 패널이 빔 · `pg_up` 0 | `PG_EXPORTER_DSN` 의 비밀번호 · 호스트. `docker compose logs postgres-exporter` |
 | `docker compose` 가 엔진에 못 붙음 | Docker Desktop 이 꺼졌거나 깨진 소켓 — `%LOCALAPPDATA%\Docker\run` 을 다른 이름으로 바꾸고 다시 켜기 |
 
-## 운영으로 가져가려면 (아직 안 함)
+## 운영 서버는
 
-이 폴더는 배포 묶음에 들어가지 않고(`deploy/ncp/build-release.sh` 의 `--exclude=./monitoring`), `METRICS_TOKEN` 도 서버로 가지
-않습니다(`deploy/ncp/make-server-env.sh` 의 SKIP). 운영에 붙일 때 정할 것:
+[deploy/ncp/README.md §9](../deploy/ncp/README.md) 입니다. 이 폴더와 다른 점만:
 
-- **Prometheus · Grafana 는 서버에 두지 않습니다.** Micro 1GB 에서 리허설 최대치가 앱 267MB + DB 248MB 라, 둘을 더하면 스왑에 들어갑니다.
-  서버에는 가벼운 수집기와 node_exporter · postgres_exporter 만 두고, 바깥(Grafana Cloud 등)으로 원격 전송하는 쪽을 권합니다.
-- **`/api/metrics` 를 Caddy 에서 막습니다.** 토큰이 있어도 공개 주소로 열어 둘 이유가 없습니다. 수집기는 서버 안에서 127.0.0.1:3001 을 긁습니다.
-- postgres_exporter 는 `postgres` 대신 `pg_monitor` 역할만 가진 계정으로 붙습니다.
-- Caddy 는 자체 지표(`metrics` 전역 옵션)를 낼 수 있습니다 — `naver-api-gateway-monitoring` 워크트리의 미커밋 작업(Caddy 접근 로그 → Pulse)과 겹치니 함께 정합니다.
+- **Prometheus · Grafana 를 서버에 두지 않습니다.** Micro 1GB 에서 리허설 최대치가 앱 267MB + DB 248MB 라, 둘을 더하면 스왑에 들어갑니다.
+  서버에는 수집기(Prometheus agent 모드) · node_exporter · postgres_exporter 만 두고 Grafana Cloud 무료 등급으로 보냅니다.
+- 이 폴더는 배포 묶음에 들어가지 않고(`--exclude=./monitoring`), PC 의 `METRICS_TOKEN` 도 서버로 가지 않습니다(`make-server-env.sh` 의 SKIP).
+  서버 토큰은 `deploy/ncp/monitoring/install-monitoring.sh` 가 서버에서 따로 만듭니다.
+- `/api/metrics` 는 Caddy 가 밖에서 404 로 막고, 수집기는 서버 안에서 127.0.0.1:3001 을 긁습니다.
+- 알림 규칙은 `deploy/ncp/monitoring/rules.yml`(Grafana Cloud 용 · 서버 규칙 포함)이 따로 있습니다. 앱 규칙의 문턱은 이 폴더의 것과 같게 유지합니다.
+- `naver-api-gateway-monitoring` 워크트리의 미커밋 작업(Caddy 접근 로그 → Pulse)은 Caddy 지표와 겹칩니다 — 정리할지는 따로 정합니다.
