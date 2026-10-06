@@ -8,7 +8,8 @@
 #       → systemd unit 갱신 → 마이그레이션 → 서비스 시작 → /api/health 200 확인
 #
 # 인스턴스가 하나뿐인 작은 서버라 교체하는 10~20초 동안은 접속이 끊긴다.
-# 되돌리기: releases/ 에 남은 이전 묶음으로 이 스크립트를 다시 돌리면 된다 (최근 2개 보존).
+# 되돌리기: releases/ 에 남은 이전 묶음으로 이 스크립트를 다시 돌리면 된다 (지금 것 + 그 전에 설치한 것, 2개 보존).
+# 설치가 끝나면 올린 원본(/root 의 .tgz)은 지운다 — 같은 것이 releases/ 에 있다. 실패하면 그대로 둔다.
 # ⚠ 마이그레이션은 되돌리지 않는다 — 코드를 되돌려도 스키마는 새 것 그대로다.
 set -Eeuo pipefail
 # set -e 는 멈출 때 아무 말도 하지 않는다. 어느 줄의 무슨 명령에서 멈췄는지 반드시 남긴다.
@@ -52,7 +53,10 @@ STAGE="$REL/$NAME"
 # 디스크 여유 — 풀어 둔 사본과, 앱 폴더가 커지는 만큼이 한꺼번에 필요하다. 10GB 서버에서 1.5GB 짜리 묶음을
 # 넣다가 rsync 도중 "No space left on device" 로 멈춘 적이 있다(2026-09-30). 모자라면 아무것도 건드리기 전에 멈춘다.
 TGZ_MB=$(( $(stat -c %s "$TGZ") / 1048576 ))
-RAW_MB=$(( $(gzip -l "$TGZ" | awk 'NR == 2 {print $2}') / 1048576 ))   # 풀었을 때 크기
+# 올리다 끊긴 묶음은 gzip -l 부터 실패한다 — 그대로 두면 산술 오류로 알 수 없게 멈추므로 여기서 말하고 멈춘다
+RAW_B="$(gzip -l "$TGZ" 2>/dev/null | awk 'NR == 2 {print $2}')" \
+  || { echo "묶음이 깨졌습니다 — 올리다 끊겼을 수 있습니다. 크기(${TGZ_MB}MB)를 PC 의 것과 비교하고 다시 올리세요" >&2; exit 2; }
+RAW_MB=$(( RAW_B / 1048576 ))                                          # 풀었을 때 크기
 (( RAW_MB < TGZ_MB )) && RAW_MB=$(( TGZ_MB * 4 ))                     # gzip -l 은 4GB 를 넘으면 틀린다
 APP_MB="$( { du -sm --exclude=uploads "$APP" 2>/dev/null || true; } | awk '{print $1}')"
 APP_MB="${APP_MB:-0}"
@@ -76,7 +80,9 @@ drop_copy() { [[ "$(realpath "$TGZ")" == "$REL/$NAME.tgz" ]] || rm -f "$REL/$NAM
 # 같은 디스크면 하드링크 — 사본이 공간을 한 벌 더 먹지 않는다 (/root 의 원본을 지워도 이쪽은 남는다)
 [[ "$(realpath "$TGZ")" == "$REL/$NAME.tgz" ]] || ln -f "$TGZ" "$REL/$NAME.tgz" 2>/dev/null || cp "$TGZ" "$REL/$NAME.tgz"
 rm -rf "$STAGE" && mkdir -p "$STAGE"
-tar -xzf "$REL/$NAME.tgz" -C "$STAGE"
+# 풀지 못한 묶음의 사본을 남기면 다음 설치 때 "되돌릴 판" 으로 남을 수 있다
+tar -xzf "$REL/$NAME.tgz" -C "$STAGE" \
+  || { echo "묶음을 풀지 못했습니다 — 올리다 끊겼으면 크기를 PC 의 것과 비교하세요 (ls -l $TGZ)" >&2; drop_copy; exit 1; }
 [[ -f "$STAGE/package.json" && -d "$STAGE/.next" && -d "$STAGE/node_modules" ]] \
   || { echo "묶음이 이상합니다 — package.json · .next · node_modules 가 다 있어야 합니다" >&2; drop_copy; exit 1; }
 # 비밀이 든 묶음은 넣지 않는다 — 2026-09-29 묶음에 옛 워크트리의 .env.local 이 실렸다 (build-release.sh 도 막는다).
@@ -152,7 +158,15 @@ if [[ "${code:-}" != "200" ]]; then
   exit 1
 fi
 
-# 묶음은 최근 2개만 남긴다 (지금 것 + 되돌릴 하나). 디스크 10GB 서버 기준
-ls -1t "$REL"/*.tgz 2>/dev/null | tail -n +3 | xargs -r rm -f
+# 올린 원본(/root 등)은 지운다 — releases/ 에 같은 것(하드링크나 사본)이 남는다. 하드링크라서 원본을 두면
+# 아래에서 releases/ 쪽을 지워도 공간이 비지 않는다: /root 에 묶음이 쌓여 디스크 여유가 14% 가 됐다(2026-10-06)
+if [[ "$(realpath "$TGZ")" != "$REL/$NAME.tgz" ]] && { [[ "$TGZ" -ef "$REL/$NAME.tgz" ]] || cmp -s "$TGZ" "$REL/$NAME.tgz"; }; then
+  rm -f "$TGZ" && echo "올린 묶음을 지웠습니다 — 같은 것이 $REL/$NAME.tgz 에 있습니다"
+fi
+
+# 묶음은 2개만 남긴다 — 지금 것 + 그 전에 설치한 것(되돌릴 하나). 디스크 10GB 서버 기준
+# 시각을 "설치한 때" 로 맞춰 고른다. 올린 시각으로 고르면 옛 묶음으로 되돌린 직후 지금 것이 지워진다
+touch "$REL/$NAME.tgz"
+ls -1t "$REL"/*.tgz 2>/dev/null | { grep -vxF "$REL/$NAME.tgz" || true; } | tail -n +2 | xargs -r rm -f
 df -h / | awk 'NR==2 {print "디스크: " $3 " 사용 / " $2 " (" $5 ")"}'
 free -m | awk 'NR<=2'

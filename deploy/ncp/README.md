@@ -158,9 +158,13 @@ chown -R arcade:arcade /srv/arcade-finder/app/arcade-finder/uploads
 bash deploy/ncp/build-release.sh
 scp deploy/ncp/out/release-<새것>.tgz root@$IP:/root/
 # 서버
+tar -xzOf /root/release-<새것>.tgz ./deploy/ncp/install-release.sh > install-release.sh   # 스크립트도 새 판으로
 sudo bash install-release.sh /root/release-<새것>.tgz
 ```
 
+- **묶음 정리**: 설치가 끝나면 `/root` 에 올린 묶음은 지워지고, `/srv/arcade-finder/releases/` 에 지금 판과 그 전에 설치한 판
+  2개만 남습니다. 2026-10-06 전 판의 스크립트는 `/root` 원본을 남겼고, 그게 `releases/` 의 묶음과 하드링크라서 `releases/` 를
+  정리해도 공간이 비지 않았습니다 — 그 판으로 설치한 서버는 `ls -lh /root/*.tgz` 에서 지금 판 말고는 지워도 됩니다.
 - **되돌리기**: `/srv/arcade-finder/releases/` 에 직전 묶음이 남아 있습니다 → `sudo bash install-release.sh /srv/arcade-finder/releases/<직전>.tgz`.
   마이그레이션은 되돌리지 않으니, 스키마를 바꾼 배포를 되돌릴 때는 코드가 새 스키마에서도 도는지 먼저 보세요.
 - **지도 키 · APP_URL 을 바꿨다면** `build.env` 를 고치고 **다시 빌드**해야 합니다 (빌드 때 박히는 값).
