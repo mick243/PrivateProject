@@ -1,0 +1,97 @@
+# 실서버 알림 규칙 — install-monitoring.sh 가 mimirtool 로 Grafana Cloud 에 올린다 (토큰에 rules:write 가 있을 때).
+# Grafana Cloud 가 평가하고, 알림은 Grafana Cloud 의 연락 지점(contact point)으로 간다 — README §9.
+#
+# 앱 규칙의 문턱은 로컬판(monitoring/prometheus/rules.yml)과 같다. 여기는 60초마다 긁으므로 for 를 조금 길게 잡았고,
+# 서버(메모리 · 스왑 · 디스크) · Caddy · "지표가 끊김" 규칙이 더 있다. mimirtool 형식이라 맨 위에 namespace 가 있다.
+namespace: arcade-finder
+groups:
+  - name: arcade-finder-prod
+    rules:
+      # 서버가 꺼지거나 수집기가 멈추면 다른 규칙은 조용해진다(값이 없으니까). 그것을 잡는 규칙.
+      # for 가 없으면 설치 직후 2분쯤 울린다 — 아직 이력이 없어서 (리허설에서 실제로 울렸다)
+      - alert: MetricsSilent
+        expr: absent_over_time(up{job="node", env="prod"}[5m])
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: '5분째 서버에서 지표가 오지 않습니다 — 서버가 꺼졌거나 수집기(arcade-prometheus-agent)가 멈췄습니다'
+
+      - alert: AppDown
+        expr: up{job="arcade-finder"} == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: '앱이 /api/metrics 에 3분째 답하지 않습니다 — journalctl -u arcade-finder'
+
+      - alert: CaddyDown
+        expr: up{job="caddy"} == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: 'Caddy(HTTPS) 지표가 3분째 없습니다 — systemctl status caddy'
+
+      - alert: PostgresDown
+        expr: pg_up == 0 or up{job="postgres"} == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: 'PostgreSQL 에 3분째 붙지 못합니다 — systemctl status postgresql'
+
+      - alert: EdgeErrors
+        expr: sum(rate(caddy_http_request_duration_seconds_count{code=~"5.."}[5m])) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: 'Caddy 가 5분째 5xx 를 냅니다 — 앱이 죽었거나 재시작을 되풀이하는 중일 수 있습니다'
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(arcade_http_request_duration_seconds_count{status=~"5.."}[10m]))
+            / sum(rate(arcade_http_request_duration_seconds_count[10m])) > 0.02
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: '10분 동안 요청의 2% 넘게 5xx 입니다'
+
+      - alert: SlowResponses
+        expr: histogram_quantile(0.95, sum by (le) (rate(arcade_http_request_duration_seconds_bucket[10m]))) > 1
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: '전체 요청 p95 가 15분째 1초를 넘습니다 (기준선 159ms)'
+
+      - alert: DbPoolWaiting
+        expr: max(arcade_db_pool_connections{state="waiting"}) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: 'pg 풀 슬롯을 기다리는 요청이 5분째 있습니다 — 서버의 PG_POOL_MAX 는 5 입니다'
+
+      - alert: EventLoopLag
+        expr: max(nodejs_eventloop_lag_p99_seconds{job="arcade-finder"}) > 0.2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: '이벤트 루프 지연 p99 가 10분째 200ms 를 넘습니다 — Node 가 CPU 로 밀리는 중입니다'
+
+      - alert: MemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: '서버 메모리 여유가 10분째 10% 아래입니다 — 1GB 서버라 다음은 스왑입니다'
+
+      # 스왑에 들어 있는 양보다 "계속 읽어 들이는가" 가 느려짐의 신호다
+      - alert: SwapThrashing
+        expr: rate(node_vmstat_pswpin[5m]) > 100
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: '10분째 스왑에서 계속 읽어 들입니다 — 메모리가 모자라 느려지는 중입니다'
+
+      - alert: DiskLow
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.15
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: '디스크 여유가 15% 아래입니다 — 다 쓴 배포 묶음(/root · /srv/arcade-finder/releases)부터 지우세요'

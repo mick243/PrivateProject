@@ -5,7 +5,8 @@
 #
 # 가져가지 않는 것 — 서버가 따로 만들거나(bootstrap.sh), 로컬에서만 뜻이 있는 값:
 #   DATABASE_URL · AUTH_SECRET · ADMIN_PASSWORD · APP_URL · TRUSTED_PROXY_HOPS · DB_FALLBACK
-#   PG_CONNECT_TIMEOUT_MS · PULSE_*(로컬 계측 서버) · METRICS_*(로컬 Prometheus — monitoring/) · NODE_ENV
+#   PG_CONNECT_TIMEOUT_MS · PULSE_*(로컬 계측 서버) · NODE_ENV
+#   METRICS_*(PC 의 값은 로컬 Prometheus 용 — 서버 토큰은 monitoring/install-monitoring.sh 가 서버에서 만든다)
 # server.env 에는 API 비밀이 들어간다. 커밋되지 않게 .gitignore 에 올려 두었고,
 # 서버에 올린 뒤에는 PC 쪽 사본을 지우세요.
 set -euo pipefail

@@ -16,3 +16,5 @@ deploy/**/*.sh text eol=lf
 deploy/**/*.service text eol=lf
 deploy/**/*.timer text eol=lf
 deploy/ncp/Caddyfile text eol=lf
+deploy/**/*.yml text eol=lf
+deploy/**/*.example text eol=lf

@@ -1,0 +1,32 @@
+# /etc/systemd/system/arcade-node-exporter.service — install-monitoring.sh 가 넣는다
+#
+# 서버 지표. 수집기는 대시보드 · 알림이 쓰는 것만 켠다 (기본값을 다 켜면 시계열이 몇 배다).
+[Unit]
+Description=오락실 파인더 감시 — node_exporter (서버 메모리 · CPU · 디스크)
+After=network-online.target
+
+[Service]
+User=arcade-monitor
+Group=arcade-monitor
+Environment=GOMEMLIMIT=24MiB
+ExecStart=/opt/arcade-monitoring/bin/node_exporter \
+  --web.listen-address=127.0.0.1:9100 \
+  --collector.disable-defaults \
+  --collector.cpu --collector.meminfo --collector.loadavg --collector.pressure --collector.vmstat \
+  --collector.filesystem --collector.diskstats --collector.netdev --collector.stat \
+  --collector.time --collector.uname --collector.os \
+  --collector.netdev.device-exclude=^(lo|veth.*|docker.*)$$
+# ↑ 끝의 $$ 는 정규식의 $ 하나다 — systemd 가 $ 를 변수로 읽기 때문
+Restart=always
+RestartSec=10
+
+MemoryHigh=40M
+MemoryMax=64M
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

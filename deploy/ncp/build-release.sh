@@ -62,11 +62,12 @@ docker run --rm --platform linux/amd64 \
       --exclude=./.git --exclude=./coverage --exclude=./logs --exclude=./localdata \
       --exclude=./.arcade-import-state.json --exclude=./tsconfig.tsbuildinfo \
       --exclude=./deploy/ncp/out --exclude=./deploy/ncp/build.env --exclude=./deploy/ncp/server.env \
-      --exclude=./monitoring \
+      --exclude=./deploy/ncp/grafana-cloud.env --exclude=./monitoring \
       . | tar -C /app -xf -
     cd /app
-    # 위 목록에서 빠진 게 있어도 비밀이 서버로 가지 않게 — .env.example 말고 .env* · 키 파일 · .claude 가 보이면 멈춘다
-    leak="$(find . -path ./node_modules -prune -o -name ".env*" ! -name ".env.example" -print -o -name "*.pem" -print -o -name .claude -print | awk "NR <= 5")"   # head 는 find 를 SIGPIPE 로 끊어 pipefail 에 걸린다
+    # 위 목록에서 빠진 게 있어도 비밀이 서버로 가지 않게 — .env.example 말고 .env* · *.env(server.env · grafana-cloud.env 꼴)
+    # · 키 파일 · .claude 가 보이면 멈춘다
+    leak="$(find . -path ./node_modules -prune -o -name ".env*" ! -name ".env.example" -print -o -name "*.env" -print -o -name "*.pem" -print -o -name .claude -print | awk "NR <= 5")"   # head 는 find 를 SIGPIPE 로 끊어 pipefail 에 걸린다
     if [ -n "$leak" ]; then echo "✗ 묶음에 들어가면 안 되는 파일이 있어 멈춥니다 (build-release.sh 의 --exclude 에 더하세요):"; echo "$leak"; exit 1; fi
     npm ci --no-audit --no-fund --loglevel=error     # postinstall 이 prisma generate 까지 한다
     npm run build

@@ -39,6 +39,7 @@ lib/generated/
 deploy/ncp/out/
 deploy/ncp/build.env
 deploy/ncp/server.env
+deploy/ncp/grafana-cloud.env
 
 # 로컬 Prometheus · Grafana (monitoring/) — 지표 토큰 · 개발 DB 접속 정보
 monitoring/.env
