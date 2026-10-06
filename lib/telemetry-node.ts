@@ -1,5 +1,6 @@
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { NodeTracerProvider, type ReadableSpan, type SpanProcessor } from '@opentelemetry/sdk-trace-node';
+import { promMetrics } from './prometheus';
 import { recordHttp, startReporter } from './telemetry';
 
 /**
@@ -13,8 +14,8 @@ import { recordHttp, startReporter } from './telemetry';
  * instrumentation.ts 가 nodejs 런타임일 때만 이 모듈을 불러온다 (NodeTracerProvider 는 edge 비호환).
  */
 
-/** 감시 자체가 만드는 요청과 정적 자원은 지표에서 뺀다 */
-const IGNORE = [/^\/_next\//, /^\/api\/health$/, /^\/favicon/, /^\/__nextjs/, /^\/\.well-known\//];
+/** 감시 자체가 만드는 요청(상태 점검 · Prometheus 수집)과 정적 자원은 지표에서 뺀다 */
+const IGNORE = [/^\/_next\//, /^\/api\/health$/, /^\/api\/metrics$/, /^\/favicon/, /^\/__nextjs/, /^\/\.well-known\//];
 
 class PulseSpanProcessor implements SpanProcessor {
   onStart(): void {}
@@ -68,14 +69,26 @@ function startLoopLagMonitor(): void {
 }
 
 export function startTelemetry(): boolean {
-  // 키가 없으면 OTel 도 켜지 않는다 — 스팬을 만드는 비용조차 들이지 않는다
-  if (!startReporter()) return false;
-  startLoopLagMonitor();
+  // dev HMR 로 두 번 불려도 스팬 프로세서는 하나만 — 둘이면 요청이 두 번 센다
+  const g = globalThis as unknown as { __telemetryStarted?: boolean };
+  if (g.__telemetryStarted) return false;
+
+  const pulse = startReporter();
+  // 레지스트리를 만들면서 lib/telemetry.ts 의 기록 지점에 싱크를 단다
+  const prometheus = promMetrics() !== null;
+  // 둘 다 꺼져 있으면 OTel 도 켜지 않는다 — 스팬을 만드는 비용조차 들이지 않는다
+  if (!pulse && !prometheus) return false;
+
+  // Prometheus 는 기본 지표(nodejs_eventloop_lag_*)가 따로 잰다. 이 히스토그램은 Pulse 의 창 단위 값용
+  if (pulse) startLoopLagMonitor();
   const provider = new NodeTracerProvider({ spanProcessors: [new PulseSpanProcessor()] });
   provider.register();
-  console.log(
-    `[telemetry] Pulse 계측 시작 → ${process.env.PULSE_API_URL} (agent ${process.env.PULSE_AGENT_ID ?? 'arcade-finder'})` +
-      ` · 이벤트 루프 감시 ${LOOP_RESOLUTION_MS}ms`,
-  );
+  g.__telemetryStarted = true;
+
+  const sinks = [
+    pulse && `Pulse → ${process.env.PULSE_API_URL} (agent ${process.env.PULSE_AGENT_ID ?? 'arcade-finder'}) · 이벤트 루프 감시 ${LOOP_RESOLUTION_MS}ms`,
+    prometheus && 'Prometheus → GET /api/metrics',
+  ].filter(Boolean);
+  console.log(`[telemetry] 계측 시작 — ${sinks.join(' · ')}`);
   return true;
 }

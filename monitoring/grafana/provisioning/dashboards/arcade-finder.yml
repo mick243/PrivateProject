@@ -1,0 +1,11 @@
+# monitoring/grafana/dashboards/*.json 을 대시보드로 올린다.
+# 정본은 파일이다 — 화면에서 고쳐도 되지만, 남기려면 JSON 으로 내보내 파일을 덮어쓴다(README).
+apiVersion: 1
+providers:
+  - name: arcade-finder
+    folder: ''
+    type: file
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/dashboards

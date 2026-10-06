@@ -54,6 +54,7 @@ docker run --rm --platform linux/amd64 \
     # ./.claude · ./.next-* : 주 체크아웃에만 있는 옛 워크트리(그 안의 .env.local 까지)와 옛 빌드 사본.
     #   2026-09-29 묶음이 이것 때문에 557MB 가 됐고 개발용 .env.local 사본이 실렸다.
     # .env.local · .env.*.local 은 ./ 없이 — 어느 깊이에 있든 뺀다.
+    # ./monitoring : 로컬 Prometheus · Grafana. 서버에서 쓰지 않고, monitoring/.env 에 개발 DB 비밀번호가 있다.
     tar -C /src -cf - \
       --exclude=./node_modules --exclude=./.next --exclude="./.next-*" --exclude=./uploads \
       --exclude=./.env --exclude=.env.local --exclude=".env.*.local" --exclude=./.claude \
@@ -61,6 +62,7 @@ docker run --rm --platform linux/amd64 \
       --exclude=./.git --exclude=./coverage --exclude=./logs --exclude=./localdata \
       --exclude=./.arcade-import-state.json --exclude=./tsconfig.tsbuildinfo \
       --exclude=./deploy/ncp/out --exclude=./deploy/ncp/build.env --exclude=./deploy/ncp/server.env \
+      --exclude=./monitoring \
       . | tar -C /app -xf -
     cd /app
     # 위 목록에서 빠진 게 있어도 비밀이 서버로 가지 않게 — .env.example 말고 .env* · 키 파일 · .claude 가 보이면 멈춘다

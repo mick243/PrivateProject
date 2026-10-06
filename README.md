@@ -122,6 +122,11 @@ Pulse 가 죽어 있어도 경고 한 줄만 남기고 앱은 영향받지 않�
 `SELECT arcade_reviews` p95 를 나란히 볼 수 있어 "느린 게 API 인가 쿼리인가"를 바로 가른다.
 (서버리스에서는 인스턴스가 요청마다 사라져 이 방식이 맞지 않는다 — 상주 프로세스용이다.)
 
+**Prometheus · Grafana 로 보기 — `GET /api/metrics` (`lib/prometheus.ts`).** `.env.local` 에 `METRICS_TOKEN` 을 넣으면 같은 기록 지점이
+Prometheus 레지스트리에도 쌓인다(라우트별 요청 히스토그램 · Prisma 연산 · pg 풀 · Node 기본 지표). Prometheus 가 그 토큰을 Bearer 로
+보내며 긁어 가고, 토큰이 없으면 404 · 측정 비용 0 이다. Pulse 와 함께 켜도 된다. PC 에서 Prometheus · Grafana · postgres_exporter 를
+띄우는 법과 대시보드 읽는 법은 [monitoring/README.md](monitoring/README.md) — 지금은 로컬 전용이라 배포 묶음과 서버 env 에서 빠진다.
+
 ### 스키마
 
 [`db/schema.sql`](db/schema.sql) — 오락실 파인더
