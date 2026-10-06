@@ -1,9 +1,15 @@
-# 실서버 알림 규칙 — install-monitoring.sh 가 mimirtool 로 Grafana Cloud 에 올린다 (토큰에 rules:write 가 있을 때).
-# Grafana Cloud 가 평가하고, 알림은 Grafana Cloud 의 연락 지점(contact point)으로 간다 — README §9.
+# 실서버 알림 규칙 — Grafana Cloud 에 **Grafana 관리 규칙으로 한 번 가져온다** (deploy/ncp/README.md §9-4).
+#   Alerting → Alert rules → More → Import alert rules → "Prometheus YAML file" 에 이 파일,
+#   데이터 소스 grafanacloud-…-prom · 폴더 arcade-finder · "Pause imported alerting rules" 는 끈다.
+# 알림은 Grafana 의 기본 정책 → 연락 지점(메일)으로 간다.
+#
+# 왜 가져오기인가: 처음에는 mimirtool 로 Grafana Cloud 의 Prometheus(Mimir)에 올렸는데, 평가는 되지만 알림이
+# Grafana 의 연락 지점으로 오지 않았다 — 2026-10-06 실서버에서 DiskLow 가 firing 인데 Grafana Alertmanager 는
+# 비어 있었다(스택의 Prometheus 데이터 소스가 manageAlerts:false). 그래서 이 파일은 표준 Prometheus 규칙 형식이다
+# (namespace 줄 없음 — promtool check rules 로 검사된다).
 #
 # 앱 규칙의 문턱은 로컬판(monitoring/prometheus/rules.yml)과 같다. 여기는 60초마다 긁으므로 for 를 조금 길게 잡았고,
-# 서버(메모리 · 스왑 · 디스크) · Caddy · "지표가 끊김" 규칙이 더 있다. mimirtool 형식이라 맨 위에 namespace 가 있다.
-namespace: arcade-finder
+# 서버(메모리 · 스왑 · 디스크) · Caddy · "지표가 끊김" 규칙이 더 있다.
 groups:
   - name: arcade-finder-prod
     rules:
