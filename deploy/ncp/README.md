@@ -193,8 +193,9 @@ sudo bash install-release.sh /root/release-<새것>.tgz
 
 ## 9. 감시 — Grafana Cloud (선택)
 
-> 2026-10-06 작성. 1GB · CPU 1개 컨테이너에서 처음부터 끝까지 리허설했습니다(Grafana Cloud 자리에는 그것과 같은 엔진인
-> Grafana Mimir). **실제 Grafana Cloud 계정으로는 시험하지 못했습니다** — 9-3 의 첫 실행이 그 확인입니다.
+> 2026-10-06 작성. 1GB · CPU 1개 컨테이너에서 처음부터 끝까지 리허설했고(Grafana Cloud 자리에는 그것과 같은 엔진인
+> Grafana Mimir), **같은 날 실서버에 적용했습니다** — 지표 도착(활성 시계열 약 1,000) · 대시보드 · 디스크 칸(ext4)까지 확인.
+> 실서버에서 드러난 것 하나: 알림 규칙은 Grafana 관리 규칙으로 가져와야 메일이 갑니다(9-4).
 
 서버 안에서 수집기(Prometheus agent 모드) · node_exporter · postgres_exporter 가 60초마다 지표를 긁어 Grafana Cloud
 무료 등급으로 보냅니다. 그래프와 알림은 Grafana Cloud 화면에서 봅니다. 셋 다 127.0.0.1 에만 열려 서버에 열리는 포트는
@@ -216,8 +217,9 @@ sudo bash install-release.sh /root/release-<새것>.tgz
 2. grafana.com 의 내 스택 → **Prometheus** 의 **Details** 에서 세 가지를 적어 둡니다 (화면 이름은 바뀔 수 있습니다).
    - **Remote Write Endpoint** — 끝이 `/api/prom/push` 인 주소
    - **Username / Instance ID** — 숫자
-   - **토큰** — Access Policy 토큰(`glc_…`). 범위는 `metrics:write`, 알림 규칙까지 올리려면 `rules:read` · `rules:write` 도.
-     만들 때 한 번만 보입니다.
+   - **토큰** — `glc_…`. 같은 화면의 **Generate now** 로 만들거나 Access Policies 에서 `metrics:write` 범위로 만듭니다.
+     만들 때 한 번만 보입니다. **견본(`grafana-cloud.env.example`)이 아니라 사본(`grafana-cloud.env`)에 넣으세요** —
+     견본은 git 이 추적합니다(넣으면 `build-release.sh` 가 멈춥니다).
 
 ### 9-2. PC
 
@@ -242,9 +244,9 @@ rm /root/grafana-cloud.env                                                      
 `install-monitoring.sh` 가 하는 일: 바이너리 셋을 GitHub 릴리스에서 받아 sha256 을 맞춰 보고 → 앱 지표 토큰(`METRICS_TOKEN`)을
 **서버에서** 만들어 `.env.local` 에 넣고 → DB 에 읽기 전용 감시 계정(`arcade_monitor`, `pg_monitor` 역할)을 만들고 →
 Caddyfile 을 묶음의 새 판으로 바꾸고(옛 판은 `/etc/caddy/Caddyfile.bak-*`) → 서비스 셋을 띄우고 → 앱을 한 번 다시 띄운 뒤 →
-Grafana Cloud 가 받았는지, 밖에서 `/api/metrics` 가 막혔는지 확인하고 → 알림 규칙을 올립니다.
+Grafana Cloud 가 받았는지, 밖에서 `/api/metrics` 가 막혔는지 확인합니다. 알림 규칙은 올리지 않습니다(9-4 에서 화면으로).
 
-끝에 `✔ Grafana Cloud 가 받았습니다` 와 `✔ 올렸습니다` 가 나오면 됩니다. 못 보내면 그 자리에서 멈추고 Grafana Cloud 가
+끝에 `✔ Grafana Cloud 가 받았습니다` 가 나오면 됩니다. 못 보내면 그 자리에서 멈추고 Grafana Cloud 가
 돌려준 응답을 찍습니다 — 401/403 이면 토큰 · Instance ID, 404 면 URL 입니다. 고친 `grafana-cloud.env` 로 같은 명령을 다시
 돌리면 됩니다.
 
@@ -253,12 +255,23 @@ Grafana Cloud 가 받았는지, 밖에서 `/api/metrics` 가 막혔는지 확인
 1. **대시보드** — Dashboards → New → Import → PC 의 `monitoring/grafana/dashboards/arcade-finder.json` 을 올립니다.
    맨 위 **데이터 소스** 칸에서 스택의 Prometheus(`grafanacloud-…-prom`)를 고릅니다. 로컬과 같은 대시보드이고,
    "서버 · Caddy" 줄과 "메모리 여유" · "디스크 여유" 칸은 운영에서만 찹니다.
-2. **알림** — Alerting → Alert rules 에 `arcade-finder` 규칙 12개가 보입니다(9-3 이 올림). 서버 꺼짐(지표 끊김) ·
-   앱 · Caddy · DB 응답 없음 · 5xx · 느린 응답 · 풀 대기 · 이벤트 루프 · 메모리 · 스왑 · 디스크 — 문턱과 문구는
-   `deploy/ncp/monitoring/rules.yml`. 알림을 받을 메일은 Alerting → Contact points 에서 넣습니다.
-   ⚠ 이 규칙들이 어느 연락 지점으로 가는지는 스택의 알림 설정에 따릅니다. 계정으로 확인하지 못한 부분이라, 처음 한 번은
-   알림이 메일로 오는지 직접 보세요. 서비스에 영향 없이 울려 보는 법: `sudo systemctl stop arcade-postgres-exporter`
-   → 4~5분 뒤 `PostgresDown` (exporter 만 멈춘 것이라 DB · 앱은 그대로) → 메일 확인 → `sudo systemctl start arcade-postgres-exporter`.
+2. **알림 받을 메일** — Alerting → Notification configuration → **Contact points**. 새 스택에는 `empty` 라는 연락 지점 하나가
+   기본 정책(Default policy)에 걸려 있고 **받는 곳이 비어 있습니다**(No integrations configured) — 그대로면 알림이 아무 데도
+   안 갑니다. `empty` 의 **Edit** → Integration **Email** · Addresses 에 메일 → **Save contact point**. 이름은 그대로 두세요
+   (기본 정책이 그 이름을 가리킵니다).
+3. **알림 규칙 가져오기** — Alerting → Alert rules → **More → Import alert rules** →
+   - Import source: **Prometheus YAML file** → PC 의 `deploy/ncp/monitoring/rules.yml`
+   - Target data source: `grafanacloud-…-prom`
+   - Target folder: **New folder** `arcade-finder`
+   - **Pause imported alerting rules 는 끕니다**(기본이 켜짐 — 켜 두면 규칙이 멈춘 채로 들어옵니다)
+   - Import → 확인 창에서 Import. 폴더 `arcade-finder` 아래 `arcade-finder-prod` 에 12개가 생깁니다.
+
+   **왜 이렇게 하나**: 처음 판은 `install-monitoring.sh` 가 mimirtool 로 Grafana Cloud 의 Prometheus(Mimir)에 규칙을 올렸습니다.
+   실서버에서 그 규칙은 평가는 됐지만(`DiskLow` firing) 알림이 Grafana 의 연락 지점으로 오지 않았습니다 — 스택의 Prometheus
+   데이터 소스가 `manageAlerts: false` 라 Alert rules 화면에도 안 보이고 "Existing data source-managed rules" 로도 못 가져옵니다.
+   그 판으로 설치한 서버라면 Mimir 쪽 사본 12개가 조용히 평가되고 있는데, 알림을 내지 않으니 두어도 됩니다.
+4. **울려 보기** — 서비스에 영향 없이: `sudo systemctl stop arcade-postgres-exporter` → 4~5분 뒤 `PostgresDown` 메일
+   (exporter 만 멈춘 것이라 DB · 앱은 그대로) → `sudo systemctl start arcade-postgres-exporter`.
 
 ### 9-5. 운영
 
@@ -269,10 +282,11 @@ Grafana Cloud 가 받았는지, 밖에서 `/api/metrics` 가 막혔는지 확인
 | 무엇을 긁는지 | `curl -s 127.0.0.1:9090/api/v1/targets` |
 | 로그 | `journalctl -u arcade-prometheus-agent -f` |
 | 토큰 · 주소 바꾸기 | 새 `grafana-cloud.env` 로 `install-monitoring.sh` 를 다시 (앱은 다시 띄우지 않음) |
-| 규칙 · 수집 설정 고치기 | `deploy/ncp/monitoring/` 을 고쳐 새 묶음 → `install-release.sh` → `install-monitoring.sh` 다시 |
+| 알림 규칙 고치기 | `rules.yml` 을 고친 뒤 Grafana Cloud 에서 `arcade-finder-prod` 그룹을 지우고 9-4 의 3 으로 다시 가져오기 (서버는 그대로) |
+| 수집 설정 고치기 | `deploy/ncp/monitoring/` 을 고쳐 새 묶음 → `install-release.sh` → `install-monitoring.sh` 다시 |
 | 끄기 | `sudo bash …/install-monitoring.sh --remove` — 서비스 · 바이너리 · 설정 · DB 감시 계정을 지움. 앱 · DB 는 그대로 |
 
 - Grafana Cloud 가 잠깐 받지 못해도 수집기가 6시간까지 쌓아 두었다가 다시 보냅니다.
-- 리허설 컨테이너에서는 "디스크 여유" 가 비었습니다(루트가 overlay 라 node_exporter 가 건너뜀). 실서버의 루트는 ext4 라
-  찰 것입니다 — 설치 뒤 대시보드에서 한 번 보세요.
+- 리허설 컨테이너에서는 "디스크 여유" 가 비었지만(루트가 overlay 라 node_exporter 가 건너뜀), 실서버(ext4 `/dev/vda2`)에서는
+  찹니다 — 2026-10-06 첫 측정이 14% 라 바로 `DiskLow` 가 울렸습니다. 다 쓴 배포 묶음(하나에 224MB)부터 지우세요.
 - 수집 간격은 60초입니다. Grafana Cloud 는 사용량을 시계열 수와 1분당 점 수로 세므로 더 줄이지 마세요.

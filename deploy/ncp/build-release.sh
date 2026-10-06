@@ -41,10 +41,26 @@ mkdir -p "$OUT_DIR"
 export MSYS_NO_PATHCONV=1
 to_host() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }
 
+# 이 PC 가 가진 비밀 값 목록 — 묶음 소스에 이 값이 그대로 들어 있으면 컨테이너 안에서 빌드를 멈춘다.
+# 파일 이름 검사(.env* · *.env)는 견본(.example)에 실제 토큰을 붙여 넣은 경우를 못 잡는다 — 2026-10-06 에
+# grafana-cloud.env.example 에 Grafana Cloud 토큰이 들어간 채로 빌드될 뻔했다. 네이버 · 카카오 비밀처럼
+# 정해진 모양이 없는 값도 이렇게 실제 값과 견주어야 잡힌다. 값은 화면에 찍지 않고, 끝나면 지운다.
+SECRETS_FILE="$(mktemp)"
+trap 'rm -f "$SECRETS_FILE"' EXIT
+chmod 600 "$SECRETS_FILE"
+for f in "$APP_DIR/.env.local" "$HERE/server.env" "$HERE/grafana-cloud.env"; do
+  [[ -f "$f" ]] || continue
+  # 이름이 …SECRET · KEY · TOKEN · PASSWORD 로 끝나는 키와 DATABASE_URL. NEXT_PUBLIC_* 은 원래 공개되는 값이다.
+  # 12자보다 짧은 값은 흔한 낱말과 겹칠 수 있어 뺀다
+  tr -d '\r' < "$f" | grep -E '^[A-Z][A-Z0-9_]*(SECRET|KEY|TOKEN|PASSWORD)=|^DATABASE_URL=' | grep -v '^NEXT_PUBLIC_' \
+    | cut -d= -f2- | sed -E "s/^[\"']|[\"']\$//g" | awk 'length >= 12' >> "$SECRETS_FILE" || true
+done
+
 echo "▶ $IMAGE 에서 빌드 → $NAME"
 docker run --rm --platform linux/amd64 \
   -v "$(to_host "$APP_DIR"):/src:ro" \
   -v "$(to_host "$OUT_DIR"):/out" \
+  -v "$(to_host "$SECRETS_FILE"):/secrets.txt:ro" \
   --env-file "$(to_host "$BUILD_ENV")" \
   -e NAME="$NAME" -e DB_FALLBACK=off -e NEXT_TELEMETRY_DISABLED=1 \
   "$IMAGE" bash -euo pipefail -c '
@@ -69,6 +85,12 @@ docker run --rm --platform linux/amd64 \
     # · 키 파일 · .claude 가 보이면 멈춘다
     leak="$(find . -path ./node_modules -prune -o -name ".env*" ! -name ".env.example" -print -o -name "*.env" -print -o -name "*.pem" -print -o -name .claude -print | awk "NR <= 5")"   # head 는 find 를 SIGPIPE 로 끊어 pipefail 에 걸린다
     if [ -n "$leak" ]; then echo "✗ 묶음에 들어가면 안 되는 파일이 있어 멈춥니다 (build-release.sh 의 --exclude 에 더하세요):"; echo "$leak"; exit 1; fi
+    # 이름이 아니라 **내용** — 알려진 토큰 모양(Grafana Cloud · Google · Pulse · AWS · GitHub · 개인 키)과 이 PC 의
+    # 실제 비밀 값(/secrets.txt, 위에서 모음). 걸린 파일 이름만 찍는다. 각 grep 뒤의 || true 는 "못 찾음"(종료 코드 1)이
+    # set -e 로 묶음 검사 자체를 끝내지 않게
+    pat="glc_[A-Za-z0-9+/=_-]{20,}|GOCSPX-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|pk_[a-f0-9]{40,}|sk-ant-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    hit="$( { grep -rIlE "$pat" . || true; if [ -s /secrets.txt ]; then grep -rIlFf /secrets.txt . || true; fi; } | sort -u | awk "NR <= 5")"
+    if [ -n "$hit" ]; then echo "✗ 비밀 값(토큰 · 키)이 든 파일이 있어 멈춥니다 — 값은 찍지 않습니다. 견본(.example) · 문서에 실제 값을 붙여 넣지 않았는지 보세요:"; echo "$hit"; exit 1; fi
     npm ci --no-audit --no-fund --loglevel=error     # postinstall 이 prisma generate 까지 한다
     npm run build
     rm -rf .next/cache .pglite

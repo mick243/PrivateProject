@@ -16,7 +16,9 @@
 #   6. systemd 서비스 셋. 전부 127.0.0.1 에만 열고 메모리 상한을 건다 (1GB 서버)
 #   7. 토큰을 새로 넣었을 때만 앱을 다시 띄운다 — 10~20초 끊긴다
 #   8. Grafana Cloud 가 첫 지표를 받았는지 확인한다
-#   9. 토큰에 rules:write 가 있으면 알림 규칙(rules.yml)을 올린다
+#
+# 알림 규칙(rules.yml)은 여기서 올리지 않는다 — Grafana Cloud 화면에서 Grafana 관리 규칙으로 한 번 가져온다(README §9-4).
+# 처음에는 mimirtool 로 Prometheus(Mimir)에 올렸는데, 그 규칙의 알림은 Grafana 의 연락 지점으로 오지 않았다(2026-10-06).
 set -Eeuo pipefail
 # set -e 는 멈출 때 아무 말도 하지 않는다. 어느 줄의 무슨 명령에서 멈췄는지 반드시 남긴다 (bootstrap.sh 와 같은 이유)
 trap 'rc=$?; [[ $BASH_SUBSHELL -eq 0 ]] && echo "✗ install-monitoring.sh ${LINENO}번째 줄에서 멈췄습니다 (종료 코드 $rc): $BASH_COMMAND" >&2' ERR
@@ -24,7 +26,6 @@ trap 'rc=$?; [[ $BASH_SUBSHELL -eq 0 ]] && echo "✗ install-monitoring.sh ${LIN
 PROM_VER=3.15.0
 NODE_VER=1.12.1
 PGEXP_VER=0.20.1
-MIMIRTOOL_VER=3.2.1
 
 ROOT=/srv/arcade-finder
 APP="$ROOT/app/arcade-finder"
@@ -68,8 +69,6 @@ get() {
 PUSH_URL="$(get GRAFANA_CLOUD_PROM_URL)"
 PUSH_USER="$(get GRAFANA_CLOUD_PROM_USER)"
 PUSH_TOKEN="$(get GRAFANA_CLOUD_TOKEN)"
-RULES_URL="$(get GRAFANA_CLOUD_RULES_URL)"
-RULES_URL="${RULES_URL:-${PUSH_URL%/api/prom/push}}"
 
 missing=()
 [[ "$PUSH_URL" =~ ^https?:// ]] || missing+=("GRAFANA_CLOUD_PROM_URL (https:// 로 시작하는 Remote Write Endpoint)")
@@ -87,7 +86,7 @@ fi
 systemctl cat arcade-finder >/dev/null 2>&1 || { echo "arcade-finder 서비스가 없습니다 — install-release.sh 를 먼저 돌리세요" >&2; exit 2; }
 command -v caddy >/dev/null || { echo "Caddy 가 없습니다 — bootstrap.sh 를 먼저 돌리세요" >&2; exit 2; }
 [[ "$(uname -m)" == "x86_64" ]] || { echo "x86_64 서버만 됩니다 (지금: $(uname -m))" >&2; exit 2; }
-for f in prometheus-agent.yml rules.yml "${UNITS[@]/%/.service}"; do
+for f in prometheus-agent.yml "${UNITS[@]/%/.service}"; do
   [[ -f "$HERE/$f" ]] || { echo "$HERE/$f 가 없습니다 — 배포 묶음 안의 install-monitoring.sh 를 그 자리에서 돌려 주세요" >&2; exit 2; }
 done
 FREE_MB="$(df -Pm / | awk 'NR == 2 {print $4}')"
@@ -120,10 +119,10 @@ get_release() {
 get_release prometheus "$PROM_VER" prometheus/prometheus prometheus promtool
 get_release node_exporter "$NODE_VER" prometheus/node_exporter node_exporter
 get_release postgres_exporter "$PGEXP_VER" prometheus-community/postgres_exporter postgres_exporter
-# 옛 버전 폴더는 지운다 — 10GB 디스크
+# 옛 버전 폴더는 지운다 — 10GB 디스크 (예전 판이 받던 mimirtool 도 여기서 정리된다)
 find "$OPT" -mindepth 1 -maxdepth 1 -type d ! -name bin \
   ! -name "prometheus-$PROM_VER" ! -name "node_exporter-$NODE_VER" ! -name "postgres_exporter-$PGEXP_VER" \
-  ! -name "mimirtool-$MIMIRTOOL_VER" -exec rm -rf {} +
+  -exec rm -rf {} +
 
 step "2. 사용자 · 설정 폴더"
 id arcade-monitor >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin arcade-monitor
@@ -255,34 +254,6 @@ else
   exit 1
 fi
 
-step "9. 알림 규칙 (rules.yml → Grafana Cloud)"
-if [[ "$RULES_URL" == "$PUSH_URL" ]]; then
-  echo "건너뜀 — 규칙을 올릴 주소를 알 수 없습니다. grafana-cloud.env 에 GRAFANA_CLOUD_RULES_URL 을 넣으세요"
-else
-  dir="$OPT/mimirtool-$MIMIRTOOL_VER"
-  if [[ ! -x "$dir/mimirtool" ]]; then
-    tmp="$(mktemp -d)"
-    base="https://github.com/grafana/mimir/releases/download/mimir-$MIMIRTOOL_VER"
-    curl -fsSL --retry 3 --max-time 300 -o "$tmp/mimirtool" "$base/mimirtool-linux-amd64"
-    curl -fsSL --retry 3 --max-time 60 -o "$tmp/sum" "$base/mimirtool-linux-amd64-sha-256"
-    if [[ "$(awk '{print $1}' "$tmp/sum")" != "$(sha256sum "$tmp/mimirtool" | awk '{print $1}')" ]]; then
-      echo "✗ mimirtool 의 sha256 이 맞지 않습니다 — 받지 않습니다" >&2; rm -rf "$tmp"; exit 1
-    fi
-    install -d -m 755 "$dir" && install -m 755 "$tmp/mimirtool" "$dir/mimirtool" && rm -rf "$tmp"
-  fi
-  "$dir/mimirtool" rules check "$HERE/rules.yml" >/dev/null
-  # 토큰을 명령줄 인자로 넘기지 않는다 — ps 로 보인다. mimirtool 은 환경 변수로도 받는다
-  if MIMIR_ADDRESS="$RULES_URL" MIMIR_TENANT_ID="$PUSH_USER" MIMIR_API_KEY="$PUSH_TOKEN" \
-       "$dir/mimirtool" rules load "$HERE/rules.yml" >/tmp/mimirtool.log 2>&1; then
-    echo "✔ 올렸습니다 — Grafana Cloud → Alerting → Alert rules 의 arcade-finder"
-  else
-    echo "⚠ 올리지 못했습니다 (지표는 정상으로 갑니다). 토큰 범위에 rules:read · rules:write 가 있는지 보세요:"
-    tail -n 3 /tmp/mimirtool.log
-  fi
-  # 86MB — 규칙을 올릴 때만 쓴다. 다시 설치하면 다시 받는다 (10GB 디스크)
-  rm -rf /tmp/mimirtool.log "$dir"
-fi
-
 step "끝 — 메모리"
 # postgresql.service 는 껍데기다 — 실제 서버는 postgresql@18-main
 for u in "${UNITS[@]}" arcade-finder postgresql@18-main caddy; do
@@ -292,8 +263,10 @@ done
 free -m | awk 'NR<=3'
 cat <<EOF
 
-다음 (Grafana Cloud 화면에서 — README §9):
+다음 (Grafana Cloud 화면에서, 처음 한 번 — README §9-4):
   · Dashboards → New → Import → PC 의 monitoring/grafana/dashboards/arcade-finder.json
-  · Alerting → Contact points 에서 알림 받을 메일
+  · Alerting → Notification configuration → Contact points 에 알림 받을 메일
+  · Alerting → Alert rules → More → Import alert rules → Prometheus YAML file 에 PC 의 deploy/ncp/monitoring/rules.yml
+    (데이터 소스 grafanacloud-…-prom · 폴더 arcade-finder · "Pause imported alerting rules" 끄기)
   · 올린 grafana-cloud.env 는 지우세요: rm $CLOUD_ENV
 EOF
