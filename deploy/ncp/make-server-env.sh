@@ -5,7 +5,7 @@
 #
 # 가져가지 않는 것 — 서버가 따로 만들거나(bootstrap.sh), 로컬에서만 뜻이 있는 값:
 #   DATABASE_URL · AUTH_SECRET · ADMIN_PASSWORD · APP_URL · TRUSTED_PROXY_HOPS · DB_FALLBACK
-#   PG_CONNECT_TIMEOUT_MS · PULSE_*(로컬 계측 서버) · NODE_ENV
+#   PG_CONNECT_TIMEOUT_MS · PULSE_*(로컬 계측 서버) · METRICS_*(로컬 Prometheus — monitoring/) · NODE_ENV
 # server.env 에는 API 비밀이 들어간다. 커밋되지 않게 .gitignore 에 올려 두었고,
 # 서버에 올린 뒤에는 PC 쪽 사본을 지우세요.
 set -euo pipefail
@@ -15,7 +15,7 @@ SRC="${1:-$HERE/../../.env.local}"
 OUT="$HERE/server.env"
 [[ -f "$SRC" ]] || { echo "원본이 없습니다: $SRC" >&2; exit 2; }
 
-SKIP='^(DATABASE_URL|AUTH_SECRET|ADMIN_PASSWORD|APP_URL|TRUSTED_PROXY_HOPS|DB_FALLBACK|PG_CONNECT_TIMEOUT_MS|NODE_ENV|PULSE_[A-Z_]*)='
+SKIP='^(DATABASE_URL|AUTH_SECRET|ADMIN_PASSWORD|APP_URL|TRUSTED_PROXY_HOPS|DB_FALLBACK|PG_CONNECT_TIMEOUT_MS|NODE_ENV|PULSE_[A-Z_]*|METRICS_[A-Z_]*)='
 umask 077
 {
   echo "# make-server-env.sh 가 $(date +%F) 에 만든 값 — install-release.sh 가 서버 .env.local 에 합친다"

@@ -86,7 +86,8 @@ const nextConfig = {
 
   // PGlite ships WASM + native-ish assets; keep it out of the bundler.
   // @opentelemetry/*: instrumentation.ts 가 쓰는 Node 전용 SDK. 번들에 말리면 require 컨텍스트가 깨진다.
-  serverExternalPackages: ['@electric-sql/pglite', 'pg', '@opentelemetry/api', '@opentelemetry/sdk-trace-node', '@opentelemetry/sdk-trace-base'],
+  // @prometheus-io/client: 같은 사정(perf_hooks · cluster). lib/prometheus.ts
+  serverExternalPackages: ['@electric-sql/pglite', 'pg', '@opentelemetry/api', '@opentelemetry/sdk-trace-node', '@opentelemetry/sdk-trace-base', '@prometheus-io/client'],
 
   // 개발 모드 전용 Next.js 표시(next-logo 버튼)는 Shadow DOM 안에 있어서
   // globals.css 의 display:none 이 먹지 않는다 — 아예 꺼야 한다.

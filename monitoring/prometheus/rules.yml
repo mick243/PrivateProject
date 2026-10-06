@@ -1,0 +1,51 @@
+# 알림 규칙. 로컬에는 Alertmanager 가 없어서 어디로 보내지는 않고,
+# Prometheus 의 Alerts 화면(http://localhost:9090/alerts)에 뜨고, Grafana 대시보드 맨 위 '울리는 알림' 칸이 센다.
+# 문턱은 운영 기준이다 — dev 서버는 첫 컴파일마다 이벤트 루프가 밀려 EventLoopLag 가 잠깐 pending 이 되기도 한다.
+# 문턱은 PERFORMANCE.md 의 기준선(목표 피크 3.4 req/s 에서 p95 159ms)을 바탕으로 잡았다.
+groups:
+  - name: arcade-finder
+    rules:
+      - alert: AppDown
+        expr: up{job="arcade-finder"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: '/api/metrics 를 1분째 긁지 못했습니다 — 앱이 죽었거나 METRICS_TOKEN 이 다릅니다'
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(arcade_http_request_duration_seconds_count{status=~"5.."}[5m]))
+            / sum(rate(arcade_http_request_duration_seconds_count[5m])) > 0.02
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: '5분 동안 요청의 2% 넘게 5xx 입니다'
+
+      - alert: SlowResponses
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(arcade_http_request_duration_seconds_bucket[5m]))) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: '전체 요청 p95 가 10분째 1초를 넘습니다 (기준선 159ms)'
+
+      - alert: DbPoolWaiting
+        expr: max(arcade_db_pool_connections{state="waiting"}) > 0
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: 'pg 풀 슬롯을 기다리는 요청이 2분째 있습니다 — PG_POOL_MAX 나 요청당 쿼리 수를 보세요'
+
+      - alert: EventLoopLag
+        expr: max(nodejs_eventloop_lag_p99_seconds{job="arcade-finder"}) > 0.2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: '이벤트 루프 지연 p99 가 5분째 200ms 를 넘습니다 — DB 가 아니라 Node CPU 포화입니다'
+
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: 'postgres_exporter 가 DB 에 붙지 못합니다'

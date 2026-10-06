@@ -27,8 +27,8 @@ import { fingerprint, recordOperation } from './telemetry.ts';
 
 /**
  * 쿼리 계측 (lib/telemetry.ts). 원시 SQL 시절에는 `Db` 어댑터를 한 겹 감쌌고, Prisma 에서는
- * 클라이언트 확장(`$extends`)으로 모든 연산을 지납니다. PULSE 설정이 없으면 recordOperation
- * 이 즉시 반환하므로 남는 비용은 performance.now() 두 번입니다.
+ * 클라이언트 확장(`$extends`)으로 모든 연산을 지납니다. PULSE 설정도 METRICS_TOKEN 도 없으면
+ * recordOperation 이 즉시 반환하므로 남는 비용은 performance.now() 두 번입니다.
  *
  * 지문: Prisma Client 연산은 `<연산> <모델>`(예: `findMany posts`), TypedSQL 은 그 SQL 의
  * 지문(`SELECT arcades`) — 원시 SQL 시절의 `query.<VERB 테이블>` 지표와 이어집니다.

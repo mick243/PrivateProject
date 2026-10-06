@@ -30,6 +30,10 @@ import type { Db, Queryable } from './db';
  *
  * ⚠ 서버리스(Vercel)에서는 인스턴스가 요청마다 사라져 집계가 쌓이지 않는다. 그런 환경은
  *   요청 끝에 waitUntil 로 보내거나 플랫폼 관측 도구를 쓴다. 이 모듈은 상주 프로세스용이다.
+ *
+ * Prometheus — 같은 기록 지점(recordHttp · recordOperation)이 `__metricsSink` 도 부른다.
+ * 싱크는 lib/prometheus.ts 가 METRICS_TOKEN 이 있을 때만 단다. 이 파일은 그 모듈을
+ * import 하지 않는다 — Node 전용 클라이언트가 이 파일을 거쳐 다른 번들로 새지 않게.
  */
 
 export const FLUSH_MS = 30_000;
@@ -100,6 +104,21 @@ export function enabled(): boolean {
   return Boolean(process.env.PULSE_AGENT_KEY && process.env.PULSE_API_URL);
 }
 
+/** Prometheus 쪽 기록 지점. 값은 창으로 나누지 않고 누적한다 (lib/prometheus.ts) */
+export type MetricsSink = {
+  http(method: string, route: string, status: number, ms: number): void;
+  operation(key: string, ms: number, ok: boolean): void;
+};
+
+function metricsSink(): MetricsSink | undefined {
+  return (globalThis as unknown as { __metricsSink?: MetricsSink }).__metricsSink;
+}
+
+/** Pulse 든 Prometheus 든 하나라도 켜졌으면 잰다 */
+function measuring(): boolean {
+  return enabled() || metricsSink() !== undefined;
+}
+
 function bucketFor(map: Map<string, Bucket>, key: string): Bucket {
   let b = map.get(key);
   if (b) return b;
@@ -126,6 +145,13 @@ function add(b: Bucket, ms: number, opts: { error?: boolean; warn?: boolean; slo
 
 /** 요청 하나. route 는 'GET /api/arcades/[id]/reviews' 꼴 — 라우트별 버킷은 /api/* 만 만든다. */
 export function recordHttp(route: string, status: number, ms: number): void {
+  const sink = metricsSink();
+  if (sink) {
+    // Prometheus 는 페이지도 라우트별로 받는다 — 라벨이라 이름 길이 예산이 없다
+    const key = normalizeRoute(route);
+    const space = key.indexOf(' ');
+    sink.http(space < 0 ? '?' : key.slice(0, space), key.slice(space + 1), status, ms);
+  }
   if (!enabled()) return;
   const state = getState();
   const flags = { error: status >= 500, warn: status >= 400 && status < 500 };
@@ -136,7 +162,7 @@ export function recordHttp(route: string, status: number, ms: number): void {
 
 /** 쿼리 하나. SQL 은 지문으로 줄여서 담는다 — 원문은 절대 밖으로 나가지 않는다. */
 export function recordQuery(sql: string, ms: number, ok: boolean): void {
-  if (!enabled()) return;
+  if (!measuring()) return;
   recordOperation(fingerprint(sql), ms, ok);
 }
 
@@ -146,6 +172,7 @@ export function recordQuery(sql: string, ms: number, ok: boolean): void {
  * 지표 이름 규약(`query.<지문>.qpm …`)은 원시 SQL 시절과 같습니다.
  */
 export function recordOperation(key: string, ms: number, ok: boolean): void {
+  metricsSink()?.operation(key, ms, ok);
   if (!enabled()) return;
   const state = getState();
   const flags = { error: !ok, slow: ms >= SLOW_QUERY_MS };
@@ -278,7 +305,7 @@ export function snapshot(now = Date.now()): Sample[] {
 
 /** Db 어댑터를 감싸 모든 query/exec/transaction 을 잰다. 계측이 꺼져 있으면 원본을 그대로 돌려준다. */
 export function withTelemetry(db: Db): Db {
-  if (!enabled()) return db;
+  if (!measuring()) return db;
 
   const timed = async <T>(sql: string, run: () => Promise<T>): Promise<T> => {
     const t0 = performance.now();

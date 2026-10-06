@@ -1,0 +1,62 @@
+# 로컬 감시 — Prometheus · Grafana · postgres_exporter. 쓰는 법은 monitoring/README.md
+#
+#   cd monitoring && docker compose up -d      →  Grafana http://localhost:3300 · Prometheus http://localhost:9090
+#
+# 앱은 컨테이너 밖(PC 의 `npm run dev`)에서 돌고, Prometheus 가 host.docker.internal:3000 으로 긁는다.
+# 포트는 전부 127.0.0.1 에만 연다 — Grafana 는 로그인 없이 보이고, 관리자 비밀번호도 기본값(admin)일 수 있다.
+name: arcade-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      # k6 결과를 받는다 (README "부하 시험 겹쳐 보기")
+      - --web.enable-remote-write-receiver
+    configs:
+      # 앱의 METRICS_TOKEN — prometheus.yml 의 credentials_file 이 이 파일을 읽는다
+      - source: metrics_token
+        target: /etc/prometheus/metrics-token
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - 127.0.0.1:${PROMETHEUS_PORT:-9090}:9090
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    environment:
+      DATA_SOURCE_NAME: ${PG_EXPORTER_DSN:?monitoring/.env 에 PG_EXPORTER_DSN 을 넣으세요 (.env.example)}
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.3
+    environment:
+      # 보기는 로그인 없이 (Grafana 13 부터 익명은 Viewer 만 된다). 고치려면 오른쪽 위 Sign in → admin.
+      # 비밀번호는 Grafana 볼륨이 처음 만들어질 때만 반영된다 — 바꾸려면 down -v 하거나 화면에서 바꾼다.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/arcade-finder.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - 127.0.0.1:${GRAFANA_PORT:-3300}:3000
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+configs:
+  metrics_token:
+    content: ${METRICS_TOKEN:?monitoring/.env 에 METRICS_TOKEN 을 넣으세요 — 앱 .env.local 과 같은 값}
+
+volumes:
+  prometheus-data:
+  grafana-data:

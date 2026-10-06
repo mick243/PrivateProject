@@ -1,0 +1,33 @@
+# Prometheus — 무엇을 긁는가. 고친 뒤에는 docker compose restart prometheus
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+scrape_configs:
+  # 앱 — `npm run dev` (3000). 토큰은 compose 가 monitoring/.env 의 METRICS_TOKEN 으로 넣는다
+  - job_name: arcade-finder
+    metrics_path: /api/metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics-token
+    static_configs:
+      - targets: ['host.docker.internal:3000']
+        labels:
+          env: local
+
+  # `npm run start:cluster` 로 띄웠다면 위 targets 를 이것으로 바꾼다. 프록시(3000)를 거치면
+  # 인스턴스가 번갈아 대답해 카운터가 섞인다 — 내부 포트를 각각 긁어야 instance 별로 갈린다.
+  #     - targets: ['host.docker.internal:3001', 'host.docker.internal:3002']
+
+  - job_name: postgres
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+        labels:
+          env: local
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
