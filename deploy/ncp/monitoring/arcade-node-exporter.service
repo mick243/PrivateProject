@@ -15,8 +15,10 @@ ExecStart=/opt/arcade-monitoring/bin/node_exporter \
   --collector.cpu --collector.meminfo --collector.loadavg --collector.pressure --collector.vmstat \
   --collector.filesystem --collector.diskstats --collector.netdev --collector.stat \
   --collector.time --collector.uname --collector.os \
+  --collector.textfile --collector.textfile.directory=/var/lib/arcade-monitoring/textfile \
   --collector.netdev.device-exclude=^(lo|veth.*|docker.*)$$
 # ↑ 끝의 $$ 는 정규식의 $ 하나다 — systemd 가 $ 를 변수로 읽기 때문
+# textfile: arcade-process-memory.timer 가 1분마다 쓰는 프로세스별 메모리(processes.prom)를 같이 내보낸다
 Restart=always
 RestartSec=10
 

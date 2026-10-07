@@ -2,6 +2,7 @@
 # 실서버 감시 — 지표를 긁어 Grafana Cloud 로 보낸다. 그래프 · 알림은 Grafana Cloud 에서 본다 (README §9).
 #
 #   sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/monitoring/install-monitoring.sh /root/grafana-cloud.env
+#   sudo bash …/install-monitoring.sh                 # 이미 설치된 서버를 새 판으로 — 접속 정보는 서버에 있는 설정을 다시 쓴다
 #   sudo bash …/install-monitoring.sh --remove        # 감시만 끄고 지운다 (앱 · DB · 지표 토큰은 그대로)
 #
 # 배포 묶음 안의 것을 그 자리에서 돌린다 — 옆의 설정 · 서비스 파일을 같이 쓰기 때문이다.
@@ -14,6 +15,7 @@
 #   4. PostgreSQL 감시 계정 arcade_monitor (pg_monitor 역할 · 접속 3개까지 · 통계를 읽기만)
 #   5. Caddyfile 을 묶음의 새 판으로 — Caddy 지표를 켜고 /api/metrics 를 밖에서 막는다
 #   6. systemd 서비스 셋. 전부 127.0.0.1 에만 열고 메모리 상한을 건다 (1GB 서버)
+#      + 프로세스 이름별 메모리를 1분마다 재는 timer (node_exporter 의 textfile 수집기로 나간다)
 #   7. 토큰을 새로 넣었을 때만 앱을 다시 띄운다 — 10~20초 끊긴다
 #   8. Grafana Cloud 가 첫 지표를 받았는지 확인한다
 #
@@ -44,6 +46,8 @@ if [[ "${1:-}" == "--remove" ]]; then
     systemctl disable --now "$u" >/dev/null 2>&1 || true
     rm -f "/etc/systemd/system/$u.service"
   done
+  systemctl disable --now arcade-process-memory.timer >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/arcade-process-memory.service /etc/systemd/system/arcade-process-memory.timer
   systemctl daemon-reload
   rm -rf "$OPT" "$DATA" "$ETC"
   sudo -u postgres psql -qc "DROP ROLE IF EXISTS arcade_monitor" || true
@@ -53,29 +57,38 @@ if [[ "${1:-}" == "--remove" ]]; then
 fi
 
 CLOUD_ENV="${1:-}"
-if [[ -z "$CLOUD_ENV" || ! -f "$CLOUD_ENV" ]]; then
+if [[ -n "$CLOUD_ENV" ]]; then
+  [[ -f "$CLOUD_ENV" ]] || { echo "없음: $CLOUD_ENV — PC 에서 scp 로 올렸는지, 경로가 맞는지 보세요" >&2; exit 2; }
+  # source 하지 않는다 — 토큰에 셸이 읽는 글자가 있어도 그대로 받으려고. 따옴표 · CR 은 떼어 낸다
+  get() {
+    local v
+    v="$( { tr -d '\r' < "$CLOUD_ENV" | grep -E "^$1=" || true; } | tail -n 1 | cut -d= -f2-)"
+    v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+    printf '%s' "$v"
+  }
+  PUSH_URL="$(get GRAFANA_CLOUD_PROM_URL)"
+  PUSH_USER="$(get GRAFANA_CLOUD_PROM_USER)"
+  PUSH_TOKEN="$(get GRAFANA_CLOUD_TOKEN)"
+  SRC="$CLOUD_ENV"
+elif [[ -f "$ETC/prometheus.yml" && -s "$ETC/grafana-cloud-token" ]]; then
+  # 이미 설치된 서버 — 설치 뒤 grafana-cloud.env 는 지웠을 것이므로, 지금 설정에서 접속 정보를 꺼내 다시 쓴다
+  PUSH_URL="$(sed -nE "s/^[[:space:]]*- url: '(.*)'\$/\1/p" "$ETC/prometheus.yml" | awk 'NR == 1')"
+  PUSH_USER="$(sed -nE "s/^[[:space:]]*username: '(.*)'\$/\1/p" "$ETC/prometheus.yml" | awk 'NR == 1')"
+  PUSH_TOKEN="$(cat "$ETC/grafana-cloud-token")"
+  SRC="$ETC (지금 설치된 설정)"
+  echo "접속 정보: $SRC 의 것을 다시 씁니다"
+else
   echo "Grafana Cloud 접속 정보 파일을 주세요: sudo bash $0 /root/grafana-cloud.env" >&2
   echo "  PC 의 deploy/ncp/monitoring/grafana-cloud.env.example 을 deploy/ncp/grafana-cloud.env 로 복사해 채우고 scp 로 올립니다 (README §9)" >&2
   exit 2
 fi
-
-# source 하지 않는다 — 토큰에 셸이 읽는 글자가 있어도 그대로 받으려고. 따옴표 · CR 은 떼어 낸다
-get() {
-  local v
-  v="$( { tr -d '\r' < "$CLOUD_ENV" | grep -E "^$1=" || true; } | tail -n 1 | cut -d= -f2-)"
-  v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
-  printf '%s' "$v"
-}
-PUSH_URL="$(get GRAFANA_CLOUD_PROM_URL)"
-PUSH_USER="$(get GRAFANA_CLOUD_PROM_USER)"
-PUSH_TOKEN="$(get GRAFANA_CLOUD_TOKEN)"
 
 missing=()
 [[ "$PUSH_URL" =~ ^https?:// ]] || missing+=("GRAFANA_CLOUD_PROM_URL (https:// 로 시작하는 Remote Write Endpoint)")
 [[ -n "$PUSH_USER" ]] || missing+=("GRAFANA_CLOUD_PROM_USER (숫자 Instance ID)")
 [[ -n "$PUSH_TOKEN" ]] || missing+=("GRAFANA_CLOUD_TOKEN (glc_ 로 시작하는 토큰)")
 if (( ${#missing[@]} )); then
-  echo "$CLOUD_ENV 에 비었거나 틀린 값이 있습니다:" >&2
+  echo "$SRC 에 비었거나 틀린 값이 있습니다:" >&2
   printf '  - %s\n' "${missing[@]}" >&2
   exit 2
 fi
@@ -86,7 +99,7 @@ fi
 systemctl cat arcade-finder >/dev/null 2>&1 || { echo "arcade-finder 서비스가 없습니다 — install-release.sh 를 먼저 돌리세요" >&2; exit 2; }
 command -v caddy >/dev/null || { echo "Caddy 가 없습니다 — bootstrap.sh 를 먼저 돌리세요" >&2; exit 2; }
 [[ "$(uname -m)" == "x86_64" ]] || { echo "x86_64 서버만 됩니다 (지금: $(uname -m))" >&2; exit 2; }
-for f in prometheus-agent.yml "${UNITS[@]/%/.service}"; do
+for f in prometheus-agent.yml "${UNITS[@]/%/.service}" process-memory.sh arcade-process-memory.service arcade-process-memory.timer; do
   [[ -f "$HERE/$f" ]] || { echo "$HERE/$f 가 없습니다 — 배포 묶음 안의 install-monitoring.sh 를 그 자리에서 돌려 주세요" >&2; exit 2; }
 done
 FREE_MB="$(df -Pm / | awk 'NR == 2 {print $4}')"
@@ -128,6 +141,8 @@ step "2. 사용자 · 설정 폴더"
 id arcade-monitor >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin arcade-monitor
 install -d -m 750 -o root -g arcade-monitor "$ETC"
 install -d -m 750 -o arcade-monitor -g arcade-monitor "$DATA"
+# 프로세스별 메모리를 root 가 쓰고 node_exporter(arcade-monitor)가 읽는다 — setgid 라 새 파일도 그룹이 arcade-monitor
+install -d -m 2750 -o root -g arcade-monitor "$DATA/textfile"
 # write_secret <파일> <값> — root 가 쓰고 arcade-monitor 가 읽는다. 끝에 줄바꿈을 붙이지 않는다
 write_secret() { ( umask 027; printf '%s' "$2" > "$1" ); chgrp arcade-monitor "$1"; chmod 640 "$1"; }
 write_secret "$ETC/grafana-cloud-token" "$PUSH_TOKEN"
@@ -202,7 +217,13 @@ chgrp arcade-monitor "$ETC/prometheus.yml"; chmod 640 "$ETC/prometheus.yml"
 "$OPT/bin/promtool" check config --agent "$ETC/prometheus.yml" >/dev/null
 echo "앱 대상: $targets (인스턴스 $INSTANCES개)"
 for u in "${UNITS[@]}"; do install -m 644 "$HERE/$u.service" "/etc/systemd/system/$u.service"; done
+install -m 755 "$HERE/process-memory.sh" "$OPT/bin/process-memory"
+install -m 644 "$HERE/arcade-process-memory.service" "$HERE/arcade-process-memory.timer" /etc/systemd/system/
 systemctl daemon-reload
+# 프로세스별 메모리는 node_exporter 가 처음 긁을 때부터 값이 있게 한 번 먼저 잰다
+systemctl start arcade-process-memory.service \
+  || { echo "✗ 프로세스별 메모리를 재지 못했습니다:" >&2; journalctl -u arcade-process-memory -n 20 --no-pager >&2; exit 1; }
+systemctl enable --now arcade-process-memory.timer >/dev/null 2>&1
 for u in "${UNITS[@]}"; do systemctl enable "$u" >/dev/null 2>&1; systemctl restart "$u"; done
 sleep 3
 for u in "${UNITS[@]}"; do
@@ -233,6 +254,8 @@ for t in 9100 9187 2019; do
   code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$t/metrics" || true)"
   echo "  127.0.0.1:$t/metrics             $code"
 done
+n="$(curl -s http://127.0.0.1:9100/metrics | grep -c '^arcade_process_memory_bytes{' || true)"
+echo "  프로세스별 메모리 시계열           $n개 — 0 이면 node_exporter 가 textfile 을 못 읽음"
 
 # agent 는 60초마다 긁고 몇 초 안에 보낸다. 보낸 표본 수 · 실패 수는 agent 자신의 지표에 있다
 # 라벨이 붙어 나온다(name{remote_name=…,url=…} 값) — 이름으로 시작하는 줄을 모두 더한다
@@ -265,8 +288,9 @@ cat <<EOF
 
 다음 (Grafana Cloud 화면에서, 처음 한 번 — README §9-4):
   · Dashboards → New → Import → PC 의 monitoring/grafana/dashboards/arcade-finder.json
+    (대시보드가 바뀐 판이면 같은 파일을 다시 Import 해서 덮어씁니다 — uid 가 같다)
   · Alerting → Notification configuration → Contact points 에 알림 받을 메일
   · Alerting → Alert rules → More → Import alert rules → Prometheus YAML file 에 PC 의 deploy/ncp/monitoring/rules.yml
     (데이터 소스 grafanacloud-…-prom · 폴더 arcade-finder · "Pause imported alerting rules" 끄기)
-  · 올린 grafana-cloud.env 는 지우세요: rm $CLOUD_ENV
 EOF
+if [[ -n "$CLOUD_ENV" ]]; then echo "  · 올린 grafana-cloud.env 는 지우세요: rm $CLOUD_ENV"; fi

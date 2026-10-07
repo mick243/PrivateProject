@@ -1,0 +1,26 @@
+# /etc/systemd/system/arcade-process-memory.service — install-monitoring.sh 가 넣는다
+#
+# 프로세스 이름별 메모리를 재서 node_exporter 의 textfile 폴더에 쓴다. arcade-process-memory.timer 가 1분마다 부른다.
+[Unit]
+Description=오락실 파인더 감시 — 프로세스별 메모리 재기
+
+[Service]
+Type=oneshot
+ExecStart=/opt/arcade-monitoring/bin/process-memory /var/lib/arcade-monitoring/textfile/processes.prom
+# 다른 사용자 프로세스의 /proc/<pid>/smaps_rollup 은 root 라도 CAP_SYS_PTRACE 가 있어야 읽힌다. 나머지 권한은 뗀다
+CapabilityBoundingSet=CAP_SYS_PTRACE
+# 권한을 떼면 root 도 파일 권한을 따른다 — 상위 폴더 /var/lib/arcade-monitoring(750 arcade-monitor)을 지나가려면 그 그룹이 필요하다
+SupplementaryGroups=arcade-monitor
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/arcade-monitoring/textfile
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=32M
+# 1분마다 도는 일이라 "Started · Finished" 가 저널에 하루 2,880줄 쌓이지 않게 — 실패(경고 이상)는 남는다.
+# 스크립트는 잘 돌면 아무것도 찍지 않으므로, 찍는 것(오류)은 err 로 남겨 위 거르개에 걸리지 않게 한다
+LogLevelMax=warning
+SyslogLevel=err
