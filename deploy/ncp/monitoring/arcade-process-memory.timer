@@ -1,0 +1,13 @@
+# /etc/systemd/system/arcade-process-memory.timer — install-monitoring.sh 가 넣는다
+#
+# 수집기가 60초마다 긁으므로 같은 간격으로 잰다.
+[Unit]
+Description=오락실 파인더 감시 — 프로세스별 메모리를 1분마다 재기
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

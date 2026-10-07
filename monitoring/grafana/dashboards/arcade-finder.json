@@ -876,7 +876,7 @@
     {
       "id": 14,
       "type": "row",
-      "title": "요청",
+      "title": "프로세스별 메모리 (운영 서버에서만)",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -888,6 +888,274 @@
     },
     {
       "id": 15,
+      "type": "table",
+      "title": "지금 — 프로세스별 메모리",
+      "description": "서버가 1분마다 잽니다 (deploy/ncp/monitoring/process-memory.sh). 앱은 node(실행기)와 next-server(본체) 둘, PostgreSQL 은 접속마다 생기는 postgres 여럿입니다. RAM 은 힙과 공유 메모리, 스왑은 디스크로 내려간 양입니다. 여러 프로세스가 같이 쓰는 메모리(PostgreSQL 공유 버퍼 등)는 나눠 세서, 더해도 두 번 세지 않습니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (name, unit) (arcade_process_memory_bytes{type=\"ram\"})",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (name, unit) (arcade_process_memory_bytes{type=\"swap\"})",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (name, unit) (arcade_process_count)",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "name": 0,
+              "unit": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4
+            },
+            "renameByName": {
+              "name": "프로세스",
+              "unit": "서비스",
+              "Value #A": "RAM",
+              "Value #B": "스왑",
+              "Value #C": "개수"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RAM"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "basic",
+                  "valueDisplayMode": "text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "스왑"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "sortBy": [
+          {
+            "displayName": "RAM",
+            "desc": true
+          }
+        ],
+        "footer": {
+          "show": true,
+          "reducer": [
+            "sum"
+          ],
+          "fields": [
+            "RAM",
+            "스왑"
+          ],
+          "countRows": false
+        }
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 10,
+        "x": 0,
+        "y": 14
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "프로세스별 RAM",
+      "description": "5MB 넘는 것만. 쌓은 그래프라 맨 위 선이 합계입니다. 어느 색이 두꺼워지는지 보면 누가 늘었는지 보입니다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (name) (arcade_process_memory_bytes{type=\"ram\"}) > 5 * 1024 * 1024",
+          "legendFormat": "{{name}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 7,
+        "x": 10,
+        "y": 14
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "프로세스별 스왑",
+      "description": "1MB 넘는 것만. 어떤 선이 갑자기 줄고 같은 이름의 RAM 이 늘면, 그 프로세스가 스왑에서 다시 읽어 들인 것입니다 (2026-10-07 15:19 처럼).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${ds}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${ds}"
+          },
+          "expr": "sum by (name) (arcade_process_memory_bytes{type=\"swap\"}) > 1024 * 1024",
+          "legendFormat": "{{name}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "noValue": "1MB 넘게 스왑에 내려간 프로세스 없음",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 7,
+        "x": 17,
+        "y": 14
+      }
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "요청",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "panels": []
+    },
+    {
+      "id": 19,
       "type": "timeseries",
       "title": "라우트별 초당 요청 (상위 10)",
       "datasource": {
@@ -935,11 +1203,11 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 14
+        "y": 26
       }
     },
     {
-      "id": 16,
+      "id": 20,
       "type": "timeseries",
       "title": "라우트별 p95 (상위 10)",
       "description": "요청이 드문 라우트는 몇 건만으로도 값이 튑니다 — 왼쪽 요청 수와 함께 보세요.",
@@ -988,11 +1256,11 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 14
+        "y": 26
       }
     },
     {
-      "id": 17,
+      "id": 21,
       "type": "timeseries",
       "title": "상태 코드별 초당 요청",
       "datasource": {
@@ -1040,11 +1308,11 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 22
+        "y": 34
       }
     },
     {
-      "id": 18,
+      "id": 22,
       "type": "timeseries",
       "title": "전체 응답 시간",
       "datasource": {
@@ -1112,11 +1380,11 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 22
+        "y": 34
       }
     },
     {
-      "id": 19,
+      "id": 23,
       "type": "row",
       "title": "DB (Prisma)",
       "collapsed": false,
@@ -1124,12 +1392,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 42
       },
       "panels": []
     },
     {
-      "id": 20,
+      "id": 24,
       "type": "timeseries",
       "title": "연산별 p95 (상위 10)",
       "description": "`findMany posts` 처럼 <연산> <모델>, TypedSQL 은 `SELECT arcades` 처럼 SQL 지문. 코드가 체감한 시간이라 풀 대기와 이벤트 루프 지연이 함께 들어갑니다.",
@@ -1178,11 +1446,11 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 43
       }
     },
     {
-      "id": 21,
+      "id": 25,
       "type": "timeseries",
       "title": "연산별 초당 호출 (상위 10)",
       "datasource": {
@@ -1230,11 +1498,11 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 43
       }
     },
     {
-      "id": 22,
+      "id": 26,
       "type": "timeseries",
       "title": "느린 이유 가르기",
       "description": "셋을 겹쳐 봅니다. 요청 p95 만 오르면 앱 코드, DB 연산 p95 도 같이 오르면 쿼리 쪽, 이벤트 루프 지연까지 같이 오르면 Node 프로세스가 CPU 로 밀린 것입니다 — 그때는 쿼리가 무죄여도 DB 시간이 길게 찍힙니다 (lib/telemetry.ts 머리말).",
@@ -1303,11 +1571,11 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 51
       }
     },
     {
-      "id": 23,
+      "id": 27,
       "type": "timeseries",
       "title": "pg 풀 커넥션",
       "description": "waiting 이 0 보다 크면 슬롯이 모자라 요청이 줄 서 있습니다. max 는 PG_POOL_MAX (운영 서버 5).",
@@ -1356,11 +1624,11 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 39
+        "y": 51
       }
     },
     {
-      "id": 24,
+      "id": 28,
       "type": "timeseries",
       "title": "느린 연산 · 실패",
       "description": "느린 연산은 250ms 이상 (Pulse 의 SLOW_QUERY_MS 와 같은 문턱).",
@@ -1419,11 +1687,11 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 39
+        "y": 51
       }
     },
     {
-      "id": 25,
+      "id": 29,
       "type": "row",
       "title": "Node 프로세스",
       "collapsed": false,
@@ -1431,12 +1699,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 59
       },
       "panels": []
     },
     {
-      "id": 26,
+      "id": 30,
       "type": "timeseries",
       "title": "메모리",
       "description": "앱 프로세스. 운영 서버는 힙 상한 384MB (NODE_OPTIONS).",
@@ -1505,11 +1773,11 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 48
+        "y": 60
       }
     },
     {
-      "id": 27,
+      "id": 31,
       "type": "timeseries",
       "title": "CPU · GC",
       "description": "100% = 코어 하나. GC 는 그중 가비지 수집에 쓴 비율.",
@@ -1568,11 +1836,11 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 48
+        "y": 60
       }
     },
     {
-      "id": 28,
+      "id": 32,
       "type": "timeseries",
       "title": "이벤트 루프 지연",
       "description": "절대값보다 부하 전후의 변화를 봅니다. 한가할 때도 표본 간격(10ms) 근처가 바닥으로 나옵니다.",
@@ -1641,11 +1909,11 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 48
+        "y": 60
       }
     },
     {
-      "id": 29,
+      "id": 33,
       "type": "row",
       "title": "PostgreSQL (postgres_exporter)",
       "collapsed": false,
@@ -1653,12 +1921,12 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 56
+        "y": 68
       },
       "panels": []
     },
     {
-      "id": 30,
+      "id": 34,
       "type": "timeseries",
       "title": "접속 (상태별)",
       "description": "이 DB 에 붙은 세션 전체 — 앱 풀 · psql · 감시 계정까지 다 셉니다. 운영 서버 max_connections 는 40.",
@@ -1707,11 +1975,11 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 57
+        "y": 69
       }
     },
     {
-      "id": 31,
+      "id": 35,
       "type": "timeseries",
       "title": "초당 트랜잭션",
       "description": "제목 옆 안내(might not be a counter)는 지표 이름에 _total 이 없어서 뜹니다. postgres_exporter 가 counter 로 선언한 지표라 rate 가 맞습니다.",
@@ -1770,11 +2038,11 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 57
+        "y": 69
       }
     },
     {
-      "id": 32,
+      "id": 36,
       "type": "stat",
       "title": "캐시 적중률",
       "description": "통계를 마지막으로 초기화한 뒤 누적. 99% 아래로 내려가면 shared_buffers 가 작거나 큰 스캔이 있습니다.",
@@ -1840,11 +2108,11 @@
         "h": 8,
         "w": 4,
         "x": 16,
-        "y": 57
+        "y": 69
       }
     },
     {
-      "id": 33,
+      "id": 37,
       "type": "stat",
       "title": "DB 크기",
       "datasource": {
@@ -1901,7 +2169,7 @@
         "h": 8,
         "w": 4,
         "x": 20,
-        "y": 57
+        "y": 69
       }
     }
   ]

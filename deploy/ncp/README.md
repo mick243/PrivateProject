@@ -247,8 +247,16 @@ rm /root/grafana-cloud.env                                                      
 
 `install-monitoring.sh` 가 하는 일: 바이너리 셋을 GitHub 릴리스에서 받아 sha256 을 맞춰 보고 → 앱 지표 토큰(`METRICS_TOKEN`)을
 **서버에서** 만들어 `.env.local` 에 넣고 → DB 에 읽기 전용 감시 계정(`arcade_monitor`, `pg_monitor` 역할)을 만들고 →
-Caddyfile 을 묶음의 새 판으로 바꾸고(옛 판은 `/etc/caddy/Caddyfile.bak-*`) → 서비스 셋을 띄우고 → 앱을 한 번 다시 띄운 뒤 →
-Grafana Cloud 가 받았는지, 밖에서 `/api/metrics` 가 막혔는지 확인합니다. 알림 규칙은 올리지 않습니다(9-4 에서 화면으로).
+Caddyfile 을 묶음의 새 판으로 바꾸고(옛 판은 `/etc/caddy/Caddyfile.bak-*`) → 서비스 셋과, 프로세스별 메모리를 1분마다 재는
+timer(`arcade-process-memory`)를 띄우고 → 앱을 한 번 다시 띄운 뒤 → Grafana Cloud 가 받았는지, 밖에서 `/api/metrics` 가
+막혔는지 확인합니다. 알림 규칙은 올리지 않습니다(9-4 에서 화면으로).
+
+**이미 설치된 서버를 새 판으로 바꿀 때**는 `grafana-cloud.env` 가 없어도 됩니다 — 인자 없이 돌리면 서버에 있는 설정
+(`/etc/arcade-monitoring`)에서 접속 정보를 꺼내 다시 씁니다.
+
+```bash
+sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/monitoring/install-monitoring.sh
+```
 
 끝에 `✔ Grafana Cloud 가 받았습니다` 가 나오면 됩니다. 못 보내면 그 자리에서 멈추고 Grafana Cloud 가
 돌려준 응답을 찍습니다 — 401/403 이면 토큰 · Instance ID, 404 면 URL 입니다. 고친 `grafana-cloud.env` 로 같은 명령을 다시
@@ -258,7 +266,8 @@ Grafana Cloud 가 받았는지, 밖에서 `/api/metrics` 가 막혔는지 확인
 
 1. **대시보드** — Dashboards → New → Import → PC 의 `monitoring/grafana/dashboards/arcade-finder.json` 을 올립니다.
    맨 위 **데이터 소스** 칸에서 스택의 Prometheus(`grafanacloud-…-prom`)를 고릅니다. 로컬과 같은 대시보드이고,
-   "서버 · Caddy" 줄과 "메모리 여유" · "디스크 여유" 칸은 운영에서만 찹니다.
+   "서버 · Caddy" · "프로세스별 메모리" 줄과 "메모리 여유" · "디스크 여유" 칸은 운영에서만 찹니다.
+   대시보드 JSON 이 바뀐 판이면 같은 파일을 다시 Import 합니다 — uid(`arcade-finder`)가 같아 덮어쓰기를 묻습니다.
 2. **알림 받을 메일** — Alerting → Notification configuration → **Contact points**. 새 스택에는 `empty` 라는 연락 지점 하나가
    기본 정책(Default policy)에 걸려 있고 **받는 곳이 비어 있습니다**(No integrations configured) — 그대로면 알림이 아무 데도
    안 갑니다. `empty` 의 **Edit** → Integration **Email** · Addresses 에 메일 → **Save contact point**. 이름은 그대로 두세요
@@ -287,10 +296,16 @@ Grafana Cloud 가 받았는지, 밖에서 `/api/metrics` 가 막혔는지 확인
 | 로그 | `journalctl -u arcade-prometheus-agent -f` |
 | 토큰 · 주소 바꾸기 | 새 `grafana-cloud.env` 로 `install-monitoring.sh` 를 다시 (앱은 다시 띄우지 않음) |
 | 알림 규칙 고치기 | `rules.yml` 을 고친 뒤 Grafana Cloud 에서 `arcade-finder-prod` 그룹을 지우고 9-4 의 3 으로 다시 가져오기 (서버는 그대로) |
-| 수집 설정 고치기 | `deploy/ncp/monitoring/` 을 고쳐 새 묶음 → `install-release.sh` → `install-monitoring.sh` 다시 |
+| 수집 설정 고치기 | `deploy/ncp/monitoring/` 을 고쳐 새 묶음 → `install-release.sh` → `install-monitoring.sh` 다시(인자 없이) |
+| 누가 메모리를 쓰나 | 대시보드의 "프로세스별 메모리" 줄. 서버에서 바로(RAM 큰 순, 바이트): `grep 'type="ram"' /var/lib/arcade-monitoring/textfile/processes.prom \| sort -k2 -nr \| head` |
 | 끄기 | `sudo bash …/install-monitoring.sh --remove` — 서비스 · 바이너리 · 설정 · DB 감시 계정을 지움. 앱 · DB 는 그대로 |
 
 - Grafana Cloud 가 잠깐 받지 못해도 수집기가 6시간까지 쌓아 두었다가 다시 보냅니다.
 - 리허설 컨테이너에서는 "디스크 여유" 가 비었지만(루트가 overlay 라 node_exporter 가 건너뜀), 실서버(ext4 `/dev/vda2`)에서는
   찹니다 — 2026-10-06 첫 측정이 14% 라 바로 `DiskLow` 가 울렸습니다. 다 쓴 배포 묶음(하나에 224MB)부터 지우세요.
 - 수집 간격은 60초입니다. Grafana Cloud 는 사용량을 시계열 수와 1분당 점 수로 세므로 더 줄이지 마세요.
+- **프로세스별 메모리** (2026-10-07 추가) — 서버 전체 메모리만으로는 누가 쓰는지 알 수 없었습니다. 10-07 15:19 에 스왑에 있던
+  150MB 가 한꺼번에 RAM 으로 올라와 "메모리 여유" 가 35% → 16% 로 줄었는데, 어느 프로세스인지 가릴 수 없었습니다.
+  `process-memory.sh` 가 1분마다 `/proc/<pid>/smaps_rollup` 의 PSS 를 프로세스 이름별로 더해 node_exporter 의 textfile
+  폴더(`/var/lib/arcade-monitoring/textfile/processes.prom`)에 씁니다. PSS 는 같이 쓰는 메모리를 나눠 세므로 PostgreSQL 처럼
+  프로세스가 여럿이어도 두 번 세지 않습니다. 1MB 가 안 되는 이름은 뺍니다.
