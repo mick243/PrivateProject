@@ -287,6 +287,17 @@ sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/monitoring/install-mon
    그 판으로 설치한 서버라면 Mimir 쪽 사본 12개가 조용히 평가되고 있는데, 알림을 내지 않으니 두어도 됩니다.
 4. **울려 보기** — 서비스에 영향 없이: `sudo systemctl stop arcade-postgres-exporter` → 4~5분 뒤 `PostgresDown` 메일
    (exporter 만 멈춘 것이라 DB · 앱은 그대로) → `sudo systemctl start arcade-postgres-exporter`.
+5. **운영 알림 — 관리자 화면의 종 아이콘 · 기기 알림** (2026-10-08 추가, 선택). 메일과 함께 알림을 앱으로도 보내면,
+   앱이 Gemini 로 "무슨 일 · 영향 · 먼저 볼 것(서버 명령)" 을 붙여 관리자 화면 오른쪽 아래 종 아이콘에 띄우고,
+   켜 둔 기기로 푸시를 보냅니다. 서버 쪽 준비(웹훅 토큰 · 푸시 키)는 `install-monitoring.sh` 가 이미 했습니다.
+   - Contact points → `empty` → **Edit** → **Add contact point integration** → Integration **Webhook**
+     - URL: `https://<공인IP-대시>.sslip.io/api/ops/alerts`
+     - Optional Webhook settings → **Authorization Header - Scheme** `Bearer` · **Credentials** 는 서버에서
+       `grep '^OPS_ALERT_TOKEN=' /srv/arcade-finder/app/arcade-finder/.env.local` 로 본 값(`=` 뒤)
+     - **Test** → 몇 초 뒤 사이트의 종 아이콘에 `TestAlert` 가 뜨면 연결된 것 → **Save contact point**
+   - 사이트에 관리자로 로그인 → 종 아이콘 → **이 기기로 알림 받기**. 아이폰 · 아이패드는 Safari 에서
+     **홈 화면에 추가**한 앱에서만 켤 수 있습니다(iOS 16.4 이상). → **시험 알림** 으로 기기에 오는지 봅니다.
+   - 토큰이 틀리면 Grafana 의 연락 지점에 오류가 남고 앱 로그에는 아무것도 남지 않습니다(401). 메일은 그대로 갑니다.
 
 ### 9-5. 운영
 
@@ -300,6 +311,7 @@ sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/monitoring/install-mon
 | 알림 규칙 고치기 | `rules.yml` 을 고친 뒤 Grafana Cloud 에서 `arcade-finder-prod` 그룹을 지우고 9-4 의 3 으로 다시 가져오기 (서버는 그대로) |
 | 수집 설정 고치기 | `deploy/ncp/monitoring/` 을 고쳐 새 묶음 → `install-release.sh` → `install-monitoring.sh` 다시(인자 없이) |
 | 누가 메모리를 쓰나 | 대시보드의 "프로세스별 메모리" 줄. 서버에서 바로(RAM 큰 순, 바이트): `grep 'type="ram"' /var/lib/arcade-monitoring/textfile/processes.prom \| sort -k2 -nr \| head` |
+| 운영 알림이 오는지 | 사이트의 종 아이콘 → **시험 알림**. 앱 로그: `journalctl -u arcade-finder \| grep -F '[ops-'` — 요약 입력 크기 · 푸시 결과만 남습니다 |
 | 끄기 | `sudo bash …/install-monitoring.sh --remove` — 서비스 · 바이너리 · 설정 · DB 감시 계정을 지움. 앱 · DB 는 그대로 |
 
 - Grafana Cloud 가 잠깐 받지 못해도 수집기가 6시간까지 쌓아 두었다가 다시 보냅니다.

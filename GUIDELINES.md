@@ -203,6 +203,8 @@ npm run start:cluster        # 인스턴스 2개 × PG_POOL_MAX=10, 공개 포�
 | `/api/charts/:id/special` | `PUT` | `DELETE` |
 | `/api/charts/:id/vote` | `PUT {value}` | `DELETE` (투표 취소) |
 | `/api/account/sessions` | — | `DELETE` (다른 기기 로그아웃) |
+| `/api/ops/push` (관리자 기기 알림) | `PUT {구독}` | `DELETE ?endpoint=` |
+| `/api/ops/alerts/read` (운영 알림 읽음) | `PUT` | — |
 
 **끄는 쪽에는 본문을 싣지 않습니다** — `DELETE` 의 본문은 중간 장비가 버리는 경우가
 있어, 필요한 값은 쿼리스트링으로 받습니다. 켜는 쪽도 값이 없으면 본문이 없어도 됩니다.
@@ -341,6 +343,7 @@ const playerId = await sessionPlayerId(request); // 비로그인 허용 (제보�
 - 대화 기록 12,000자 · 도구 결과 누적 12,000자 — `lib/chat-budget.ts` (넘으면 앞쪽을 빼거나, 함수 호출을 막음)
 - 도구 한 쪽 5건 + `page` / `hasMore` — `lib/chat-tools.ts`
 - 요약: 최근 리뷰 60개 · 본문 15,000자 · 서로 다른 그림 4장(같은 그림은 한 번) — `lib/review-summary-types.ts`
+- 운영 알림 요약: 알림 하나에 한 번 · 라벨 30개 · 최대 12,000자 · 하루 50번 — `lib/ops-alert-input.ts` `PROMPT_MAX_CHARS`
 
 새 AI 기능을 붙일 때도 같은 질문을 하세요: **최악의 입력에서 한 요청이 몇 자를 보내나?** 대역 SDK 로 요청을
 기록해 재면 외부 호출 없이 잴 수 있습니다(docs/AI-BUDGET.md). 운영 로그 `[chat] 토큰 …` 이 실제 토큰 수입니다.

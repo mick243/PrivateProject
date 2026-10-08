@@ -322,6 +322,42 @@ model machines {
   tier_settings          tier_settings?
 }
 
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ops_alerts {
+  id            Int       @id @default(autoincrement())
+  fingerprint   String
+  starts_at     DateTime  @db.Timestamptz(6)
+  status        String
+  alertname     String
+  severity      String?
+  summary       String?
+  labels        Json      @default("{}")
+  eval_values   Json?
+  generator_url String?
+  ends_at       DateTime? @db.Timestamptz(6)
+  ai_summary    Json?
+  ai_error      String?
+  received_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime  @default(now()) @db.Timestamptz(6)
+  read_at       DateTime? @db.Timestamptz(6)
+
+  @@unique([fingerprint, starts_at])
+  @@index([updated_at(sort: Desc)], map: "ops_alerts_updated_idx")
+}
+
+model ops_push_subscriptions {
+  id         Int       @id @default(autoincrement())
+  player_id  Int
+  endpoint   String    @unique
+  p256dh     String
+  auth       String
+  user_agent String?
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  last_ok_at DateTime? @db.Timestamptz(6)
+  failures   Int       @default(0)
+  players    players   @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
 model player_identities {
   provider     String
   provider_uid String
@@ -336,28 +372,29 @@ model player_identities {
 
 /// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
 model players {
-  id                  Int                   @id @default(autoincrement())
-  nickname            String                @unique
-  password_hash       String?
-  is_admin            Boolean               @default(false)
-  created_at          DateTime              @default(now()) @db.Timestamptz(6)
-  nickname_pending    Boolean               @default(false)
-  email               String?
-  email_verified_at   DateTime?             @db.Timestamptz(6)
-  token_epoch         Int                   @default(0)
-  arcade_favorites    arcade_favorites[]
-  arcade_reviews      arcade_reviews[]
-  chart_comments      chart_comments[]
-  clear_records       clear_records[]
-  email_verifications email_verifications[]
-  emoticons           emoticons[]
-  machine_reports     machine_reports[]
-  player_identities   player_identities[]
-  post_comments       post_comments[]
-  post_images         post_images[]
-  post_likes          post_likes[]
-  posts               posts[]
-  special_marks       special_marks[]
+  id                     Int                      @id @default(autoincrement())
+  nickname               String                   @unique
+  password_hash          String?
+  is_admin               Boolean                  @default(false)
+  created_at             DateTime                 @default(now()) @db.Timestamptz(6)
+  nickname_pending       Boolean                  @default(false)
+  email                  String?
+  email_verified_at      DateTime?                @db.Timestamptz(6)
+  token_epoch            Int                      @default(0)
+  arcade_favorites       arcade_favorites[]
+  arcade_reviews         arcade_reviews[]
+  chart_comments         chart_comments[]
+  clear_records          clear_records[]
+  email_verifications    email_verifications[]
+  emoticons              emoticons[]
+  machine_reports        machine_reports[]
+  ops_push_subscriptions ops_push_subscriptions[]
+  player_identities      player_identities[]
+  post_comments          post_comments[]
+  post_images            post_images[]
+  post_likes             post_likes[]
+  posts                  posts[]
+  special_marks          special_marks[]
 }
 
 model post_comments {

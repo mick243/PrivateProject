@@ -1,5 +1,5 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
 import { fail, handle, notFound } from '@/lib/api-errors';
+import { bearerMatches } from '@/lib/bearer-token';
 import { promMetrics } from '@/lib/prometheus';
 
 export const runtime = 'nodejs';
@@ -20,7 +20,7 @@ export const GET = handle(async (request: Request) => {
   const metrics = promMetrics();
   if (!metrics) return notFound('찾을 수 없습니다');
 
-  if (!authorized(request.headers.get('authorization'), process.env.METRICS_TOKEN ?? '')) {
+  if (!bearerMatches(request.headers.get('authorization'), process.env.METRICS_TOKEN ?? '')) {
     const res = fail(401, '지표 토큰이 맞지 않습니다');
     res.headers.set('www-authenticate', 'Bearer');
     return res;
@@ -31,9 +31,3 @@ export const GET = handle(async (request: Request) => {
   });
 });
 
-/** 해시끼리 견준다 — 길이가 같아져 timingSafeEqual 이 던지지 않고, 길이도 새지 않는다 */
-function authorized(header: string | null, token: string): boolean {
-  if (!header?.startsWith('Bearer ')) return false;
-  const digest = (s: string) => createHash('sha256').update(s).digest();
-  return timingSafeEqual(digest(header.slice('Bearer '.length)), digest(token));
-}

@@ -11,7 +11,8 @@
 # 하는 일
 #   1. Prometheus(agent 모드) · node_exporter · postgres_exporter 를 GitHub 릴리스에서 받아 sha256 을 맞춰 본다
 #   2. 전용 사용자 arcade-monitor 와 설정 폴더 /etc/arcade-monitoring (비밀 파일은 root · arcade-monitor 만 읽음)
-#   3. 앱 지표 토큰(METRICS_TOKEN)을 **서버에서** 만든다 — PC 의 값은 서버로 오지 않는다(make-server-env.sh)
+#   3. 앱 지표 토큰(METRICS_TOKEN) · 운영 알림 웹훅 토큰(OPS_ALERT_TOKEN) · 웹 푸시 키(OPS_PUSH_*)를
+#      **서버에서** 만든다 — PC 의 값은 서버로 오지 않는다(make-server-env.sh)
 #   4. PostgreSQL 감시 계정 arcade_monitor (pg_monitor 역할 · 접속 3개까지 · 통계를 읽기만)
 #   5. Caddyfile 을 묶음의 새 판으로 — Caddy 지표를 켜고 /api/metrics 를 밖에서 막는다
 #   6. systemd 서비스 셋. 전부 127.0.0.1 에만 열고 메모리 상한을 건다 (1GB 서버)
@@ -147,7 +148,7 @@ install -d -m 2750 -o root -g arcade-monitor "$DATA/textfile"
 write_secret() { ( umask 027; printf '%s' "$2" > "$1" ); chgrp arcade-monitor "$1"; chmod 640 "$1"; }
 write_secret "$ETC/grafana-cloud-token" "$PUSH_TOKEN"
 
-step "3. 앱 지표 토큰 (METRICS_TOKEN)"
+step "3. 앱 쪽 비밀 값 (METRICS_TOKEN · 운영 알림 토큰 · 푸시 키)"
 METRICS_TOKEN="$( { grep -E '^METRICS_TOKEN=' "$APP/.env.local" || true; } | tail -n 1 | cut -d= -f2-)"
 TOKEN_ADDED=0
 if [[ -z "$METRICS_TOKEN" ]]; then
@@ -161,6 +162,32 @@ else
   echo "이미 있음 — 그대로 씁니다"
 fi
 write_secret "$ETC/metrics-token" "$METRICS_TOKEN"
+
+# 운영 알림 (관리자 화면의 종 아이콘 · 기기 알림 — components/OpsAlertBell.tsx).
+#   OPS_ALERT_TOKEN       Grafana 알림 웹훅(POST /api/ops/alerts)이 들고 오는 토큰 — 9-4 에서 Grafana 연락 지점에 넣는다
+#   OPS_PUSH_*_KEY        웹 푸시(VAPID) 키 쌍 — 브라우저 푸시 서버에 우리가 보낸 것임을 서명한다
+# 이미 있으면 그대로 둔다. 바꾸면 Grafana 연락 지점을 고치고 기기마다 알림을 다시 켜야 한다.
+if ! grep -qE '^OPS_ALERT_TOKEN=.' "$APP/.env.local"; then
+  (( TOKEN_ADDED )) || cp -p "$APP/.env.local" "$APP/.env.local.bak-$(date +%Y%m%d%H%M%S)"
+  printf '\n# ── install-monitoring.sh 가 만든 값 (%s) — Grafana 알림 웹훅이 이 토큰으로 들어온다 (README §9-4) ──\nOPS_ALERT_TOKEN=%s\n' \
+    "$(date +%F)" "$(openssl rand -hex 32)" >> "$APP/.env.local"
+  TOKEN_ADDED=1
+  echo "운영 알림 토큰(OPS_ALERT_TOKEN)을 만들어 넣었습니다"
+fi
+if ! grep -qE '^OPS_PUSH_PRIVATE_KEY=.' "$APP/.env.local"; then
+  (( TOKEN_ADDED )) || cp -p "$APP/.env.local" "$APP/.env.local.bak-$(date +%Y%m%d%H%M%S)"
+  # P-256 키 쌍 — 공개 키는 압축하지 않은 65바이트, 비밀 키는 32바이트(앞자리가 0 이면 짧게 나오므로 채운다)를 base64url 로.
+  # web-push 는 길이가 다르면 거절한다. Node 는 bootstrap.sh 가 깔아 둔 것을 쓴다
+  # shellcheck disable=SC2016
+  vapid="$(node -e '
+    const e = require("node:crypto").createECDH("prime256v1"); e.generateKeys();
+    const d = e.getPrivateKey(); const priv = Buffer.concat([Buffer.alloc(32 - d.length), d]);
+    process.stdout.write(e.getPublicKey().toString("base64url") + " " + priv.toString("base64url"));')"
+  printf '# 관리자 기기 알림(웹 푸시)의 VAPID 키 쌍 — 바꾸면 기기마다 알림을 다시 켜야 한다\nOPS_PUSH_PUBLIC_KEY=%s\nOPS_PUSH_PRIVATE_KEY=%s\n' \
+    "${vapid%% *}" "${vapid##* }" >> "$APP/.env.local"
+  TOKEN_ADDED=1
+  echo "웹 푸시 키(OPS_PUSH_PUBLIC_KEY · OPS_PUSH_PRIVATE_KEY)를 만들어 넣었습니다"
+fi
 
 step "4. PostgreSQL 감시 계정 (arcade_monitor)"
 PG_ENV="$ETC/postgres-exporter.env"
@@ -256,6 +283,9 @@ for t in 9100 9187 2019; do
 done
 n="$(curl -s http://127.0.0.1:9100/metrics | grep -c '^arcade_process_memory_bytes{' || true)"
 echo "  프로세스별 메모리 시계열           $n개 — 0 이면 node_exporter 가 textfile 을 못 읽음"
+# 운영 알림 웹훅 — 토큰 없이 부르면 401 이어야 켜진 것이다 (404 면 앱이 OPS_ALERT_TOKEN 을 못 읽음). 알림은 만들지 않는다
+code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST --resolve "$SITE_DOMAIN:443:127.0.0.1" "https://$SITE_DOMAIN/api/ops/alerts" || true)"
+echo "  https://$SITE_DOMAIN/api/ops/alerts $code   — 401 이어야 함 (운영 알림 웹훅이 켜져 있고 토큰을 요구함)"
 
 # agent 는 60초마다 긁고 몇 초 안에 보낸다. 보낸 표본 수 · 실패 수는 agent 자신의 지표에 있다
 # 라벨이 붙어 나온다(name{remote_name=…,url=…} 값) — 이름으로 시작하는 줄을 모두 더한다
@@ -292,5 +322,9 @@ cat <<EOF
   · Alerting → Notification configuration → Contact points 에 알림 받을 메일
   · Alerting → Alert rules → More → Import alert rules → Prometheus YAML file 에 PC 의 deploy/ncp/monitoring/rules.yml
     (데이터 소스 grafanacloud-…-prom · 폴더 arcade-finder · "Pause imported alerting rules" 끄기)
+  · 운영 알림(관리자 화면의 종 아이콘 · 기기 알림): Contact points 의 empty 에 Webhook 통합을 더합니다
+      URL           https://$SITE_DOMAIN/api/ops/alerts
+      Authorization Scheme Bearer · Credentials 는 아래 명령으로 본 값 (이 화면에 찍지 않습니다)
+                    grep '^OPS_ALERT_TOKEN=' $APP/.env.local
 EOF
 if [[ -n "$CLOUD_ENV" ]]; then echo "  · 올린 grafana-cloud.env 는 지우세요: rm $CLOUD_ENV"; fi

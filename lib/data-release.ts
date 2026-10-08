@@ -54,6 +54,8 @@ export const EXCLUDED: Readonly<Record<string, string>> = {
   special_marks: '사용자 특수패턴 표시',
   login_failures: '운영 중에 생기는 값',
   rate_counters: '운영 중에 생기는 값',
+  ops_alerts: '운영 중에 생기는 값 (Grafana 알림 · 30일 보관)',
+  ops_push_subscriptions: '운영 중에 생기는 값 (관리자 기기의 푸시 구독 — 기기마다 다시 등록)',
   imported_news: '매일 sync-news 가 다시 가져옵니다',
   emoticons: '관리자가 올린 파일 — 파일이 uploads/ 에 있어 DB 만 옮기면 그림이 깨집니다',
   machines: '마이그레이션이 넣는 기준 데이터',

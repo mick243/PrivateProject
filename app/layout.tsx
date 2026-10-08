@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import ChatBotHost from '@/components/ChatBotHost';
 import HistoryBar from '@/components/HistoryBar';
+import OpsAlertBell from '@/components/OpsAlertBell';
 import PwaSetup from '@/components/PwaSetup';
 import TopNav from '@/components/TopNav';
 import ZoomReset from '@/components/ZoomReset';
@@ -85,6 +86,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* 화면 아래 가운데에 떠 있는 뒤로 · 앞으로 · 새로고침 (components/HistoryBar.tsx).
             모든 화면에 있어야 하므로 페이지가 아니라 레이아웃에 답니다. */}
         <HistoryBar />
+        {/* 관리자에게만 — Grafana 운영 알림의 요약과 기기 알림 (components/OpsAlertBell.tsx) */}
+        <OpsAlertBell />
         <PwaSetup />
         {/* 로그인처럼 화면만 바꾸는 이동에서 iOS 확대가 다음 화면까지 남지 않게 (components/ZoomReset.tsx) */}
         <ZoomReset />
