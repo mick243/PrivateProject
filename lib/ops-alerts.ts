@@ -28,6 +28,8 @@ export interface RecordResult {
   resolved: number[];
   /** Grafana 가 다시 보낸 같은 상태 — 몇 시간마다 옵니다. 알리지 않습니다 */
   repeated: number;
+  /** 관리자가 목록에서 지운 사건이 풀린 것 — 상태만 맞추고 알리지 않습니다 (migrate-082) */
+  dismissed: number;
 }
 
 /** Prisma 가 유니크 위반을 던졌는가 (같은 알림이 두 웹훅으로 동시에 온 경우) */
@@ -37,11 +39,12 @@ function isUniqueViolation(err: unknown): boolean {
 
 export async function recordAlerts(inputs: OpsAlertInput[]): Promise<RecordResult> {
   const prisma = await getPrismaClient();
-  const result: RecordResult = { fired: [], resolved: [], repeated: 0 };
+  const result: RecordResult = { fired: [], resolved: [], repeated: 0, dismissed: 0 };
+  const pick = { id: true, status: true, dismissed_at: true } as const;
 
   for (const a of inputs) {
     const key = { fingerprint_starts_at: { fingerprint: a.fingerprint, starts_at: a.startsAt } };
-    let row = await prisma.ops_alerts.findUnique({ where: key, select: { id: true, status: true } });
+    let row = await prisma.ops_alerts.findUnique({ where: key, select: pick });
 
     if (!row) {
       try {
@@ -65,12 +68,19 @@ export async function recordAlerts(inputs: OpsAlertInput[]): Promise<RecordResul
       } catch (err) {
         // 같은 사건이 동시에 두 번 왔다 — 먼저 들어간 줄을 기준으로 아래에서 상태만 맞춥니다
         if (!isUniqueViolation(err)) throw err;
-        row = await prisma.ops_alerts.findUnique({ where: key, select: { id: true, status: true } });
+        row = await prisma.ops_alerts.findUnique({ where: key, select: pick });
         if (!row) throw err;
       }
     }
 
-    if (row.status === 'firing' && a.status === 'resolved') {
+    if (row.status === 'firing' && a.status === 'resolved' && row.dismissed_at) {
+      // 관리자가 지운 사건 — 풀렸다는 것만 적어 두고 다시 띄우지도, 푸시하지도 않습니다
+      await prisma.ops_alerts.update({
+        where: { id: row.id },
+        data: { status: 'resolved', ends_at: a.endsAt ?? new Date(), updated_at: new Date() },
+      });
+      result.dismissed++;
+    } else if (row.status === 'firing' && a.status === 'resolved') {
       await prisma.ops_alerts.update({
         where: { id: row.id },
         // 풀림은 새 소식이라 다시 안 읽은 것으로 — 종 아이콘에 다시 숫자가 뜹니다
@@ -153,15 +163,16 @@ export async function getAlertView(id: number): Promise<OpsAlertView | null> {
   return r ? toView(r) : null;
 }
 
-/** 최근 알림 (바뀐 때 순, 같으면 id 순 — GUIDELINES.md §4-4) 과 안 읽은 수 */
+/** 최근 알림 (바뀐 때 순, 같으면 id 순 — GUIDELINES.md §4-4) 과 안 읽은 수. 지운 것은 빼고 */
 export async function listAlerts(): Promise<{ alerts: OpsAlertView[]; unread: number }> {
   const prisma = await getPrismaClient();
   const [rows, unread] = await Promise.all([
     prisma.ops_alerts.findMany({
+      where: { dismissed_at: null },
       orderBy: [{ updated_at: 'desc' }, { id: 'desc' }],
       take: OPS_ALERTS_LIST_LIMIT,
     }),
-    prisma.ops_alerts.count({ where: { read_at: null } }),
+    prisma.ops_alerts.count({ where: { read_at: null, dismissed_at: null } }),
   ]);
   return { alerts: rows.map(toView), unread };
 }
@@ -169,6 +180,32 @@ export async function listAlerts(): Promise<{ alerts: OpsAlertView[]; unread: nu
 /** 안 읽은 것을 모두 읽음으로 — 관리자가 목록을 열면 부릅니다. 여러 번 불러도 같습니다 */
 export async function markAllAlertsRead(): Promise<number> {
   const prisma = await getPrismaClient();
-  const { count } = await prisma.ops_alerts.updateMany({ where: { read_at: null }, data: { read_at: new Date() } });
+  const { count } = await prisma.ops_alerts.updateMany({
+    where: { read_at: null, dismissed_at: null },
+    data: { read_at: new Date() },
+  });
+  return count;
+}
+
+/**
+ * 알림 하나를 목록에서 지웁니다 — 줄은 남기고 시각만 찍습니다 (migrate-082 머리말).
+ * 이미 지웠거나 없는 id 면 0. 여러 번 불러도 같습니다 (GUIDELINES.md §4-1).
+ */
+export async function dismissAlert(id: number): Promise<number> {
+  const prisma = await getPrismaClient();
+  const { count } = await prisma.ops_alerts.updateMany({
+    where: { id, dismissed_at: null },
+    data: { dismissed_at: new Date() },
+  });
+  return count;
+}
+
+/** 풀린 알림을 모두 목록에서 지웁니다. 울리는 중인 것은 남깁니다 */
+export async function dismissResolvedAlerts(): Promise<number> {
+  const prisma = await getPrismaClient();
+  const { count } = await prisma.ops_alerts.updateMany({
+    where: { status: 'resolved', dismissed_at: null },
+    data: { dismissed_at: new Date() },
+  });
   return count;
 }

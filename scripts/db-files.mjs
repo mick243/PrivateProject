@@ -104,6 +104,7 @@ export const MIGRATION_FILES = [
   'migrate-079-ez2dj-aeic-ae-remix-charts.sql',
   'migrate-080-restore-missing-fks.sql',
   'migrate-081-ops-alerts.sql',
+  'migrate-082-ops-alerts-dismiss.sql',
 ];
 
 // 파생 객체(뷰). 테이블이 다 만들어진 뒤 마지막에.

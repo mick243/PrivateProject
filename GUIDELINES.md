@@ -205,6 +205,7 @@ npm run start:cluster        # 인스턴스 2개 × PG_POOL_MAX=10, 공개 포�
 | `/api/account/sessions` | — | `DELETE` (다른 기기 로그아웃) |
 | `/api/ops/push` (관리자 기기 알림) | `PUT {구독}` | `DELETE ?endpoint=` |
 | `/api/ops/alerts/read` (운영 알림 읽음) | `PUT` | — |
+| `/api/ops/alerts` (운영 알림 목록에서 지우기) | — | `DELETE ?id=` · `DELETE ?status=resolved` (풀린 것 전부) |
 
 **끄는 쪽에는 본문을 싣지 않습니다** — `DELETE` 의 본문은 중간 장비가 버리는 경우가
 있어, 필요한 값은 쿼리스트링으로 받습니다. 켜는 쪽도 값이 없으면 본문이 없어도 됩니다.

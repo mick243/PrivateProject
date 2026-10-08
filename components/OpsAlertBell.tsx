@@ -24,6 +24,11 @@ import { useIsAdmin } from '@/lib/use-session';
  * CSS 로만 가립니다 — 챗봇을 내리면(useSuppressChatBot) 대화가 지워집니다.
  *
  * 관리자 여부는 화면을 그릴지만 정합니다. 목록 · 푸시 등록은 서버가 requireAdmin 으로 다시 봅니다.
+ *
+ * ─── 지우기 ─────────────────────────────────────────────
+ * 알림마다 ✕, 머리에 "풀린 알림 지우기". 서버는 줄을 남기고 지운 시각만 찍습니다 — 같은 사건이
+ * 계속 울리거나 풀려도 다시 뜨지 않고, 새로 울리면 다시 뜹니다 (db/migrate-082). 그래서 울리는
+ * 중인 것을 지울 때만 묻고, 풀린 것은 바로 지웁니다.
  */
 
 const POLL_MS = 60_000;
@@ -45,6 +50,9 @@ function Bell() {
   const [open, setOpen] = useState(false);
   /** 패널을 연 순간에 안 읽은 것이던 id — 읽음으로 바꾼 뒤에도 이번에는 "새 소식" 으로 보여 줍니다 */
   const [fresh, setFresh] = useState<ReadonlySet<number>>(new Set());
+  /** 지우기가 실패한 까닭 · "풀린 알림 지우기" 를 보내는 중인지 */
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const fabRef = useRef<HTMLButtonElement>(null);
   /** 늦게 온 응답이 새 응답을 덮어쓰지 않게 (components/LiveFeed.tsx 와 같은 방법) */
@@ -137,12 +145,63 @@ function Bell() {
     };
   }, [open]);
 
-  // 닫으면 "새 소식" 표시도 지웁니다 — 다음에 열 때는 그때 새로 온 것만
+  // 닫으면 "새 소식" 표시와 지우기 오류도 지웁니다 — 다음에 열 때는 그때 새로 온 것만
   useEffect(() => {
-    if (!open) setFresh(new Set());
+    if (!open) {
+      setFresh(new Set());
+      setActionError(null);
+    }
   }, [open]);
 
+  /** 목록에서 지우기 — 되면 화면에서 먼저 빼고, 다시 읽어 서버와 맞춥니다 */
+  const dismiss = useCallback(
+    async (query: string, gone: (a: OpsAlertView) => boolean): Promise<void> => {
+      setActionError(null);
+      try {
+        const res = await fetch(`/api/ops/alerts?${query}`, { method: 'DELETE' });
+        if (!res.ok) {
+          setActionError(await errorOf(res, '알림을 지우지 못했어요. 다시 시도해 주세요'));
+          return;
+        }
+        setData((d) => {
+          if (!d) return d;
+          const removedUnread = d.alerts.filter((a) => gone(a) && !a.read).length;
+          return { ...d, alerts: d.alerts.filter((a) => !gone(a)), unread: Math.max(0, d.unread - removedUnread) };
+        });
+        // 지우기 전에 떠난 읽기가 늦게 와도 seq 가 앞서 있어 버려집니다
+        void load();
+      } catch {
+        setActionError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
+      }
+    },
+    [load],
+  );
+
+  const dismissOne = useCallback(
+    async (a: OpsAlertView) => {
+      if (
+        a.status === 'firing' &&
+        !window.confirm(
+          `울리는 중인 '${a.alertname}' 알림을 목록에서 지울까요?\n` +
+            '같은 알림이 계속 울리거나 풀려도 다시 띄우지 않아요. 새로 울리면 다시 떠요.',
+        )
+      ) {
+        return;
+      }
+      await dismiss(`id=${a.id}`, (x) => x.id === a.id);
+    },
+    [dismiss],
+  );
+
+  const clearResolved = async () => {
+    if (!window.confirm('풀린 알림을 모두 목록에서 지울까요? 울리는 중인 알림은 남아요.')) return;
+    setClearing(true);
+    await dismiss('status=resolved', (a) => a.status === 'resolved');
+    setClearing(false);
+  };
+
   const unread = data?.unread ?? 0;
+  const hasResolved = data?.alerts.some((a) => a.status === 'resolved') ?? false;
   const firing = data?.alerts.some((a) => a.status === 'firing') ?? false;
   const unreadFiring = data?.alerts.some((a) => !a.read && a.status === 'firing') ?? false;
   const label = open ? '운영 알림 닫기' : unread ? `운영 알림 열기 — 새 소식 ${unread}건` : '운영 알림 열기';
@@ -179,15 +238,27 @@ function Bell() {
         <section ref={panelRef} className="ops-panel" role="dialog" aria-label="운영 알림">
           <header className="ops-head">
             <strong>운영 알림</strong>
-            <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>
-              닫기
-            </button>
+            <div className="ops-head-actions">
+              {hasResolved && (
+                <button type="button" className="btn btn-sm" disabled={clearing} onClick={() => void clearResolved()}>
+                  {clearing ? '지우는 중…' : '풀린 알림 지우기'}
+                </button>
+              )}
+              <button type="button" className="btn btn-sm" onClick={() => setOpen(false)}>
+                닫기
+              </button>
+            </div>
           </header>
 
           <div className="ops-body">
             {loadError && (
               <p className="warn" role="alert">
                 {loadError}
+              </p>
+            )}
+            {actionError && (
+              <p className="warn" role="alert">
+                {actionError}
               </p>
             )}
             {!data && !loadError && <p className="ops-empty">불러오는 중…</p>}
@@ -199,7 +270,13 @@ function Bell() {
             {data && data.alerts.length > 0 && (
               <ul className="ops-list">
                 {data.alerts.map((a, i) => (
-                  <AlertItem key={a.id} alert={a} isNew={fresh.has(a.id)} expanded={i === 0 && a.status === 'firing'} />
+                  <AlertItem
+                    key={a.id}
+                    alert={a}
+                    isNew={fresh.has(a.id)}
+                    expanded={i === 0 && a.status === 'firing'}
+                    onDismiss={dismissOne}
+                  />
                 ))}
               </ul>
             )}
@@ -219,9 +296,25 @@ function Bell() {
   );
 }
 
-function AlertItem({ alert: a, isNew, expanded }: { alert: OpsAlertView; isNew: boolean; expanded: boolean }) {
+function AlertItem({
+  alert: a,
+  isNew,
+  expanded,
+  onDismiss,
+}: {
+  alert: OpsAlertView;
+  isNew: boolean;
+  expanded: boolean;
+  onDismiss: (a: OpsAlertView) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
   const firing = a.status === 'firing';
   const when = new Date(a.startsAt).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
+  const remove = async () => {
+    setBusy(true);
+    await onDismiss(a);
+    setBusy(false); // 지워졌으면 이 줄은 이미 사라졌고, 안 지웠으면(취소 · 실패) 다시 누를 수 있게
+  };
   return (
     <li className={`ops-item${firing ? ' is-firing' : ' is-resolved'}${isNew ? ' is-new' : ''}`}>
       <div className="ops-item-head">
@@ -230,6 +323,18 @@ function AlertItem({ alert: a, isNew, expanded }: { alert: OpsAlertView; isNew: 
         <time dateTime={a.startsAt} title={when}>
           {ago(a.startsAt)}
         </time>
+        <button
+          type="button"
+          className="ops-dismiss"
+          disabled={busy}
+          onClick={() => void remove()}
+          aria-label={`'${a.alertname}' 알림 지우기`}
+          title="목록에서 지우기"
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
       </div>
       <p className="ops-headline">{a.ai?.headline ?? a.summary ?? a.alertname}</p>
       {!firing && a.endsAt && <p className="ops-meta">{lasted(a.startsAt, a.endsAt)} 만에 풀렸어요</p>}

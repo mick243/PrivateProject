@@ -340,6 +340,7 @@ model ops_alerts {
   received_at   DateTime  @default(now()) @db.Timestamptz(6)
   updated_at    DateTime  @default(now()) @db.Timestamptz(6)
   read_at       DateTime? @db.Timestamptz(6)
+  dismissed_at  DateTime? @db.Timestamptz(6)
 
   @@unique([fingerprint, starts_at])
   @@index([updated_at(sort: Desc)], map: "ops_alerts_updated_idx")

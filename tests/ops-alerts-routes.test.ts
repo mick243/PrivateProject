@@ -12,7 +12,7 @@ import { SESSION_COOKIE } from '@/lib/auth-types';
 const calls: { fn: string; args: unknown[] }[] = [];
 const afterQueue: (() => unknown)[] = [];
 let isAdmin = false;
-let recordResult = { fired: [1], resolved: [], repeated: 0 };
+let recordResult = { fired: [1], resolved: [], repeated: 0, dismissed: 0 };
 
 vi.mock('next/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('next/server')>();
@@ -37,6 +37,14 @@ vi.mock('@/lib/ops-alerts', () => ({
   markAllAlertsRead: vi.fn(async () => {
     calls.push({ fn: 'read', args: [] });
     return 2;
+  }),
+  dismissAlert: vi.fn(async (...args: unknown[]) => {
+    calls.push({ fn: 'dismiss', args });
+    return 1;
+  }),
+  dismissResolvedAlerts: vi.fn(async () => {
+    calls.push({ fn: 'dismissResolved', args: [] });
+    return 3;
   }),
 }));
 
@@ -97,7 +105,7 @@ beforeEach(() => {
   calls.length = 0;
   afterQueue.length = 0;
   isAdmin = false;
-  recordResult = { fired: [1], resolved: [], repeated: 0 };
+  recordResult = { fired: [1], resolved: [], repeated: 0, dismissed: 0 };
   process.env.OPS_ALERT_TOKEN = 'grafana-secret';
   delete process.env.OPS_PUSH_PUBLIC_KEY;
   delete process.env.OPS_PUSH_PRIVATE_KEY;
@@ -132,7 +140,7 @@ describe('POST /api/ops/alerts — Grafana 웹훅', () => {
   it('받으면 바로 적고 응답한다 — 요약 · 푸시는 응답 뒤(after)로 미룬다', async () => {
     const res = await alertsRoute.POST(webhook({ receiver: 'empty', alerts: [alert] }, 'grafana-secret'));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ received: 1, fired: 1, resolved: 0, repeated: 0 });
+    expect(await res.json()).toEqual({ received: 1, fired: 1, resolved: 0, repeated: 0, dismissed: 0 });
 
     const [record] = calls;
     expect(record.fn).toBe('record');
@@ -147,10 +155,50 @@ describe('POST /api/ops/alerts — Grafana 웹훅', () => {
   });
 
   it('같은 상태를 다시 보낸 것뿐이면(몇 시간마다 오는 반복) 할 일을 미루지 않는다', async () => {
-    recordResult = { fired: [], resolved: [], repeated: 1 };
+    recordResult = { fired: [], resolved: [], repeated: 1, dismissed: 0 };
     const res = await alertsRoute.POST(webhook({ alerts: [alert] }, 'grafana-secret'));
     expect(res.status).toBe(200);
     expect(afterQueue).toHaveLength(0);
+  });
+
+  it('관리자가 지운 사건이 풀린 것뿐이면 할 일을 미루지 않는다 — 푸시하지 않음', async () => {
+    recordResult = { fired: [], resolved: [], repeated: 0, dismissed: 1 };
+    const res = await alertsRoute.POST(webhook({ alerts: [{ ...alert, status: 'resolved' }] }, 'grafana-secret'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).dismissed).toBe(1);
+    expect(afterQueue).toHaveLength(0);
+  });
+});
+
+describe('DELETE /api/ops/alerts — 목록에서 지우기', () => {
+  const del = (admin: boolean, query: string) => alertsRoute.DELETE(as(admin, `/api/ops/alerts${query}`, { method: 'DELETE' }));
+
+  it('비로그인은 401, 일반 사용자는 403 — 지우지 않는다', async () => {
+    expect((await alertsRoute.DELETE(new Request(`${URL_BASE}/api/ops/alerts?id=1`, { method: 'DELETE' }))).status).toBe(401);
+    expect((await del(false, '?id=1')).status).toBe(403);
+    expect((await del(false, '?status=resolved')).status).toBe(403);
+    expect(calls).toEqual([]);
+  });
+
+  it('?id= 하나를 지운다', async () => {
+    const res = await del(true, '?id=12');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ dismissed: 1 });
+    expect(calls).toEqual([{ fn: 'dismiss', args: [12] }]);
+  });
+
+  it('?status=resolved 는 풀린 것 전부', async () => {
+    const res = await del(true, '?status=resolved');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ dismissed: 3 });
+    expect(calls).toEqual([{ fn: 'dismissResolved', args: [] }]);
+  });
+
+  it('무엇을 지울지 모호하면 400 — 아무것도 지우지 않는다', async () => {
+    for (const q of ['', '?id=abc', '?id=0', '?id=-3', '?id=1.5', '?status=firing', '?status=', '?id=1&status=resolved']) {
+      expect((await del(true, q)).status, q).toBe(400);
+    }
+    expect(calls).toEqual([]);
   });
 });
 
