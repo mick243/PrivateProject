@@ -135,7 +135,7 @@ describe('processAlertEvents — 받은 뒤의 흐름', () => {
     }));
     const { processAlertEvents } = await import('@/lib/ops-alert-events');
 
-    await processAlertEvents({ fired: [1, 2, 3, 4], resolved: [6], repeated: 0 });
+    await processAlertEvents({ fired: [1, 2, 3, 4], resolved: [6] });
     expect(pushed.map((m) => m.title)).toEqual([
       '울려요 · Rule1',
       '울려요 · Rule2',
@@ -144,7 +144,7 @@ describe('processAlertEvents — 받은 뒤의 흐름', () => {
     ]);
 
     pushed.length = 0;
-    await processAlertEvents({ fired: [1], resolved: [6], repeated: 0 });
+    await processAlertEvents({ fired: [1], resolved: [6] });
     expect(pushed.map((m) => m.title)).toEqual(['울려요 · Rule1', '풀렸어요 · Rule6']);
     vi.doUnmock('@/lib/ops-alert-summary');
     vi.doUnmock('@/lib/ops-alerts');

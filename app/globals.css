@@ -4806,6 +4806,11 @@ body:has(.ops-panel) .chat-panel {
 .ops-head {
   border-bottom: 1px solid var(--line);
 }
+.ops-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .ops-foot {
   flex-wrap: wrap;
   border-top: 1px solid var(--line);
@@ -4861,6 +4866,36 @@ body:has(.ops-panel) .chat-panel {
 .ops-item-head time {
   margin-left: auto;
   white-space: nowrap;
+}
+/* 알림 하나 지우기 — 줄 높이를 늘리지 않게 바깥 여백을 음수로. 손가락 화면에서는 조금 크게 */
+.ops-dismiss {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin: -6px -8px -6px -2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ops-dismiss:hover {
+  background: var(--overlay);
+  color: var(--text);
+}
+.ops-dismiss:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (pointer: coarse) {
+  .ops-dismiss {
+    width: 36px;
+    height: 36px;
+    margin: -10px -12px -10px -4px;
+  }
 }
 .ops-status {
   flex-shrink: 0;

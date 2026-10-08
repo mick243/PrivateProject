@@ -1,11 +1,11 @@
 import { after, NextResponse } from 'next/server';
-import { fail, handle, notFound, parseBody } from '@/lib/api-errors';
+import { fail, handle, notFound, parseBody, parseId } from '@/lib/api-errors';
 import { requireAdmin } from '@/lib/auth';
 import { bearerMatches } from '@/lib/bearer-token';
 import { processAlertEvents } from '@/lib/ops-alert-events';
 import { normalizeGrafanaAlert, type OpsAlertInput } from '@/lib/ops-alert-input';
 import type { OpsAlertsResponse } from '@/lib/ops-alert-types';
-import { listAlerts, recordAlerts } from '@/lib/ops-alerts';
+import { dismissAlert, dismissResolvedAlerts, listAlerts, recordAlerts } from '@/lib/ops-alerts';
 import { pushKeys } from '@/lib/ops-push';
 import { grafanaWebhookSchema } from '@/lib/validation';
 
@@ -47,6 +47,7 @@ export const POST = handle(async (request: Request) => {
     fired: result.fired.length,
     resolved: result.resolved.length,
     repeated: result.repeated,
+    dismissed: result.dismissed,
   });
 });
 
@@ -60,4 +61,31 @@ export const GET = handle(async (request: Request) => {
   const { alerts, unread } = await listAlerts();
   const res: OpsAlertsResponse = { alerts, unread, pushReady: pushKeys() !== null };
   return NextResponse.json(res, { headers: { 'cache-control': 'no-store' } });
+});
+
+/**
+ * DELETE /api/ops/alerts — 목록에서 지우기 (관리자 전용). 본문 없이 쿼리로 (GUIDELINES.md §4-1)
+ *
+ *   ?id=12              알림 하나 (울리는 중이어도)
+ *   ?status=resolved    풀린 알림 전부 — 울리는 중인 것은 남깁니다
+ *
+ * 줄은 남기고 지운 시각만 찍습니다 — 같은 사건의 반복 · 풀림이 와도 다시 뜨지 않게 (migrate-082).
+ * 이미 지운 것을 다시 지워도 같은 결과라 { dismissed: 0 } 로 답합니다.
+ */
+export const DELETE = handle(async (request: Request) => {
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
+  const q = new URL(request.url).searchParams;
+  const rawId = q.get('id');
+  const status = q.get('status');
+
+  if (rawId !== null && status === null) {
+    const id = parseId(rawId);
+    if (id === null) return fail(400, '지울 알림의 id 가 올바르지 않아요');
+    return NextResponse.json({ dismissed: await dismissAlert(id) });
+  }
+  if (rawId === null && status === 'resolved') {
+    return NextResponse.json({ dismissed: await dismissResolvedAlerts() });
+  }
+  return fail(400, '지울 알림을 ?id= 나 ?status=resolved 중 하나로 알려 주세요');
 });

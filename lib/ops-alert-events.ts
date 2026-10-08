@@ -17,7 +17,7 @@ import { sendOpsPush } from './ops-push';
 
 const PUSH_BURST = 3;
 
-export async function processAlertEvents(r: RecordResult): Promise<void> {
+export async function processAlertEvents(r: Pick<RecordResult, 'fired' | 'resolved'>): Promise<void> {
   const messages: PushMessage[] = [];
 
   for (const id of r.fired) {
