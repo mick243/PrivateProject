@@ -74,6 +74,7 @@ psql -w "$BASE/arcade_finder_scale" -f load-test/seed-scale.sql
 |---|---|---|
 | 쿼리 비용 | `EXPLAIN (ANALYZE, BUFFERS)` | 엔드포인트 시간 (JSON 직렬화가 지배, 편차 ±30%) |
 | 요청당 왕복 수 | `pg_stat_database.xact_commit` 증가분 | — 단, **재는 동안 다른 트래픽이 없어야** 합니다 |
+| 요청당 **SQL 문장** 수 (ORM) | 테스트 하네스에서 `pg.Client.prototype.query` 를 감싸 세기 (docs/DB-WORKLOAD.md §0) | Prisma 연산 수(`lib/prisma.ts` 계측 확장) — `include` 한 관계의 문장이 빠져 **12문장이 1로** 보입니다 |
 | 엔드포인트 지연 | k6, 11회 이상 중앙값 | 단발 curl (콜드 컴파일로 259ms 가 나옵니다) |
 | 자원 경합 효과 | **부하 아래에서** k6 | 순차 단일 요청 |
 | 대역폭 | k6 `data_received` | 추정 |
@@ -117,8 +118,8 @@ node load-test/bench-server.mjs .next       3300 10   # AFTER
 | 반경 검색 (haversine 전체 스캔) | 13ms. **PostGIS 이관 불요** |
 | 커넥션 풀 상한 | 목표의 10배에서 열린 커넥션 4~5개(활성 0~1) |
 | 프로세스 수 (처리량 측면) | 1개가 목표의 20배를 실패 0%로 받음 |
-| 서열표 집계 | 0.67ms · 77버퍼. `charts` 에 미리 계산돼 있음 |
-| 게시글 검색 | 1.0ms. trigram GIN 이 받아 줌 |
+| 서열표 집계 | 0.67ms · 77버퍼. `charts` 에 미리 계산돼 있음. 채보 29,178 · 투표 15만에서 재측정 3~8ms (2026-09-28, R14 해소) |
+| 게시글 검색 (3글자 이상) | 1.0ms. trigram GIN 이 받아 줌. ⚠ **한글 2글자는 예외** — 인덱스를 못 타 Seq Scan 156ms(글 2만 건, 2026-09-28). 전환 조건·대안은 [docs/DB-WORKLOAD.md](docs/DB-WORKLOAD.md) §3-1 |
 | XSS | 본문이 JSON 트리 + 화이트리스트. `dangerouslySetInnerHTML` 0곳 |
 | 업로드 검증 | 매직바이트 + MIME 허용목록 + 타입별 상한 |
 | SQL 인젝션 | 전부 파라미터 바인딩 |
@@ -202,6 +203,8 @@ npm run start:cluster        # 인스턴스 2개 × PG_POOL_MAX=10, 공개 포�
 | `/api/charts/:id/special` | `PUT` | `DELETE` |
 | `/api/charts/:id/vote` | `PUT {value}` | `DELETE` (투표 취소) |
 | `/api/account/sessions` | — | `DELETE` (다른 기기 로그아웃) |
+| `/api/ops/push` (관리자 기기 알림) | `PUT {구독}` | `DELETE ?endpoint=` |
+| `/api/ops/alerts/read` (운영 알림 읽음) | `PUT` | — |
 
 **끄는 쪽에는 본문을 싣지 않습니다** — `DELETE` 의 본문은 중간 장비가 버리는 경우가
 있어, 필요한 값은 쿼리스트링으로 받습니다. 켜는 쪽도 값이 없으면 본문이 없어도 됩니다.
@@ -215,13 +218,39 @@ npm run start:cluster        # 인스턴스 2개 × PG_POOL_MAX=10, 공개 포�
 
 | 상태 | 언제 | 헬퍼 |
 |---|---|---|
-| 400 | 경로 id 가 잘못됨 | `badId()` |
-| 400 | 본문이 JSON 이 아님 | `badJson()` |
-| 400 | 스키마 위반 (+`details`) | `invalid(parsed.error)` |
+| 400 | 경로 id 가 잘못됨 | `badId()` (id 는 `parseId()` 로) |
+| 400 | 본문이 JSON 이 아님 | `badJson()` — `readJson`·`parseBody` 가 알아서 |
+| 400 | 스키마 위반 (+`details`) | `invalid(parsed.error)` — `parseBody` 가 알아서 |
 | 401 | 세션 없음 | `needLogin()` |
+| 403 | 권한 없음 (남의 글·클리어 게이트) | `forbidden('…')` |
 | 404 | 대상 없음 | `notFound('…')` |
-| 409 | 상태 어긋남 | `fail(409, '…')` |
+| 409 | 상태 어긋남 (중복·그 사이 바뀜) | `conflict('…')` |
+| 429 | 시도 한도 | `tooMany('…', retryAfterMs)` → `Retry-After` |
+| 503 | 설정 누락·하루 총량 소진 | `unavailable('…', retryAfterMs?)` |
+| 그 밖 | 413·415·502·504 등 | `fail(status, '…', { extra?, retryAfterMs? })` |
 | 500 | 그 밖의 예외 | `handle()` 이 자동으로 |
+
+라우트 첫머리는 이 모양입니다 (2026-09-28 부터 43개 전부):
+
+```ts
+async function onPut(request: Request, ctx: Ctx) {
+  const id = parseId((await ctx.params).id);
+  if (id === null) return badId();
+
+  const guard = await requirePlayer(request);
+  if (!guard.ok) return guard.response;
+
+  const body = await parseBody(request, postInputSchema);   // JSON 파싱 + zod 검증
+  if (!body.ok) return body.response;
+  // body.value — zod 가 변환·기본값까지 채운 값
+}
+export const PUT = handle(onPut);
+```
+
+**이 규칙은 `tests/architecture.test.ts` 가 지킵니다** — `handle()` 로 감싸지 않은 핸들러,
+손으로 만든 `NextResponse.json({ error })`, 라우트 안의 `request.json()`·id 파서가 하나라도
+생기면 테스트가 실패합니다. 09-11 에 이 절을 적었는데 09-28 에 재 보니 핸들러 68개 중
+14개만 따르고 있었습니다 — 문서만으로는 지켜지지 않았습니다.
 
 **핸들러는 `handle()` 로 감싸세요.** 안 감싸면 예외가 **본문 없는 500** 으로 나가고,
 클라이언트는 전부 이렇게 쓰기 때문에
@@ -284,6 +313,41 @@ const playerId = await sessionPlayerId(request); // 비로그인 허용 (제보�
 (`base` CTE), 집계를 거기에 남은 것으로 좁히세요. 이걸 안 해서 반경 검색이
 3배 느려진 적이 있습니다.
 
+**몇 개만 쓸 거면 DB 에서 자르세요.** 챗봇 오락실 도구가 조건에 맞는 곳 전부(목표 규모 926곳)를
+집계한 뒤 8곳만 썼습니다(28.5ms) — 지금은 쪽의 id 만 고르고 그 id 들만 집계합니다(7.6ms ·
+`pageArcades`). 단, 핫 경로의 SQL 을 건드려 자르지 마세요. 한 SQL 안에 정렬·LIMIT 을 넣은 두 방법 모두
+지도 목록(+2.4ms)이나 반경 검색(1.4 → 3.0ms)을 느리게 했습니다(행 수 추정이 바뀌어 계획이 뒤집힘 — docs/AI-BUDGET.md §3).
+
+### 4-6. 데이터는 종류마다 들어오는 길이 하나다
+
+| 종류 | 길 |
+|---|---|
+| 스키마 · 기준 데이터 | `db/*.sql` → `npm run db:prisma:build` → `prisma migrate deploy` |
+| 외부 원천 데이터 (오락실 · 수입기 곡·채보) | scripts/ 의 수입 도구 → 환경 사이는 `npm run data:release` |
+| 사용자 데이터 | 앱만 씁니다. 옮기지 않고 백업만 |
+
+- **마이그레이션은 사용자 데이터 표에 행을 만들지 않습니다** (`INSERT` 금지 · `UPDATE`/`DELETE` 는 허용).
+  시드와 012 · 020 · 049 가 가상 계정·투표·글을 넣어, 빈 DB 에 migrate deploy 한 운영 DB 에도 들어갔습니다
+  (tests/data-release.test.ts 가 081 번부터 막습니다).
+- **scripts/ 의 `.ts` 도구는 `lib/prisma.ts` 로 씁니다** — `pg` 를 직접 잡으면 architecture.test.ts 가
+  실패합니다. 옛 어댑터(lib/db.ts)는 `DATABASE_URL` 이 없으면 조용히 `.pglite` 로 내려가 "끝났다" 고 말했습니다.
+- 환경 사이에 데이터를 옮길 때 **id 를 믿지 마세요.** 같은 곡도 DB 마다 id 가 다릅니다(넣은 순서가 다름).
+  릴리스는 자연 키(source_ref · (기종, 제목))로 옮깁니다. 배경과 실측은 docs/DATA-SOURCES.md.
+
+### 4-7. AI 에 넘기는 분량에는 상한을 둔다
+
+모델 비용은 입력에 비례하고, 입력은 **다시 보내는 것**이 키웁니다. 2026-09-28 에 재 보니 챗봇 질문 하나가
+대화 전체를 왕복마다 다시 실어 858,396자를 보냈고, 리뷰 요약은 같은 그림을 리뷰마다 붙여 27.8MB 였습니다
+(Gemini 인라인 한도 20MB 초과 — 그 오락실은 요약이 늘 실패). 상한과 위치:
+
+- 대화 기록 12,000자 · 도구 결과 누적 12,000자 — `lib/chat-budget.ts` (넘으면 앞쪽을 빼거나, 함수 호출을 막음)
+- 도구 한 쪽 5건 + `page` / `hasMore` — `lib/chat-tools.ts`
+- 요약: 최근 리뷰 60개 · 본문 15,000자 · 서로 다른 그림 4장(같은 그림은 한 번) — `lib/review-summary-types.ts`
+- 운영 알림 요약: 알림 하나에 한 번 · 라벨 30개 · 최대 12,000자 · 하루 50번 — `lib/ops-alert-input.ts` `PROMPT_MAX_CHARS`
+
+새 AI 기능을 붙일 때도 같은 질문을 하세요: **최악의 입력에서 한 요청이 몇 자를 보내나?** 대역 SDK 로 요청을
+기록해 재면 외부 호출 없이 잴 수 있습니다(docs/AI-BUDGET.md). 운영 로그 `[chat] 토큰 …` 이 실제 토큰 수입니다.
+
 ---
 
 ## 5. 보안
@@ -317,14 +381,10 @@ const playerId = await sessionPlayerId(request); // 비로그인 허용 (제보�
 - **`db:init`/`db:reset` 은 개발 DB 본체를 파괴합니다.** `.env.local` 이 모든
   워크트리에 복사되므로 **폴더 격리 ≠ DB 격리**입니다. 2026-08-24 에 실제로 한 번
   날렸습니다(오락실 1,444 → 8).
-- **새 마이그레이션을 추가하면 dev 서버를 재시작하세요** — `globalThis` 에 캐시된
-  DB 핸들 때문에 `runMigrations` 가 다시 돌지 않습니다.
-- **새 워크트리에서 `npm test` 를 처음 돌리면 실패합니다.** 테스트는 `.env.local` 을
-  읽지 않아 PGlite 로 가는데, 그 디렉터리가 없으면 **vitest 워커들이 동시에 만들다
-  서로 깨뜨립니다** (`could not read blocks 0..0 in file "base/5/…"`). 실패하는 파일이
-  실행마다 달라져서 코드 탓으로 보입니다. 한 번
-  `npx vitest run --no-file-parallelism` 으로 만들어 두면 그 뒤로는 기본 실행도
-  정상입니다 (깨진 채로 남았으면 `.pglite` 를 지우고 다시).
+- ~~**새 마이그레이션을 추가하면 dev 서버를 재시작하세요** — `runMigrations` 가 다시 돌지 않습니다.~~
+  (09-22 Prisma 이관 뒤로는 앱이 마이그레이션을 적용하지 않습니다 — `npm run db:migrate:prisma` 를 먼저.)
+- ~~**새 워크트리에서 `npm test` 를 처음 돌리면 실패합니다** (PGlite 디렉터리를 워커들이 동시에 만들다 깨짐).~~
+  (PGlite 폴백이 앱에서 빠지고 09-28 에 lib/db.ts 까지 지워, 테스트가 PGlite 를 열 일이 없습니다.)
 - **여러 워크트리가 같은 개발 DB 를 봅니다.** 지금 개발 DB 에는 어느 브랜치에도
   커밋되지 않은 마이그레이션 050~052 가 적용돼 있습니다 — `db:reset` 하면 복구할
   방법이 없습니다.
@@ -336,7 +396,7 @@ const playerId = await sessionPlayerId(request); // 비로그인 허용 (제보�
 | | 무엇 | 왜 급한가 |
 |---|---|---|
 | ✅ | ~~**R1 병합** — `playerId` 를 믿는 라우트 10개~~ | **끝났습니다** (2026-09-11). 스키마에서 `playerId` 를 빼고 라우트 18곳을 세션 기준으로. `tests/session-identity.test.ts` 24개가 지킵니다 |
-| 🟡 | 캐시 헤더 | 34개 라우트가 전부 `force-dynamic`. 참조 데이터에 ETag + `max-age` 만 붙여도 왕복이 사라집니다 — **압축보다 효과가 큽니다** |
+| ✅ | ~~캐시 헤더~~ | **들어가 있습니다** — `/api/games` · `/api/machines` · `/api/boards` 가 `REFERENCE_CACHE` + ETag/304 (lib/http.ts). 이 줄이 남아 있던 것은 문서 드리프트였습니다(2026-09-28 확인). 다음 후보는 `/api/arcades` 의 목록·실시간 분리 — docs/DB-WORKLOAD.md §3-2 |
 | 🟡 | 첨부 썸네일 + 스트리밍 | DB 전체가 176MB 인데 첨부는 글 3개분이 34MB. 구간 요청도 파일 전체를 메모리에 올립니다(28.6MB/요청) |
 | 🟡 | R11 — `ADMIN_PASSWORD` 없으면 로그인 503 | 가입은 세션을 직접 심어 통과하므로 **로그아웃 뒤에야** 드러납니다 |
 | ✅ | ~~토큰 회수 수단~~ | **끝났습니다** (2026-09-13). `players.token_epoch` 를 토큰에 봉하고 요청마다 대조 — 4-3. `tests/session-revoke.test.ts` 10개가 지킵니다 |

@@ -70,10 +70,8 @@ npm run dev
 앱의 데이터 계층은 **Prisma** 입니다 ([`lib/prisma.ts`](lib/prisma.ts) · 2026-09-22 부터).
 `lib/*.ts` 에 SQL 문자열이 없습니다 — 단일 표 CRUD·관계·집계는 Prisma Client API 로, 측정
 근거가 있는 튜닝 SQL(반경 검색·서열표 정렬 등)과 DB 안의 원자적 연산은
-[`prisma/sql/*.sql`](prisma/sql) 에 **TypedSQL** 로 두고 `npm run db:prisma:sql` 이 타입이 붙은
-모듈을 [`lib/typed-sql/`](lib/typed-sql) 로 만듭니다. 그 모듈은 **생성물이지만 커밋합니다** — TypedSQL 은
-DB 에 붙어야 만들어지는데 빌드는 DB 없이 돌기 때문입니다. `.sql` 을 고치면(주석만 고쳐도)
-다시 만드세요. 어긋나면 `tests/typed-sql.test.ts` 가 DB 없이 잡습니다. 무엇을 어느 쪽으로 보냈고 왜인지는 [docs/PRISMA-MIGRATION.md](docs/PRISMA-MIGRATION.md).
+[`prisma/sql/*.sql`](prisma/sql) 에 **TypedSQL** 로 두고 `prisma generate --sql` 이 타입을
+만듭니다. 무엇을 어느 쪽으로 보냈고 왜인지는 [docs/PRISMA-MIGRATION.md](docs/PRISMA-MIGRATION.md).
 
 ```bash
 # .env.local — 필수입니다
@@ -93,9 +91,12 @@ npm run db:prisma:drift        # 지금 DB 가 스키마와 어긋났나
 > "Postgres 가 죽으면 사본으로 내려가기" 는 앱에서 빠졌습니다. 앱은 **기동하면서 마이그레이션도
 > 적용하지 않습니다** — 빠진 것이 있으면 경고만 찍습니다 (deploy/README.md §2).
 
-옛 어댑터 [`lib/db.ts`](lib/db.ts)(node-postgres 직결 · PGlite 폴백 · 기동 시 적용)와
-`npm run db:init` · `db:migrate` · `db:snapshot` 은 **scripts/ 의 적재·점검 도구용**으로 남아
-있습니다. 앱 코드에서 import 하지 마세요.
+옛 어댑터 `lib/db.ts`(node-postgres 직결 · PGlite 폴백 · 기동 시 적용)는 2026-09-28 에 **지웠습니다** —
+scripts/ 의 적재·점검 도구도 이제 `lib/prisma.ts` 로 씁니다. 옛 러너 `npm run db:init` · `db:migrate` 는
+베이스라인 전의 DB 와 되돌리기용으로 남아 있고, `db:snapshot`(PGlite 사본)은 읽는 곳이 없습니다.
+
+다른 환경(운영 등)으로 **데이터**를 옮길 때는 `npm run data:release` 를 씁니다 — 오락실·수입 곡 같은 외부
+원천 데이터만 담고 사용자 데이터는 담지 않습니다 ([docs/DATA-SOURCES.md](docs/DATA-SOURCES.md)).
 
 PostgreSQL 서비스 자체를 다루는 명령은 (Windows · 관리자 PowerShell):
 
@@ -114,7 +115,8 @@ Get-Service postgresql-x64-18         # 상태 확인
 (Pulse 대시보드에서 AGENT 대상을 추가하면 키를 한 번 보여준다) 두 가지가 켜진다:
 - **라우트별 요청수·p95·5xx** — Next.js 가 내장으로 내보내는 OpenTelemetry 스팬을 `instrumentation.ts` 에서 받는다.
   라우트 파일은 하나도 고치지 않는다 (`lib/telemetry-node.ts`).
-- **SQL 지문별 호출수·p95·에러·느린 쿼리(≥250ms)** — `lib/db.ts` 의 어댑터를 한 겹 감싸 PGlite·PostgreSQL 양쪽의 모든 쿼리를 잰다.
+- **SQL 지문별 호출수·p95·에러·느린 쿼리(≥250ms)** — `lib/prisma.ts` 의 계측 확장(`$extends`)이 모든 Prisma 연산을 잰다
+  (지문은 `findMany posts` 꼴, TypedSQL 은 SQL 지문). ⚠ 풀 대기(`db.wait`) 지표는 Prisma 이관 뒤로 비어 있다.
   SQL 은 `SELECT arcade_reviews` 처럼 동사+주 테이블 지문으로만 나가고 원문은 나가지 않는다.
 
 30초마다 메모리 집계를 Pulse 로 보내며, 요청 경로에 얹히는 비용은 Map 갱신 하나다. 키가 없으면 계측 코드가 전혀 실행되지 않고,
@@ -1390,8 +1392,10 @@ components/
   NicknameForm.tsx               소셜 첫 진입 닉네임 폼 (/welcome)
   OAuthButtons.tsx               소셜 버튼 줄 (두 화면 공용 · 링크로 이동)
 lib/
-  db.ts                          PGlite ↔ PostgreSQL 어댑터 + 스키마 자동 적용
-                                 PostgreSQL 에 못 붙으면 사본(.pglite)으로 폴백
+  prisma.ts                      유일한 DB 진입점 — Prisma Client · 기동 점검(미적용 경고 · 뷰) · 계측
+  typed-sql/                     TypedSQL 생성 모듈 10개 (원본 prisma/sql · npm run db:prisma:sql)
+  data-release.ts                데이터 릴리스 — 외부 원천 데이터를 자연 키로 내보내고 적재
+  chat-budget.ts                 챗봇 한 요청의 분량 상한 (대화 기록 · 도구 결과)
   auth.ts                        비밀번호 해시 · 세션 쿠키 · 가입 · 소셜 연결 · 닉네임 확정 · requireAdmin
   oauth.ts                       제공자 표 + 인가 URL · 토큰 교환 · 프로필 (state · PKCE)
   arcades.ts / tier.ts           모든 SQL
@@ -1439,12 +1443,11 @@ db/
   views.sql                                 파생 객체 — 매번 재적용
 ```
 
-`lib/*-types.ts` 만 클라이언트에서 import 합니다. `lib/reports.ts` 처럼 `getDb()` 를
+`lib/*-types.ts` 만 클라이언트에서 import 합니다. `lib/reports.ts` 처럼 `getPrismaClient()` 를
 쓰는 모듈은 `fs` 를 끌고 오므로 컴포넌트에서 직접 import 할 수 없습니다 — 서버·클라이언트가
 공유해야 하는 값(대기 구간 문구, 태그 목록, 정렬 키, `timeAgo`)은 전부 `*-types.ts` 에 있습니다.
 
-`lib/db.ts` 는 그룹별 sentinel 테이블 존재 여부를 보고 **빠진 스키마만** 적용합니다.
-기능이 추가돼도 기존 `.pglite` 를 지우지 않고 따라잡습니다.
+스키마는 `npm run db:migrate:prisma` 가 적용합니다. 앱은 뜰 때 적용하지 않고, 빠진 것이 있으면 경고만 찍습니다.
 
 > ⚠ **시드 데이터 주의**
 > - `db/seed.sql` 의 오락실 8곳은 전부 UI 확인용 **가상 업소**입니다. 실제 정보가 아닙니다.
@@ -1459,6 +1462,8 @@ db/
 >   다시 보려면 `npm run db:reset` 하거나 UI 에서 직접 제보하세요.
 >
 > 운영 시 오락실은 네이버 지역 검색으로 초기 시딩 후 제보로 보정하세요 — `npm run arcades:import`.
+> 새 운영 DB 는 마이그레이션 뒤 `npm run db:purge-demo -- --apply` 로 가상 데이터를 치우고, 개발 장비에서
+> 모은 실데이터는 `npm run data:release` 로 옮깁니다 ([docs/DATA-SOURCES.md](docs/DATA-SOURCES.md) §4).
 
 ### 실제 오락실 데이터 가져오기
 

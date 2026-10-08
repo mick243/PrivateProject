@@ -1,5 +1,5 @@
 import { cacheReference } from './cache';
-import { arcadesWithMachines } from './typed-sql';
+import { arcadeSearchPage, arcadesWithMachines } from './typed-sql';
 import { getPrismaClient, num, TX_OPTIONS, type PrismaTx } from './prisma';
 import type { Arcade, ArcadeInput, ArcadeMachine, Machine, MachineGuess } from './types';
 
@@ -49,6 +49,8 @@ async function fetchArcades(params: {
   machineIds?: number[] | null;
   radiusKm?: number | null;
   arcadeId?: number | null;
+  /** 이 id 들만 — 쪽 하나를 집계할 때(pageArcades). 비어 있으면 필터 없음 */
+  ids?: number[] | null;
 }) {
   const prisma = await getPrismaClient();
   return prisma.$queryRawTyped(
@@ -59,6 +61,7 @@ async function fetchArcades(params: {
       params.machineIds ?? [],
       params.radiusKm ?? null,
       params.arcadeId ?? null,
+      params.ids ?? [],
     ),
   );
 }
@@ -113,17 +116,54 @@ export function searchTokens(q: string | null | undefined): string[] | null {
   return tokens.length ? tokens : null;
 }
 
-export async function listArcades(params: ListArcadesParams): Promise<Arcade[]> {
+function filtersOf(params: ListArcadesParams) {
   const { q = null, machineIds = null, lat = null, lng = null, radiusKm = null } = params;
-  const rows = await fetchArcades({
+  return {
     lat,
     lng,
     tokens: searchTokens(q),
     // 같은 id 가 두 번 와도(?machines=1,1) SQL 이 중복을 빼고 셉니다.
     machineIds: machineIds && machineIds.length ? machineIds : null,
     radiusKm,
-  });
+  };
+}
+
+/** 조건에 맞는 오락실 전부 — 지도 목록(/api/arcades)이 씁니다 */
+export async function listArcades(params: ListArcadesParams): Promise<Arcade[]> {
+  const rows = await fetchArcades(filtersOf(params));
   return rows.map(toArcade);
+}
+
+export interface ArcadePage {
+  arcades: Arcade[];
+  /** 자르기 전 조건에 맞는 수. 범위 밖 쪽을 달라고 해 행이 없으면 null (그때는 셀 행이 없습니다) */
+  total: number | null;
+}
+
+/**
+ * 조건에 맞는 오락실의 **한 쪽** — 챗봇 도구(lib/chat-tools.ts)가 씁니다.
+ *
+ * listArcades 로 전부 받아 앞의 몇 개만 쓰면, 버릴 오락실의 기종·기체·컨디션까지 집계합니다
+ * (목표 규모에서 기종 하나로 찾으면 926곳 — 2026-09-28 실측 28.5ms). 그래서 두 번에 나눕니다:
+ *   1. prisma/sql/arcadeSearchPage.sql — 같은 조건으로 그 쪽의 id 와 전체 수만 (집계 없음)
+ *   2. arcadesWithMachines.sql — 그 id 들만 집계
+ * 두 SQL 의 조건 블록은 글자까지 같습니다(tests/typed-sql.test.ts). 순서도 listArcades 와 같습니다
+ * (거리 → 이름 → id). 쪽 나누기를 한 SQL 안에 넣는 방법은 지도 목록을 느리게 해 버렸습니다 —
+ * 그 SQL 머리말.
+ */
+export async function pageArcades(
+  params: ListArcadesParams,
+  page: { limit: number; offset: number },
+): Promise<ArcadePage> {
+  const f = filtersOf(params);
+  const prisma = await getPrismaClient();
+  const picked = await prisma.$queryRawTyped(
+    arcadeSearchPage(f.lat, f.lng, f.tokens ?? [], f.machineIds ?? [], f.radiusKm, null, [], page.limit, page.offset),
+  );
+  const total = picked[0]?.total_count ?? (page.offset === 0 ? 0 : null);
+  if (picked.length === 0) return { arcades: [], total };
+  const rows = await fetchArcades({ lat: f.lat, lng: f.lng, ids: picked.map((p) => p.id) });
+  return { arcades: rows.map(toArcade), total };
 }
 
 export async function getArcade(id: number): Promise<Arcade | null> {

@@ -13,6 +13,19 @@
 --   $4 machineIds    이 기종을 **모두** 가진 곳만 (int[]). 빈 배열 = 필터 없음
 --   $5 radiusKm?     반경(km). lat/lng 와 함께일 때만 뜻이 있습니다
 --   $6 arcadeId?     한 곳만 (getArcade). NULL 이면 목록
+--   $7 ids           이 id 들만 (int[]). **빈 배열 = 필터 없음** — 챗봇 도구의 한 쪽(pageArcades)
+--
+-- 쪽 나누기 (2026-09-28 · lib/arcades.ts pageArcades)
+--   챗봇은 5곳씩 보여 주는데, 예전에는 조건에 맞는 곳 **전부**(기종 하나로 찾으면 목표 규모에서
+--   926곳)의 기종·기체·컨디션을 이 SQL 로 집계한 뒤 앞의 몇 곳만 썼습니다(28.5ms). 이제는
+--   prisma/sql/arcadeSearchPage.sql 이 그 쪽의 id 만 고르고, 여기서는 그 id 들만 집계합니다.
+--   쪽 나누기를 이 SQL 안에 넣는 두 방법은 재 보고 버렸습니다 — base 에 정렬·창 함수·LIMIT 을
+--   붙이면 지도 목록(926곳)이 EXPLAIN 실행 중앙값 +2~3ms, UNION 두 갈래로 나누면 반경 검색이
+--   1.4 → 3.0ms (행 수 추정이 바뀌어 cabinet_condition 을 통째로 해시 조인). id 조건 하나는
+--   재 봐도 차이가 없었습니다(20.8 → 21.2ms, 1.42 → 1.50ms — 세 번 잰 값끼리의 폭 안).
+--
+-- ⚠ `-- ▼ 조건` 과 `-- ▲ 조건` 사이는 arcadeSearchPage.sql 과 **글자까지 같아야** 합니다 —
+--   다르면 챗봇이 고른 쪽과 지도가 보여 주는 목록이 어긋납니다 (tests/typed-sql.test.ts 가 대조).
 --
 -- 바뀐 점 (2026-09-22 검토에서 잡은 것)
 --   · 기종 AND 필터의 오른쪽을 array_length 대신 **중복을 뺀 개수**로 셉니다 — 같은 id 가
@@ -25,6 +38,7 @@
 -- @param {Float} $2:lng?
 -- @param {Float} $5:radiusKm?
 -- @param {Int} $6:arcadeId?
+-- ▼ 조건
 WITH scored AS (
   SELECT a.id, a.name, a.address, a.lat, a.lng, a.open_time, a.close_time, a.is_24h,
          a.phone, a.note, a.homepage, a.rating_avg, a.review_count,
@@ -37,6 +51,7 @@ WITH scored AS (
          END AS distance_km
   FROM arcades a
   WHERE ($6::int IS NULL OR a.id = $6::int)
+    AND (cardinality($7::int[]) = 0 OR a.id = ANY($7::int[]))
     -- bbox 선필터. 1도 = 약 111km 인데 110 으로 나눠 조금 넉넉하게 잡습니다.
     AND ($1::float8 IS NULL OR $2::float8 IS NULL OR $5::float8 IS NULL
          OR (a.lat BETWEEN $1::float8 - $5::float8 / 110.0 AND $1::float8 + $5::float8 / 110.0
@@ -57,6 +72,7 @@ base AS (
   SELECT * FROM scored s
   WHERE $5::float8 IS NULL OR s.distance_km IS NULL OR s.distance_km <= $5::float8
 ),
+-- ▲ 조건
 cab_agg AS (
   SELECT c.arcade_id, c.machine_id,
          COUNT(c.id)::int AS cabinet_count,

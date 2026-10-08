@@ -52,6 +52,9 @@ TWA 의 `assetlinks.json` 은 `public/.well-known/assetlinks.json` 에 두면 �
 ## 다음으로 붙일 만한 것
 
 - **푸시 알림** (즐겨찾기한 오락실에 대기 제보가 올라오면) — Web Push 는 Android 즉시, iOS 는 16.4+ 홈 화면 설치 상태에서만.
-  서버에 구독 저장 + VAPID 키가 필요합니다.
+  뼈대는 2026-10-08 에 **관리자 운영 알림**으로 먼저 생겼습니다 — VAPID 키(`OPS_PUSH_*`) · 구독 표
+  (`ops_push_subscriptions`) · 보내기(`lib/ops-push.ts` · web-push) · 서비스 워커의 `push` · `notificationclick`
+  (`public/sw.js` 6번) · 켜는 화면(`components/OpsAlertBell.tsx` 의 PushToggle). 일반 사용자 알림을 붙이려면
+  구독 표를 사용자용으로 따로 두고(관리자만 받는 지금 표와 섞지 않게), 보낼 때 받을 사람을 고르는 쪽을 더하면 됩니다.
 - **마지막 본 지도 오프라인 표시** — 위 "안 함" 항목.
 - **스토어 스크린샷** — 매니페스트 `screenshots` 에 넣으면 Chrome 이 더 큰 설치 UI 를 보여 줍니다.

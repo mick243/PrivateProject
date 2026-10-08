@@ -51,19 +51,26 @@ sudo -u arcade cp .env.example .env.local && sudo -u arcade nano .env.local
 | `NEXT_PUBLIC_NAVER_MAP_KEY_ID` | 빌드 시점 값 — 바꾸면 **재빌드** |
 | `NEXT_PUBLIC_OPERATOR_NAME` · `NEXT_PUBLIC_CONTACT_EMAIL` | 약관·처리방침에 찍히는 운영자 정보 (없으면 화면에 경고가 보입니다) |
 
-DB 와 첫 스키마:
+DB 와 첫 데이터 (자세한 이유와 실측은 docs/DATA-SOURCES.md):
 
 ```bash
 sudo -u postgres createuser arcade --pwprompt
 sudo -u postgres createdb -O arcade arcade_finder
-# 개발 DB 의 실데이터(오락실 939 · 채보 5,157)를 가져가는 경우:
-pg_restore -w -d "$DATABASE_URL" --no-owner dev.dump
-# 또는 빈 DB 에서 시작하는 경우 (시드의 '(가상)' 오락실 5곳이 들어갑니다 — 지우세요):
-npm run db:migrate:prisma      # 마이그레이션 89개 전부
-npm run db:views               # 뷰 2개 (앱이 뜰 때도 만들어지지만 먼저 확인하려면)
-# 덤프를 복원한 경우에는 이력을 얹어야 앱이 "미적용" 경고를 찍지 않습니다:
-npm run db:prisma:baseline
+npm run db:migrate:prisma                     # 스키마 + 기준 데이터 (마이그레이션 89개)
+npm run db:views                              # 뷰 2개 (앱이 뜰 때도 만들어지지만 먼저 확인하려면)
+npm run db:purge-demo -- --apply              # 시드가 넣은 가상 오락실 8곳 · 시드 글 30개 치우기
+# 외부 원천 데이터(오락실 · maimai/CHUNITHM 곡·채보) — 개발 장비에서 export 한 폴더를 옮겨 와서:
+#   (개발 장비)  npm run data:release -- export   → backups/data-release/<시각>/
+npm run data:release -- import <폴더> --write
+npm run data:release -- verify <폴더>          # 없음 0 · 다름 0 이어야 합니다
 ```
+
+- 예전에는 개발 DB 를 통째로 `pg_restore` 했습니다. 그러면 개발하며 만든 계정·글·투표까지 운영으로 가서 쓰지
+  않습니다 — 릴리스는 사용자 데이터를 담지 않습니다. 릴리스 폴더는 **커밋하지 마세요**(네이버 검색 결과 포함).
+- 시드의 가상 투표자 12명과 그 투표 77표는 purge-demo 뒤에도 남습니다 — 일부가 실제 서열표 배치를 떠받치고
+  있어서입니다(docs/DATA-SOURCES.md §2).
+- 백업 덤프로 **복구**하는 경우(아래 백업 절)는 그대로 `pg_restore` 입니다. 복원한 DB 에는 이력을 얹어야 앱이
+  "미적용" 경고를 찍지 않습니다: `npm run db:prisma:baseline`.
 
 빌드와 서비스 등록:
 
@@ -152,6 +159,7 @@ RPO 는 하루(백업 주기)입니다. 더 줄이려면 timer 를 `*:00/6` 같�
 - [ ] `/terms` · `/privacy` 에 자리표시자 경고가 안 보이는지
 - [ ] 히스토리에 노출됐던 키(`83fb7d6`: Gemini 키 · 지도 키 ID) 재발급 확인
 - [ ] `npm run db:purge-demo` — 시드 글·가상 오락실 확인 후 `-- --apply`
+- [ ] `npm run data:release -- verify <폴더>` — 외부 원천 데이터가 다 들어갔는지 (종료 코드 0)
 - [ ] `npm run arcades:dedupe` — 중복 오락실 확인 후 `-- --apply`
 - [ ] 복구 리허설 1회 (§4)
 - [ ] CI 초록 (`.github/workflows/ci.yml`)

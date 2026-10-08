@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { handle } from '@/lib/api-errors';
 import { clearSessionCookie, getSession, readCookie, readSessionToken } from '@/lib/auth';
 import { SESSION_COOKIE } from '@/lib/auth-types';
 
@@ -16,7 +17,7 @@ export const dynamic = 'force-dynamic';
  * 여기서 쿠키까지 치웁니다. 안 치우면 이미 죽은 쿠키를 계속 들고 다니며 요청마다
  * DB 를 한 번씩 더 보게 됩니다.
  */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const session = await getSession(request);
   if (session) return NextResponse.json({ user: session });
 
@@ -25,3 +26,5 @@ export async function GET(request: Request) {
   const res = NextResponse.json({ user: null });
   return stale ? clearSessionCookie(res) : res;
 }
+
+export const GET = handle(onGet);

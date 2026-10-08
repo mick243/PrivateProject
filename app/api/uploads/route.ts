@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { fail, handle } from '@/lib/api-errors';
 import { requirePlayer } from '@/lib/auth';
 import { createAttachment } from '@/lib/board';
 import {
@@ -30,7 +31,7 @@ export const dynamic = 'force-dynamic';
  *
  * `image` 필드명도 아직 받습니다 — 예전 화면이 그 이름으로 보냈습니다.
  */
-export async function POST(request: Request) {
+async function onPost(request: Request) {
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
 
@@ -43,27 +44,23 @@ export async function POST(request: Request) {
    */
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES + 1024 * 1024) {
-    return NextResponse.json({ error: new UploadTooLargeError().message }, { status: 413 });
+    return fail(413, new UploadTooLargeError().message);
   }
 
   let form: FormData;
   try {
     form = await request.formData();
   } catch {
-    return NextResponse.json({ error: '업로드 본문을 읽을 수 없습니다' }, { status: 400 });
+    return fail(400, '업로드 본문을 읽을 수 없습니다');
   }
 
   const file = form.get('file') ?? form.get('image');
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: 'file 이 필요합니다' }, { status: 400 });
-  }
+  if (!(file instanceof File)) return fail(400, 'file 이 필요합니다');
 
   // 본문을 버퍼로 올리기 전에 신고된 크기부터 거른다 — 제한이 50MB 인데 500MB 를
   // 메모리에 다 읽고 나서 거절하면 제한이 방어 역할을 못 한다.
   // 여기서는 가장 느슨한 상한(동영상)만 보고, 형식별 상한은 save() 가 본다.
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return NextResponse.json({ error: new UploadTooLargeError().message }, { status: 413 });
-  }
+  if (file.size > MAX_UPLOAD_BYTES) return fail(413, new UploadTooLargeError().message);
 
   const buffer = Buffer.from(await file.arrayBuffer());
 
@@ -74,12 +71,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ file: attachment, image: attachment }, { status: 201 });
   } catch (err) {
     // 형식·크기 위반은 사용자 입력 문제이므로 4xx 로 돌려준다.
-    if (err instanceof UnsupportedUploadError) {
-      return NextResponse.json({ error: err.message }, { status: 415 });
-    }
-    if (err instanceof UploadTooLargeError) {
-      return NextResponse.json({ error: err.message }, { status: 413 });
-    }
+    if (err instanceof UnsupportedUploadError) return fail(415, err.message);
+    if (err instanceof UploadTooLargeError) return fail(413, err.message);
     throw err;
   }
 }
+
+export const POST = handle(onPost);

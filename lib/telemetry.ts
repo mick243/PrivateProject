@@ -1,5 +1,3 @@
-import type { Db, Queryable } from './db';
-
 /**
  * 요청·쿼리 계측 → 30초 집계 → Pulse 로 push.
  *
@@ -75,11 +73,11 @@ type State = {
 
 /**
  * 집계 상태는 globalThis 에 둔다 — 모듈 스코프에 두면 안 되는 이유가 둘이다.
- *  1. Next 는 instrumentation.ts(스팬 프로세서·리포터)와 앱 코드(lib/db.ts 의 쿼리 래퍼)를
+ *  1. Next 는 instrumentation.ts(스팬 프로세서·리포터)와 앱 코드(lib/prisma.ts 의 계측 확장)를
  *     **다른 번들**로 만들어서 이 모듈이 두 번 평가된다. 그러면 쿼리는 A 에 쌓이고 flush 는 B 를
  *     읽어 DB 지표가 영원히 0 이다. (실제로 겪었다.)
  *  2. dev HMR 로 모듈이 다시 평가되면 창 중간의 집계가 날아간다.
- * `__db` 를 globalThis 에 두는 lib/db.ts 와 같은 이유다.
+ * `__prisma` 를 globalThis 에 두는 lib/prisma.ts 와 같은 이유다.
  */
 const globalForTelemetry = globalThis as unknown as {
   __pulseTelemetry?: State;
@@ -181,7 +179,11 @@ export function recordOperation(key: string, ms: number, ok: boolean): void {
 }
 
 /**
- * 커넥션 풀이 쪼갠 시간. lib/db.ts 의 pg 어댑터가 부른다.
+ * 커넥션 풀이 쪼갠 시간.
+ *
+ * ⚠ 지금은 **부르는 곳이 없습니다.** 부르던 옛 어댑터(lib/db.ts)는 2026-09-28 에 지웠고, Prisma
+ *   경로(lib/prisma.ts)는 연산 단위(recordOperation)만 잽니다 — 풀 대기(db.wait) 지표는 09-22
+ *   이관 때부터 비어 있습니다. 되살리려면 lib/prisma.ts 의 풀(pool.connect)을 감싸 여기로 보내세요.
  *
  * recordQuery 가 재는 전체 시간에서 이 둘을 떼어 내면 남는 것이 이벤트 루프 지연이다.
  * 풀 대기는 지문별로 나누지 않는다 — 대기는 그 쿼리의 성질이 아니라 그 순간 풀의
@@ -301,32 +303,6 @@ export function snapshot(now = Date.now()): Sample[] {
   state.db.clear();
   state.windowStart = now;
   return out;
-}
-
-/** Db 어댑터를 감싸 모든 query/exec/transaction 을 잰다. 계측이 꺼져 있으면 원본을 그대로 돌려준다. */
-export function withTelemetry(db: Db): Db {
-  if (!measuring()) return db;
-
-  const timed = async <T>(sql: string, run: () => Promise<T>): Promise<T> => {
-    const t0 = performance.now();
-    try {
-      const result = await run();
-      recordQuery(sql, performance.now() - t0, true);
-      return result;
-    } catch (err) {
-      recordQuery(sql, performance.now() - t0, false);
-      throw err;
-    }
-  };
-  const wrapQueryable = (q: Queryable): Queryable => ({
-    query: (text, params) => timed(text, () => q.query(text, params)),
-  });
-
-  return {
-    query: (text, params) => timed(text, () => db.query(text, params)),
-    exec: (sql) => timed(sql, () => db.exec(sql)),
-    transaction: (fn) => db.transaction((tx) => fn(wrapQueryable(tx))),
-  };
 }
 
 type FetchLike = typeof fetch;

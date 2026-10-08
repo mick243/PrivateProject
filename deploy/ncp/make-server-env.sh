@@ -7,6 +7,7 @@
 #   DATABASE_URL · AUTH_SECRET · ADMIN_PASSWORD · APP_URL · TRUSTED_PROXY_HOPS · DB_FALLBACK
 #   PG_CONNECT_TIMEOUT_MS · PULSE_*(로컬 계측 서버) · NODE_ENV
 #   METRICS_*(PC 의 값은 로컬 Prometheus 용 — 서버 토큰은 monitoring/install-monitoring.sh 가 서버에서 만든다)
+#   OPS_ALERT_TOKEN · OPS_PUSH_*(운영 알림 웹훅 토큰 · 웹 푸시 키 — 같은 스크립트가 서버에서 만든다)
 # server.env 에는 API 비밀이 들어간다. 커밋되지 않게 .gitignore 에 올려 두었고,
 # 서버에 올린 뒤에는 PC 쪽 사본을 지우세요.
 set -euo pipefail
@@ -16,7 +17,7 @@ SRC="${1:-$HERE/../../.env.local}"
 OUT="$HERE/server.env"
 [[ -f "$SRC" ]] || { echo "원본이 없습니다: $SRC" >&2; exit 2; }
 
-SKIP='^(DATABASE_URL|AUTH_SECRET|ADMIN_PASSWORD|APP_URL|TRUSTED_PROXY_HOPS|DB_FALLBACK|PG_CONNECT_TIMEOUT_MS|NODE_ENV|PULSE_[A-Z_]*|METRICS_[A-Z_]*)='
+SKIP='^(DATABASE_URL|AUTH_SECRET|ADMIN_PASSWORD|APP_URL|TRUSTED_PROXY_HOPS|DB_FALLBACK|PG_CONNECT_TIMEOUT_MS|NODE_ENV|PULSE_[A-Z_]*|METRICS_[A-Z_]*|OPS_ALERT_TOKEN|OPS_PUSH_[A-Z_]*)='
 umask 077
 {
   echo "# make-server-env.sh 가 $(date +%F) 에 만든 값 — install-release.sh 가 서버 .env.local 에 합친다"

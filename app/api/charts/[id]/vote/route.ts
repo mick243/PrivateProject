@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { badId, fail, forbidden, handle, parseBody, parseId } from '@/lib/api-errors';
 import { requirePlayer } from '@/lib/auth';
 import { NotClearedError, getChartDetail, getSettings, setVote } from '@/lib/tier';
-import { formatIssues } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,73 +28,46 @@ const schema = z.object({
  * 게이트가 사실상 없는 것과 같았습니다 — 그 채보를 깬 아무 번호나 적으면
  * 통과했고, 등급이 표의 평균이라 서열표 전체를 혼자 흔들 수 있었습니다.
  */
-async function save(
-  chartId: number,
-  playerId: number,
-  value: number | null,
-): Promise<NextResponse> {
+async function save(chartId: number, playerId: number, value: number | null): Promise<NextResponse> {
   try {
     await setVote(playerId, chartId, value);
   } catch (err) {
-    if (err instanceof NotClearedError) {
-      return NextResponse.json({ error: err.message }, { status: 403 });
-    }
+    if (err instanceof NotClearedError) return forbidden(err.message);
     throw err;
   }
   return NextResponse.json({ chart: await getChartDetail(chartId, playerId) });
 }
 
-function parseChartId(raw: string): number | null {
-  const id = Number(raw);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
-
 /** PUT /api/charts/:id/vote — 투표 `{value}` (같은 값을 여러 번 보내도 결과가 같습니다) */
-export async function PUT(request: Request, ctx: Ctx) {
-  const chartId = parseChartId((await ctx.params).id);
-  if (chartId === null) {
-    return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
-  }
+async function onPut(request: Request, ctx: Ctx) {
+  const chartId = parseId((await ctx.params).id);
+  if (chartId === null) return badId();
 
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
-  }
+  const body = await parseBody(request, schema);
+  if (!body.ok) return body.response;
 
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: '입력값이 올바르지 않습니다', details: formatIssues(parsed.error) },
-      { status: 400 },
-    );
-  }
-
-  const { value } = parsed.data;
+  const { value } = body.value;
   const { voteMin, voteMax } = await getSettings();
   if (value < voteMin || value > voteMax) {
-    return NextResponse.json(
-      { error: `투표값은 ${voteMin} ~ ${voteMax} 사이여야 합니다` },
-      { status: 400 },
-    );
+    return fail(400, `투표값은 ${voteMin} ~ ${voteMax} 사이여야 합니다`);
   }
 
   return save(chartId, guard.playerId, value);
 }
 
 /** DELETE /api/charts/:id/vote — 투표 취소 (본문 없음) */
-export async function DELETE(request: Request, ctx: Ctx) {
-  const chartId = parseChartId((await ctx.params).id);
-  if (chartId === null) {
-    return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
-  }
+async function onDelete(request: Request, ctx: Ctx) {
+  const chartId = parseId((await ctx.params).id);
+  if (chartId === null) return badId();
 
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
 
   return save(chartId, guard.playerId, null);
 }
+
+export const PUT = handle(onPut);
+export const DELETE = handle(onDelete);

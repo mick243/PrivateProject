@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { handle } from '@/lib/api-errors';
 import { appUrl } from '@/lib/app-url';
 import { safeNext } from '@/lib/auth-types';
 import {
@@ -27,7 +28,7 @@ type Ctx = { params: Promise<{ provider: string }> };
  * 여기서 하는 일은 state 쿠키 한 장을 심고 제공자로 보내는 것뿐입니다.
  * 실패하면 제공자 쪽 영문 에러 대신 `/login?error=…` 로 돌려보냅니다.
  */
-export async function GET(request: Request, ctx: Ctx) {
+async function onGet(request: Request, ctx: Ctx) {
   const { provider } = await ctx.params;
   const next = safeNext(new URL(request.url).searchParams.get('next'));
 
@@ -66,3 +67,10 @@ export async function GET(request: Request, ctx: Ctx) {
   });
   return res;
 }
+
+/**
+ * 이 라우트는 JSON 이 아니라 **리다이렉트**로 답합니다 — 실패도 `/login?error=…` 로 돌려보냅니다.
+ * handle() 은 그 흐름을 건드리지 않고(Next 의 redirect 신호는 그대로 통과), 위에서 예상하지
+ * 못한 예외만 빈 500 대신 JSON 500 으로 바꿉니다.
+ */
+export const GET = handle(onGet);

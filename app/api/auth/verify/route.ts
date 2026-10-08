@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { handle } from '@/lib/api-errors';
 import { appUrl } from '@/lib/app-url';
 import { consumeVerification } from '@/lib/email-verify';
 
@@ -17,7 +18,7 @@ export const dynamic = 'force-dynamic';
  * 보통이고, 그 링크를 여는 사람이 그 메일함의 주인이라는 것 자체가 증명입니다.
  * 로그인을 요구하면 확인하러 온 사람에게 로그인 화면을 먼저 들이밀게 됩니다.
  */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const token = new URL(request.url).searchParams.get('token');
 
   const status = token ? await consumeVerification(token) : 'invalid';
@@ -26,3 +27,5 @@ export async function GET(request: Request) {
   // 이미 써 버린 1회용 값이지만, 남길 이유도 없습니다.
   return NextResponse.redirect(appUrl(request, `/verify-email?status=${status}`));
 }
+
+export const GET = handle(onGet);

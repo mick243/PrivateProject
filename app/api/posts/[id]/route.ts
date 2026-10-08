@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { json } from '@/lib/http';
-import { badId, badJson, handle, invalid, notFound, parseId } from '@/lib/api-errors';
+import { badId, fail, forbidden, handle, notFound, parseBody, parseId } from '@/lib/api-errors';
 import { isAdminRequest, requirePlayer, sessionPlayerId } from '@/lib/auth';
 import { deletePost, deletePostAsAdmin, getPost, updatePost } from '@/lib/board';
 import { isForeignKeyViolation } from '@/lib/pg-errors';
@@ -14,8 +14,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 const NOT_FOUND = () => notFound('글을 찾을 수 없습니다');
 /** 남의 글을 고치거나 지우려는 경우. 존재 여부는 알려주되 권한은 막는다. */
-const NOT_MINE = () =>
-  NextResponse.json({ error: '본인이 쓴 글만 수정·삭제할 수 있습니다' }, { status: 403 });
+const NOT_MINE = () => forbidden('본인이 쓴 글만 수정·삭제할 수 있습니다');
 
 /**
  * GET /api/posts/:id?view=1&commentOffset=10
@@ -49,38 +48,26 @@ async function onPut(request: Request, ctx: Ctx) {
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return badJson();
-  }
-
-  const parsed = postInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return invalid(parsed.error);
-  }
+  const body = await parseBody(request, postInputSchema);
+  if (!body.ok) return body.response;
 
   const existing = await getPost(id, null);
   if (!existing) return NOT_FOUND();
 
   // 일반 글로 올린 뒤 말머리만 공지로 바꾸는 길도 같이 막는다 (../notice-guard.ts)
-  const denied = await noticeGuard(request, parsed.data);
+  const denied = await noticeGuard(request, body.value);
   if (denied) return denied;
 
   try {
     const updated = await updatePost(id, guard.playerId, {
-      ...parsed.data,
+      ...body.value,
       playerId: guard.playerId,
     });
     if (!updated) return NOT_MINE();
     return NextResponse.json({ post: await getPost(id, guard.playerId) });
   } catch (err) {
     if (isForeignKeyViolation(err)) {
-      return NextResponse.json(
-        { error: '말머리 또는 게임을 다시 확인해 주세요' },
-        { status: 400 },
-      );
+      return fail(400, '말머리 또는 게임을 다시 확인해 주세요');
     }
     throw err;
   }

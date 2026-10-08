@@ -164,11 +164,14 @@ describe('쌓이는 값 — DB', () => {
     expect(valueOf(rows, { state: 'max' })).toBe(10);
   });
 
-  it('Pulse 가 꺼져 있어도 Db 어댑터를 감싼다 — Prometheus 만으로도 잰다', () => {
+  // 예전에는 옛 어댑터(lib/db.ts)를 감싸는 withTelemetry(db) 를 여기서 봤습니다. 어댑터는 scripts 를
+  // Prisma 로 옮기며 지웠고(2026-09-28 · main 반영 10-08), 원시 SQL 문자열이 남는 기록 지점은 recordQuery 하나입니다.
+  it('Pulse 가 꺼져 있어도 원시 SQL 쿼리를 잰다 — Prometheus 만으로도 잰다', async () => {
     prom.promMetrics();
-    const fake = { query: async () => ({ rows: [] }), exec: async () => {}, transaction: async () => undefined };
     expect(t.enabled()).toBe(false);
-    expect(t.withTelemetry(fake as never)).not.toBe(fake);
+    t.recordQuery('SELECT * FROM arcades WHERE id = $1', 5, true);
+    const rows = await series('arcade_db_operation_duration_seconds_count');
+    expect(rows.reduce((sum, r) => sum + r.value, 0)).toBe(1);
   });
 });
 

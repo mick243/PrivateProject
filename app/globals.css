@@ -4712,6 +4712,264 @@ a.btn {
   margin-bottom: env(safe-area-inset-bottom);
 }
 
+/* ══ 운영 알림 (관리자만) ═════════════════════════════════
+   components/OpsAlertBell.tsx — Grafana 알림의 요약 목록과 기기 알림.
+
+   자리: 챗봇 단추(오른쪽 아래 52px) 바로 왼쪽. 왼쪽 아래는 지도의 내 위치 · 반경 단추가,
+   아래 가운데는 이동 막대(.histbar)가 차 있습니다. 좁은 화면(≤520)에서는 왼쪽에 둘 폭이 없어
+   (320px 에서 막대 90~230 · 챗봇 248~300) 챗봇 단추 **위**로 올립니다.
+   색: 챗봇 단추가 먹색이라 이쪽은 패널색 + 선으로 한 단 낮춥니다 — 손님이 쓰는 단추가 먼저 보이게. */
+.ops-fab {
+  position: fixed;
+  right: 84px;
+  bottom: 24px;
+  z-index: 60;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: 0 4px 16px var(--shadow);
+  margin-bottom: env(safe-area-inset-bottom);
+}
+.ops-fab:hover {
+  background-image: linear-gradient(var(--overlay), var(--overlay));
+}
+.ops-fab.is-open {
+  background: var(--panel-2);
+}
+/* 지금 울리는 알림이 있으면 읽은 뒤에도 테두리로 남깁니다 — 배지는 "새 소식", 테두리는 "진행 중" */
+.ops-fab.is-firing {
+  border-color: var(--danger);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--danger) 30%, transparent),
+    0 4px 16px var(--shadow);
+}
+.ops-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--danger);
+  color: var(--on-accent-2);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+/* 새 소식이 풀림뿐이면 빨갛게 재촉하지 않습니다 */
+.ops-badge.is-quiet {
+  background: var(--muted);
+}
+
+.ops-panel {
+  position: fixed;
+  right: 20px;
+  bottom: 84px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: 380px;
+  max-width: calc(100vw - 40px);
+  height: 560px;
+  max-height: calc(100vh - 140px);
+  max-height: calc(100dvh - 140px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: 0 8px 32px var(--shadow-strong);
+  overflow: hidden;
+}
+/* 같은 자리를 쓰는 챗봇 창은 이 패널이 열린 동안만 가립니다 — 대화는 그대로 남습니다 */
+body:has(.ops-panel) .chat-panel {
+  display: none;
+}
+.ops-head,
+.ops-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  font-size: var(--t3);
+}
+.ops-head {
+  border-bottom: 1px solid var(--line);
+}
+.ops-foot {
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+}
+.ops-push,
+.ops-test {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ops-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+}
+.ops-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--t3);
+}
+.ops-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ops-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+}
+.ops-item.is-firing {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+}
+.ops-item.is-new {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+.ops-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t2);
+  color: var(--muted);
+}
+.ops-item-head time {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.ops-status {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--r-xs);
+  background: var(--panel-2);
+  color: var(--text);
+  font-weight: 600;
+}
+.ops-status.is-firing {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--text-danger);
+}
+.ops-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops-headline {
+  margin: 0;
+  font-size: var(--t4);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.ops-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--t2);
+}
+.ops-detail {
+  font-size: var(--t3);
+}
+.ops-detail summary {
+  cursor: pointer;
+  color: var(--text-accent);
+  font-size: var(--t2);
+  font-weight: 600;
+}
+.ops-detail[open] summary {
+  margin-bottom: 6px;
+}
+.ops-impact {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+.ops-sub {
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font-size: var(--t2);
+  font-weight: 600;
+}
+.ops-causes,
+.ops-checks {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.5;
+}
+.ops-checks li + li,
+.ops-causes li + li {
+  margin-top: 4px;
+}
+.ops-cmd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.ops-cmd code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: var(--r-xs);
+  background: var(--sunken);
+  font-size: var(--t2);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.ops-link {
+  align-self: flex-start;
+  color: var(--text-accent);
+  font-size: var(--t2);
+}
+
+/* 상세가 화면 아래 절반을 덮는 동안은 챗봇 단추처럼 숨깁니다 (챗봇 단추가 상세를 가리지 않게 절과 같은 이유) */
+@media (max-width: 860px) {
+  body:has(.layout.has-detail) .ops-fab {
+    display: none;
+  }
+}
+@media (max-width: 520px) {
+  /* 챗봇 단추(오른쪽 14 · 아래 14 · 52px) 바로 위, 가운데를 맞춰서 */
+  .ops-fab {
+    right: 18px;
+    bottom: 76px;
+  }
+  /* 챗봇 창과 같은 크기 · 자리이되 종 단추가 보이게 그 위에서 시작합니다. z-index 는 하단 고정 줄보다 위 */
+  .ops-panel {
+    z-index: 70;
+    right: 10px;
+    left: 10px;
+    bottom: calc(130px + env(safe-area-inset-bottom));
+    width: auto;
+    max-width: none;
+    height: max(60dvh, 320px);
+    max-height: calc(100dvh - 190px);
+  }
+}
+
 /* ── 챗봇 로그인 안내 (ChatBot chat-gate) ──────────────────────────────
    입력창 바로 위 — 다 쓰고 보낸 뒤가 아니라 쓰기 전에 보여야 한다. */
 .chat-gate {

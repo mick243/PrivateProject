@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { PrismaPg } from '@prisma/adapter-pg';
-// 확장자를 붙입니다 — scripts/ 의 .ts 도구가 번들러 없이 Node 로 직접 돌릴 수 있게 (lib/db.ts 와 같은 사정).
+// 확장자를 붙입니다 — scripts/ 의 .ts 도구가 번들러 없이 Node 로 이 파일을 직접 import 합니다.
 import { Prisma, PrismaClient } from './generated/prisma/client.ts';
 import { fingerprint, recordOperation } from './telemetry.ts';
 
@@ -17,8 +17,11 @@ import { fingerprint, recordOperation } from './telemetry.ts';
  * 어느 쪽이든 **TS 코드 안에 SQL 문자열은 없습니다.** 무엇을 어느 쪽으로 보냈고 왜인지는
  * docs/PRISMA-MIGRATION.md §6.
  *
- * `lib/db.ts`(node-postgres 직결 · PGlite 폴백 · 기동 시 마이그레이션)는 **scripts/ 전용**으로
- * 남았습니다. 앱은 더 이상 그 파일을 import 하지 않습니다.
+ * scripts/ 의 .ts 도구(오락실·채보 수입, 좌표 갱신, 데이터 릴리스)도 2026-09-28 부터 이 파일을
+ * 씁니다. 그 전까지 도구들이 쓰던 `lib/db.ts`(node-postgres 직결 · PGlite 폴백 · 기동 시
+ * 마이그레이션)는 쓰는 곳이 없어져 지웠습니다(main 반영 2026-10-08). 원시 SQL 이 남은 곳은
+ * 스키마를 다루는 러너(migrate.mjs · init-db.mjs · prisma-baseline.mjs)와 `.mjs` 관리 도구들입니다 —
+ * 목록과 이유는 docs/DATA-SOURCES.md §5.
  *
  * ⚠ 이 경로에는 **PGlite 폴백이 없습니다.** Prisma 7 의 공식 드라이버 어댑터에 PGlite 용이
  *   없습니다 — DATABASE_URL 이 필수이고, PostgreSQL 에 못 붙으면 그 자리에서 실패합니다.
@@ -75,8 +78,20 @@ export const TX_OPTIONS = {
 } as const;
 
 /**
- * 마이그레이션·뷰 적용 잠금 키. `lib/db.ts`·`scripts/migrate.mjs` 와 **같은 값**이어야
- * 합니다 — 옛 경로의 스크립트와 이 경로의 서버가 같은 순간에 떠도 서로 기다리게.
+ * scripts/ 의 일괄 작업(오락실·채보 수입, 병합, 좌표 갱신, 데이터 릴리스)용 제한 시간.
+ *
+ * TX_OPTIONS 의 15초는 요청 하나를 기준으로 잡은 값입니다. 채보 6,000개를 한 트랜잭션에
+ * 넣는 도구에는 짧습니다 — 옛 경로(node-postgres 직결)에는 제한이 아예 없었습니다.
+ * 도구는 사람이 지켜보며 돌리므로 10분으로 둡니다. 앱 코드에서는 쓰지 마세요.
+ */
+export const BULK_TX_OPTIONS = {
+  timeout: Number(process.env.PRISMA_BULK_TX_TIMEOUT_MS) || 600_000,
+  maxWait: Number(process.env.PRISMA_TX_MAX_WAIT_MS) || 5_000,
+} as const;
+
+/**
+ * 마이그레이션·뷰 적용 잠금 키. `scripts/db-files.mjs`(→ migrate.mjs · init-db.mjs)와
+ * **같은 값**이어야 합니다 — 옛 러너와 이 경로의 서버가 같은 순간에 떠도 서로 기다리게.
  */
 const MIGRATION_LOCK_KEY = 72_028_531;
 
@@ -98,7 +113,7 @@ async function createPool(connectionString: string): Promise<import('pg').Pool> 
   const { default: pg } = await import('pg');
   const max = Number(process.env.PG_POOL_MAX) || 30;
   const pool = new pg.Pool({ connectionString, max, options: '-c timezone=UTC' });
-  // 유휴 커넥션 오류를 받아 주지 않으면 프로세스가 죽습니다 (lib/db.ts 와 같은 이유).
+  // 유휴 커넥션 오류를 받아 주지 않으면 프로세스가 죽습니다 (pg.Pool 은 'error' 를 그대로 던집니다).
   pool.on('error', (err) => console.error('[prisma] 유휴 커넥션 오류 —', err.message));
   return pool;
 }
@@ -114,11 +129,27 @@ export function migrationNames(): readonly string[] {
     .sort();
 }
 
+/** prisma/migrations 중 이 DB 에 아직 적용되지 않은 것. `_prisma_migrations` 가 없으면(베이스라인 전) 전부 */
+async function listPending(pool: import('pg').Pool): Promise<string[]> {
+  const expected = migrationNames();
+  if (!expected.length) return [];
+  let applied = new Set<string>();
+  try {
+    const { rows } = await pool.query<{ migration_name: string }>(
+      `SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`,
+    );
+    applied = new Set(rows.map((r) => r.migration_name));
+  } catch {
+    // 테이블 자체가 없으면 베이스라인 전입니다 — 전부 미적용으로 봅니다.
+  }
+  return expected.filter((name) => !applied.has(name));
+}
+
 /**
  * 기동 점검 두 가지. 실패하면 클라이언트를 돌려주지 않습니다.
  *
  * 1. **마이그레이션은 적용하지 않고 경고만** — 적용은 배포 단계의 `prisma migrate deploy` 가
- *    합니다. 옛 경로는 서버가 뜨면서 빠진 것을 직접 넣었지만(lib/db.ts applySchema), Prisma 의
+ *    합니다. 옛 경로는 서버가 뜨면서 빠진 것을 직접 넣었지만(지금은 지운 lib/db.ts), Prisma 의
  *    설계는 "배포가 먼저, 기동은 그다음" 입니다. 조용히 도는 것이 제일 나쁘므로 시끄럽게 찍습니다.
  * 2. **뷰는 기동마다 다시 만듭니다** — 마이그레이션이 아니라서(scripts/prisma-migrations-build.mjs
  *    의 ORDERED_FILES 주석) 옛 경로와 같은 방식으로 `db/views.sql` 을 적용합니다. 데이터가 없는
@@ -126,25 +157,13 @@ export function migrationNames(): readonly string[] {
  *    한 번에 하나만 들어갑니다.
  */
 async function bootChecks(pool: import('pg').Pool): Promise<void> {
-  const expected = migrationNames();
-  if (expected.length) {
-    let applied = new Set<string>();
-    try {
-      const { rows } = await pool.query<{ migration_name: string }>(
-        `SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`,
-      );
-      applied = new Set(rows.map((r) => r.migration_name));
-    } catch {
-      // 테이블 자체가 없으면 베이스라인 전입니다 — 전부 미적용으로 봅니다.
-    }
-    const pending = expected.filter((name) => !applied.has(name));
-    if (pending.length) {
-      console.warn(
-        `[prisma] 마이그레이션 ${pending.length}개가 적용되지 않았습니다 — 첫 번째: ${pending[0]}\n` +
-          `         기동하면서 적용하지 않습니다. \`npm run db:prisma:baseline\`(기존 DB) 또는 ` +
-          `\`npm run db:migrate:prisma\` 를 먼저 돌리세요.`,
-      );
-    }
+  const pending = await listPending(pool);
+  if (pending.length) {
+    console.warn(
+      `[prisma] 마이그레이션 ${pending.length}개가 적용되지 않았습니다 — 첫 번째: ${pending[0]}\n` +
+        `         기동하면서 적용하지 않습니다. \`npm run db:prisma:baseline\`(기존 DB) 또는 ` +
+        `\`npm run db:migrate:prisma\` 를 먼저 돌리세요.`,
+    );
   }
 
   const views = fs.readFileSync(path.join(process.cwd(), 'db', 'views.sql'), 'utf8');
@@ -191,6 +210,16 @@ export function getPrismaClient(): Promise<AppPrismaClient> {
     throw err;
   });
   return globalForPrisma.__prisma;
+}
+
+/**
+ * 붙어 있는 DB 에 아직 적용되지 않은 마이그레이션 (기동 경고와 같은 계산).
+ * 데이터를 넣는 도구(scripts/data-release.ts)가 "스키마가 이 저장소와 같은가" 를 먼저 봅니다 —
+ * 새 컬럼이 없는 DB 에 넣으면 도중에 실패하거나, 더 나쁘게는 절반만 들어갑니다.
+ */
+export async function pendingMigrations(): Promise<string[]> {
+  await getPrismaClient();
+  return listPending(globalForPrisma.__prismaPool!);
 }
 
 /**

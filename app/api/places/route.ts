@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { fail, handle, unavailable } from '@/lib/api-errors';
 import { NaverLocalError, searchLocal } from '@/lib/naver-local';
 import { isPlaceQuery, pickPlace } from '@/lib/place-search';
 
@@ -16,11 +17,9 @@ export const dynamic = 'force-dynamic';
  * 키를 서버에만 두려고 라우트로 감쌉니다 — searchLocal 의 자격증명은
  * NAVER_HUB_API_KEY_* 환경변수라 클라이언트에서 직접 부를 수 없습니다.
  */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const q = new URL(request.url).searchParams.get('q') ?? '';
-  if (!isPlaceQuery(q)) {
-    return NextResponse.json({ error: '검색어는 2~60자여야 합니다' }, { status: 400 });
-  }
+  if (!isPlaceQuery(q)) return fail(400, '검색어는 2~60자여야 합니다');
 
   try {
     const items = await searchLocal(q.trim(), { display: 5 });
@@ -28,9 +27,11 @@ export async function GET(request: Request) {
   } catch (err) {
     if (err instanceof NaverLocalError && err.status === 0) {
       // 자격증명 미설정 — 배포 환경 문제지 사용자의 검색어 문제가 아닙니다.
-      return NextResponse.json({ error: '지역 검색이 설정되지 않았습니다' }, { status: 503 });
+      return unavailable('지역 검색이 설정되지 않았습니다');
     }
     console.error('[places] 지역 검색 실패', err);
-    return NextResponse.json({ error: '지역 검색에 실패했습니다' }, { status: 502 });
+    return fail(502, '지역 검색에 실패했습니다');
   }
 }
+
+export const GET = handle(onGet);

@@ -8,6 +8,7 @@ import {
   POSTS_PAGE_SIZE,
 } from './board-types';
 import { CHART_TAGS, REPORT_COMMENT_MAX } from './community-types';
+import { isKnownPushEndpoint } from './ops-alert-input';
 import { normalizeDoc, toPlainText } from './rich-text';
 
 /**
@@ -500,3 +501,46 @@ export function parseListQuery(searchParams: URLSearchParams) {
     radiusKm: num('radius'),
   };
 }
+
+// ─── 운영 알림 (Grafana 웹훅 · 관리자 푸시 구독) ──────────────────
+/**
+ * Grafana 알림 웹훅 본문 중 우리가 쓰는 것만. 나머지 칸(receiver · groupKey · message 등)은 버립니다.
+ *
+ * 여기서 길이를 막는 이유는 토큰이 있어도 본문을 그대로 믿지 않기 위해서입니다 — 이 값들이
+ * 표에 저장되고 Gemini 요청에 실립니다(lib/ops-alert-input.ts 가 한 번 더 줄입니다).
+ * 라벨 · 설명은 키 수가 아니라 값의 길이만 여기서 봅니다. 수는 정규화할 때 자릅니다.
+ */
+const grafanaAlertSchema = z.object({
+  status: z.enum(['firing', 'resolved']),
+  labels: z.record(z.string().max(200), z.string().max(2000)).default({}),
+  annotations: z.record(z.string().max(200), z.string().max(4000)).default({}),
+  startsAt: z.string().min(1).max(64),
+  endsAt: z.string().max(64).optional(),
+  generatorURL: z.string().max(2000).optional(),
+  fingerprint: z.string().trim().min(1).max(200),
+  // 규칙이 평가한 값 — 데이터 소스 관리 규칙이나 시험 알림에는 없습니다
+  values: z.record(z.string().max(100), z.number().nullable()).nullable().optional(),
+});
+
+export const grafanaWebhookSchema = z.object({
+  alerts: z.array(grafanaAlertSchema).min(1, '알림이 없습니다').max(100, '알림이 너무 많습니다'),
+});
+export type GrafanaWebhook = z.output<typeof grafanaWebhookSchema>;
+export type GrafanaAlert = GrafanaWebhook['alerts'][number];
+
+/**
+ * 브라우저가 준 푸시 구독(`PushSubscription.toJSON()`). 주소는 알려진 브라우저 푸시 서버만 —
+ * 다른 주소를 받으면 우리 서버가 그 주소로 요청을 보내는 통로가 됩니다 (isKnownPushEndpoint).
+ */
+export const pushSubscriptionSchema = z.object({
+  endpoint: z
+    .string()
+    .trim()
+    .max(1000)
+    .refine(isKnownPushEndpoint, { message: '브라우저 푸시 서버의 주소가 아닙니다' }),
+  keys: z.object({
+    p256dh: z.string().trim().min(1).max(200),
+    auth: z.string().trim().min(1).max(100),
+  }),
+});
+export type PushSubscriptionInput = z.output<typeof pushSubscriptionSchema>;

@@ -1,3 +1,4 @@
+import { handle } from '@/lib/api-errors';
 import { json, REFERENCE_CACHE } from '@/lib/http';
 import { listMachines } from '@/lib/arcades';
 
@@ -9,7 +10,9 @@ export const dynamic = 'force-dynamic';
  *
  * 마이그레이션으로만 바뀌는 값이라 캐시합니다. 세션에 따라 달라지는 것이 없습니다.
  */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const machines = await listMachines();
   return json(request, { machines }, { headers: { 'Cache-Control': REFERENCE_CACHE } });
 }
+
+export const GET = handle(onGet);

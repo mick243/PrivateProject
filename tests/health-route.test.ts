@@ -19,13 +19,16 @@ vi.mock('@/lib/prisma', () => ({
 
 const { GET } = await import('@/app/api/health/route');
 
+/** 라우트는 handle() 로 감싸여 있어 Next 가 넘기는 것처럼 Request 를 받습니다 */
+const probe = () => GET(new Request('http://localhost/api/health'));
+
 beforeEach(() => {
   pingImpl = async () => [{ ok: 1 }];
 });
 
 describe('GET /api/health', () => {
   it('DB 응답 정상 → 200 healthy, 두 체크 모두 ok', async () => {
-    const res = await GET();
+    const res = await probe();
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.status).toBe('healthy');
@@ -37,7 +40,7 @@ describe('GET /api/health', () => {
     pingImpl = async () => {
       throw new Error('connect ECONNREFUSED 127.0.0.1:5432');
     };
-    const res = await GET();
+    const res = await probe();
     const body = await res.json();
     expect(res.status).toBe(503);
     expect(body.status).toBe('unhealthy');
@@ -52,18 +55,18 @@ describe('GET /api/health', () => {
       .mockImplementationOnce(async () => {
         throw new Error('DATABASE_URL 이 없습니다');
       });
-    const res = await GET();
+    const res = await probe();
     expect(res.status).toBe(503);
     expect((await res.json()).status).toBe('unhealthy');
   });
 
   it('상태 응답은 캐시되면 안 된다', async () => {
-    const res = await GET();
+    const res = await probe();
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
   it('checks 값은 ok | fail 뿐이다 — 프로브가 1/0 지표로 바꾸는 규약', async () => {
-    const body = await (await GET()).json();
+    const body = await (await probe()).json();
     for (const v of Object.values(body.checks)) expect(['ok', 'fail']).toContain(v);
   });
 });

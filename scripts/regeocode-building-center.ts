@@ -21,11 +21,10 @@
  *   엉뚱한 옆 건물로 스냅될 위험이 지오코딩보다 더 크기 때문입니다.
  */
 
-import { getDb } from '../lib/db.ts';
+import { BULK_TX_OPTIONS, getPrismaClient } from '../lib/prisma.ts';
 import { getBuildingCentroid, VWorldError } from '../lib/vworld-building.ts';
 import { distanceKm, formatDistance } from '../lib/geo.ts';
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 
 const root = process.cwd();
@@ -58,33 +57,13 @@ function fail(msg: string): never {
 if (!Number.isFinite(threshold) || threshold < 0) fail('--threshold 는 0 이상의 숫자(km)여야 합니다');
 if (!Number.isFinite(limit) || limit < 0) fail('--limit 은 0 이상의 숫자여야 합니다');
 
-function portInUse(port: number, timeoutMs = 800): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = net.connect({ host: '127.0.0.1', port });
-    const done = (v: boolean) => {
-      sock.destroy();
-      resolve(v);
-    };
-    sock.setTimeout(timeoutMs, () => done(false));
-    sock.once('connect', () => done(true));
-    sock.once('error', () => done(false));
-  });
-}
-
-if (write && !process.env.DATABASE_URL && (await portInUse(3000))) {
-  fail(
-    [
-      '포트 3000 에 무언가(아마도 next dev) 떠 있습니다. 먼저 멈춰 주세요.',
-      '  기본 DB(PGlite)는 한 프로세스만 데이터 디렉터리를 열 수 있어, 켜둔 채로',
-      '  쓰면 결과가 화면에 반영되지 않고 데이터가 깨질 수 있습니다.',
-    ].join('\n'),
-  );
-}
-
-const db = await getDb();
-const { rows: arcades } = await db.query<{ id: number; name: string; address: string; lat: number; lng: number }>(
-  `SELECT id, name, address, lat, lng FROM arcades WHERE source = 'naver' ORDER BY id`,
-);
+// DATABASE_URL 이 없으면 여기서 멈춥니다 (lib/prisma.ts — PGlite 로 내려가지 않습니다).
+const prisma = await getPrismaClient();
+const arcades = await prisma.arcades.findMany({
+  where: { source: 'naver' },
+  orderBy: { id: 'asc' },
+  select: { id: true, name: true, address: true, lat: true, lng: true },
+});
 
 console.log(`대상 ${arcades.length}곳 (source='naver') · threshold ${formatDistance(threshold)} · 호출 상한 ${limit}`);
 if (!write) console.log('미리보기입니다 — 반영하려면 --write 를 붙이세요.\n');
@@ -173,15 +152,14 @@ if (!changes.length) {
   process.exit(0);
 }
 
-await db.transaction(async (tx) => {
+await prisma.$transaction(async (tx) => {
   for (const c of changes) {
-    await tx.query(`UPDATE arcades SET lat = $2, lng = $3, updated_at = now() WHERE id = $1`, [
-      c.id,
-      c.to.lat,
-      c.to.lng,
-    ]);
+    await tx.arcades.update({
+      where: { id: c.id },
+      data: { lat: c.to.lat, lng: c.to.lng, updated_at: new Date() },
+    });
   }
-});
+}, BULK_TX_OPTIONS);
 
 console.log(`\n반영 완료 — ${changes.length}곳 좌표 갱신\n`);
 process.exit(0);

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { json } from '@/lib/http';
 import { requirePlayer, sessionPlayerId } from '@/lib/auth';
-import { badJson, handle, invalid } from '@/lib/api-errors';
+import { fail, handle, parseBody } from '@/lib/api-errors';
 import { createPost, getPost, listPosts } from '@/lib/board';
 import { isForeignKeyViolation } from '@/lib/pg-errors';
 import { parsePostQuery, postInputSchema } from '@/lib/validation';
@@ -38,34 +38,22 @@ async function onPost(request: Request) {
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return badJson();
-  }
-
-  const parsed = postInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return invalid(parsed.error);
-  }
+  const body = await parseBody(request, postInputSchema);
+  if (!body.ok) return body.response;
 
   // 공지 말머리는 관리자만 (세션 쿠키로 판정 — ./notice-guard.ts)
-  const denied = await noticeGuard(request, parsed.data);
+  const denied = await noticeGuard(request, body.value);
   if (denied) return denied;
 
   try {
-    const id = await createPost({ ...parsed.data, playerId: guard.playerId });
+    const id = await createPost({ ...body.value, playerId: guard.playerId });
     const post = await getPost(id, guard.playerId);
     return NextResponse.json({ post }, { status: 201 });
   } catch (err) {
     // 없는 말머리(board_categories FK) 나 없는 기종/플레이어. 값 검증은 DB 가
     // 하고 있으므로, 위반을 500 이 아니라 400 으로 바꿔 준다.
     if (isForeignKeyViolation(err)) {
-      return NextResponse.json(
-        { error: '말머리 또는 게임을 다시 확인해 주세요' },
-        { status: 400 },
-      );
+      return fail(400, '말머리 또는 게임을 다시 확인해 주세요');
     }
     throw err;
   }

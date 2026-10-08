@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { json } from '@/lib/http';
-import { badJson, handle, invalid } from '@/lib/api-errors';
+import { handle, parseBody } from '@/lib/api-errors';
 import { createArcade, listArcades } from '@/lib/arcades';
 import { requireAdmin } from '@/lib/auth';
 import { arcadeInputSchema, parseListQuery } from '@/lib/validation';
@@ -32,19 +32,10 @@ async function onPost(request: Request) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return badJson();
-  }
+  const body = await parseBody(request, arcadeInputSchema);
+  if (!body.ok) return body.response;
 
-  const parsed = arcadeInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return invalid(parsed.error);
-  }
-
-  const arcade = await createArcade(parsed.data);
+  const arcade = await createArcade(body.value);
   return NextResponse.json({ arcade }, { status: 201 });
 }
 

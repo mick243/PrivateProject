@@ -37,8 +37,13 @@ export const REVIEW_SUMMARY_KEYS: { key: keyof ReviewSummary; label: string }[] 
 /** GET /api/arcades/:id/reviews/summary 가 돌려주는 모양 */
 export interface ReviewSummaryView {
   summary: ReviewSummary;
-  /** 이 요약이 근거로 삼은 리뷰 수 — 화면에 "후기 N개 기준" 으로 찍힙니다 */
+  /** 요약을 만들 때 그 오락실의 리뷰 수 — 저장된 요약이 낡았는지 이 수로 봅니다 */
   reviewCount: number;
+  /**
+   * 모델이 실제로 읽은 리뷰 수 (최근 것부터). reviewCount 보다 작으면 **최근 일부만** 읽은
+   * 요약입니다 — 상한은 아래 REVIEW_SUMMARY_MAX_*. 2026-09-28 이전에 저장된 요약은 null.
+   */
+  basedOn: number | null;
   /** 별점 평균은 모델이 아니라 SQL 이 냅니다 (arcades.rating_avg) */
   ratingAvg: number | null;
   createdAt: string;
@@ -63,6 +68,61 @@ export type PreparedPart =
 
 /** 한 리뷰에서 그림으로 보낼 이모티콘 상한. 같은 그림을 열 번 붙인 리뷰가 있습니다 */
 export const EMOTICON_IMAGES_PER_REVIEW = 3;
+
+// ─── 요청 하나의 분량 상한 (2026-09-28) ──────────────────────
+//
+// 목표 규모 DB 에 리뷰 300개(그중 이모티콘만 40개)인 오락실을 만들어 요약 요청을 쟀더니
+// **27.8MB** 였습니다 — 글 9만 자에, 같은 이모티콘 그림 두 장(913KB · 118KB)을 리뷰마다 다시
+// 붙여 base64 로 2,750만 자. Gemini 의 인라인 요청 한도(20MB)를 넘어 그 오락실은 요약이 영영
+// 실패합니다. 상한은 셋입니다: 최근 리뷰 수, 글자 수, 그림 수 — 같은 그림은 한 번만.
+
+/** 요약에 싣는 리뷰 수 상한 — 최근 것부터 */
+export const REVIEW_SUMMARY_MAX_REVIEWS = 60;
+/** 요약에 싣는 리뷰 본문의 글자 상한 (첫 리뷰는 길어도 넣습니다) */
+export const REVIEW_SUMMARY_CHAR_BUDGET = 15_000;
+/** 요약에 붙이는 이모티콘 그림 수 상한 (서로 다른 그림 기준) */
+export const REVIEW_SUMMARY_MAX_IMAGES = 4;
+
+/** 최근 것부터 상한 안에서 고릅니다. reviews 는 최근순이어야 합니다 (lib/reviews.ts listReviews) */
+export function selectReviewsForSummary<T extends SummaryReviewInput>(
+  reviews: readonly T[],
+  opts: { maxReviews?: number; maxChars?: number } = {},
+): T[] {
+  const maxReviews = opts.maxReviews ?? REVIEW_SUMMARY_MAX_REVIEWS;
+  const maxChars = opts.maxChars ?? REVIEW_SUMMARY_CHAR_BUDGET;
+  const out: T[] = [];
+  let chars = 0;
+  for (const r of reviews) {
+    if (out.length >= maxReviews) break;
+    const len = (r.body ?? '').length;
+    if (out.length > 0 && chars + len > maxChars) break;
+    out.push(r);
+    chars += len;
+  }
+  return out;
+}
+
+/**
+ * 그림 조각을 **서로 다른 그림 maxImages 장**까지만 남깁니다. 이미 보낸 그림을 다시 쓴 리뷰와
+ * 상한을 넘은 그림은 이름 한 줄로 바꿉니다 — 모델은 앞에서 본 그림을 이름으로 알아봅니다.
+ */
+export function limitImages(parts: readonly PreparedPart[], maxImages = REVIEW_SUMMARY_MAX_IMAGES): PreparedPart[] {
+  const sent = new Set<number>();
+  return parts.map((p) => {
+    if (p.kind !== 'emoticon-image') return p;
+    if (sent.has(p.emoticonId)) return { kind: 'text', text: `(이모티콘 "${p.label}" — 앞에 붙인 그림과 같습니다)` };
+    if (sent.size >= maxImages) return { kind: 'text', text: `(이모티콘 "${p.label}" — 그림 수 상한이라 이름만 적습니다)` };
+    sent.add(p.emoticonId);
+    return p;
+  });
+}
+
+/** 요약 머리의 "몇 개 기준" 문구 — 일부만 읽었으면 그렇다고 적습니다 */
+export function summaryBasisLabel(view: Pick<ReviewSummaryView, 'reviewCount' | 'basedOn'>): string {
+  return view.basedOn !== null && view.basedOn < view.reviewCount
+    ? `최근 후기 ${view.basedOn}개 기준 (전체 ${view.reviewCount}개)`
+    : `후기 ${view.reviewCount}개 기준`;
+}
 
 /**
  * 리뷰 목록을 모델에 넣을 조각으로 바꿉니다.

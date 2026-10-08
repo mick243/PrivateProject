@@ -5,7 +5,7 @@
  *   - AUTH_SECRET 없음    → 쿠키 없는 방문자는 정상, 로그인·권한 확인만 500
  *   - ADMIN_PASSWORD 없음 → 일반 사용자 로그인까지 503 (R11)
  *   - APP_URL 없음        → 프록시 뒤에서 OAuth 콜백 주소가 내부 주소로 잡혀 토큰 교환 실패
- *   - DATABASE_URL 없음   → 시드로 만든 PGlite 로 "정상" 기동
+ *   - DATABASE_URL 없음   → 시드로 만든 PGlite 로 "정상" 기동 (09-22 Prisma 이관 뒤로는 첫 DB 요청이 500)
  *   - TRUSTED_PROXY_HOPS 없음 → 가입 시도 제한이 0 (lib/auth.ts clientKey 가 null)
  * 전부 "배포는 성공했는데 누군가 로그인을 시도할 때" 알게 되는 것들입니다.
  * 뜰 때 죽는 쪽이 낫습니다 — 클러스터가 백오프로 재기동하며 로그에 이유가 남습니다.
@@ -38,7 +38,7 @@ export function checkProductionEnv(env: EnvLike = process.env): EnvCheckResult {
   }
 
   if (!env.DATABASE_URL) {
-    errors.push('DATABASE_URL 이 없습니다 — 운영에서 PGlite(시드 데이터)로 뜨면 안 됩니다');
+    errors.push('DATABASE_URL 이 없습니다 — 앱은 PostgreSQL 에만 붙습니다 (lib/prisma.ts). 첫 DB 요청부터 500 이 됩니다');
   }
 
   if (!env.ADMIN_PASSWORD) {

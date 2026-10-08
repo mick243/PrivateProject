@@ -4,7 +4,7 @@
  *   npm run db:views
  *
  * 뷰는 마이그레이션이 아닙니다 — 데이터가 없는 파생 객체라 언제 다시 만들어도 안전하고,
- * 그래서 서버가 뜰 때마다 DROP → CREATE 합니다 (lib/db.ts · db/views.sql 머리말).
+ * 그래서 서버가 뜰 때마다 DROP → CREATE 합니다 (lib/prisma.ts bootChecks · db/views.sql 머리말).
  * Prisma 마이그레이션에도 넣지 않았습니다(scripts/prisma-migrations-build.mjs 참고).
  *
  * 이 스크립트가 필요한 자리는 하나입니다: **`prisma migrate deploy` 로 새 DB 를 만든

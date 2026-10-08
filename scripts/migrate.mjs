@@ -10,9 +10,10 @@
  *   2. `schema_migrations` 에 없는 마이그레이션만 순서대로 적용하고
  *   3. 뷰(views.sql)는 항상 다시 만듭니다 (데이터가 없어 안전)
  *
- * 서버(lib/db.ts)도 뜰 때 같은 일을 하므로 배포 후 첫 인스턴스가 대신 해 줍니다.
- * 이 스크립트는 **배포 전에 미리** 적용해 첫 요청의 지연·실패를 없애고, 무엇이
- * 바뀔지 사람이 먼저 보려는 자리입니다. 둘이 겹쳐도 advisory lock 으로 직렬화됩니다.
+ * ⚠ **옛 러너입니다.** 앱은 2026-09-22 Prisma 이관부터 뜰 때 마이그레이션을 적용하지 않고,
+ *   정식 경로는 `npm run db:migrate:prisma`(prisma migrate deploy · 이력은 _prisma_migrations)
+ *   입니다. 이 스크립트는 베이스라인 전의 옛 DB(schema_migrations 만 있는 DB)와 되돌리기용으로
+ *   남깁니다 — 두 러너가 같은 순간에 돌아도 advisory lock 으로 직렬화됩니다.
  *
  * ⚠ 되돌리기(down) 파일은 없습니다. 적용 전에 `pg_dump -Fc` 로 덤프를 떠 두세요
  *   (deploy/backup.sh). 마이그레이션 하나는 BEGIN/COMMIT 으로 묶여 있어 중간에
@@ -45,7 +46,7 @@ if (fs.existsSync(envFile)) {
 const dryRun = process.argv.includes('--dry-run');
 
 if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL 이 없습니다. PGlite 는 서버가 뜰 때 스스로 따라잡습니다 — 이 스크립트는 PostgreSQL 전용입니다.');
+  console.error('DATABASE_URL 이 없습니다 — 이 스크립트는 PostgreSQL 전용입니다.');
   process.exit(2);
 }
 
@@ -87,7 +88,7 @@ try {
       console.log(`✔ 그룹 ${group.sentinel}`);
     }
     for (const file of pending) {
-      // 파일 적용과 이력 기록을 한 트랜잭션으로 — lib/db.ts runMigrations 와 같은 모양
+      // 파일 적용과 이력 기록을 한 트랜잭션으로 — 중간에 실패하면 파일도 이력도 남지 않습니다
       await client.query(`BEGIN;
 ${readSql(file)}
 INSERT INTO schema_migrations (name) VALUES ('${file}');

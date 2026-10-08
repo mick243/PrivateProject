@@ -7,6 +7,7 @@ import { REVIEWS_PAGE_SIZE, timeAgo, type ArcadeReview } from '@/lib/community-t
 import {
   REVIEW_SUMMARY_KEYS,
   REVIEW_SUMMARY_MIN,
+  summaryBasisLabel,
   type ReviewSummaryView,
 } from '@/lib/review-summary-types';
 import { totalPagesOf } from '@/lib/board-types';
@@ -222,7 +223,7 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
             {summary.kind === 'loading' && <span>리뷰 {reviews.length}개를 읽고 요약하는 중…</span>}
             {summary.kind === 'ready' && (
               <span>
-                후기 {summary.view.reviewCount}개 기준
+                {summaryBasisLabel(summary.view)}
                 {summary.view.ratingAvg !== null && ` · 평균 ★ ${summary.view.ratingAvg.toFixed(1)}`}
               </span>
             )}

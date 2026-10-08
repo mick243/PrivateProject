@@ -5,7 +5,7 @@
  * 뜻이 통하는 4xx 로 바꿔 줘야 합니다. PGlite 도 실제 Postgres 와 같은
  * SQLSTATE 를 돌려주므로 두 드라이버에서 같이 동작합니다.
  *
- * **Prisma 경로(DB_CLIENT=prisma)에서는 에러의 모양이 다릅니다.** 같은 위반이
+ * **Prisma 에서는 에러의 모양이 다릅니다** (앱은 전부 Prisma, scripts/ 는 node-postgres). 같은 위반이
  * 세 가지 모습으로 옵니다 (2026-09-22 실측):
  *
  *   node-postgres  `{ code: '23503', constraint: 'arcade_favorites_player_id_fkey' }`

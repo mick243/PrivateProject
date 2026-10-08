@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { badId, conflict, fail, handle, notFound, parseId, readJson } from '@/lib/api-errors';
 import { requireAdmin } from '@/lib/auth';
 import {
   deleteEmoticon,
@@ -11,10 +12,7 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function parseId(raw: string): number | null {
-  const id = Number(raw);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
+type Ctx = { params: Promise<{ id: string }> };
 
 /**
  * DELETE /api/emoticons/:id — 목록에서 뺍니다 (soft delete). **관리자만.**
@@ -24,16 +22,14 @@ function parseId(raw: string): number | null {
  * 행도 파일도 지우지 않습니다 (lib/emoticons.ts deleteEmoticon 주석). 되살리기는
  * PATCH { restore: true }.
  */
-export async function DELETE(request: Request, ctx: { params: Promise<{ id: string }> }) {
+async function onDelete(request: Request, ctx: Ctx) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
   const id = parseId((await ctx.params).id);
-  if (id === null) return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
+  if (id === null) return badId();
 
-  if (!(await deleteEmoticon(id))) {
-    return NextResponse.json({ error: '이모티콘을 찾을 수 없습니다' }, { status: 404 });
-  }
+  if (!(await deleteEmoticon(id))) return notFound('이모티콘을 찾을 수 없습니다');
   return NextResponse.json({ ok: true });
 }
 
@@ -46,44 +42,36 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ id: stri
  * 둘을 한 요청에 섞지 않습니다 — 되살리면서 이름도 바꾸는 화면은 없고, 섞이면
  * "이름은 바뀌었는데 되살리기는 실패" 같은 반쪽 결과를 설명해야 합니다.
  */
-export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+async function onPatch(request: Request, ctx: Ctx) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
   const id = parseId((await ctx.params).id);
-  if (id === null) return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
+  if (id === null) return badId();
 
-  let body: { name?: unknown; restore?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: '본문을 읽을 수 없습니다' }, { status: 400 });
-  }
+  const raw = await readJson(request);
+  if (!raw.ok) return raw.response;
+  const body = (raw.value ?? {}) as { name?: unknown; restore?: unknown };
 
   try {
     if (body.restore === true) {
-      if (!(await restoreEmoticon(id))) {
-        return NextResponse.json({ error: '되살릴 이모티콘이 없습니다' }, { status: 404 });
-      }
+      if (!(await restoreEmoticon(id))) return notFound('되살릴 이모티콘이 없습니다');
       return NextResponse.json({ ok: true });
     }
 
     if (body.name !== undefined) {
       const name = normalizeName(body.name);
-      if (name === '') {
-        return NextResponse.json({ error: '이모티콘 이름을 입력해 주세요' }, { status: 400 });
-      }
-      if (!(await renameEmoticon(id, name))) {
-        return NextResponse.json({ error: '이모티콘을 찾을 수 없습니다' }, { status: 404 });
-      }
+      if (name === '') return fail(400, '이모티콘 이름을 입력해 주세요');
+      if (!(await renameEmoticon(id, name))) return notFound('이모티콘을 찾을 수 없습니다');
       return NextResponse.json({ ok: true, name });
     }
   } catch (err) {
-    if (err instanceof EmoticonNameTakenError) {
-      return NextResponse.json({ error: err.message }, { status: 409 });
-    }
+    if (err instanceof EmoticonNameTakenError) return conflict(err.message);
     throw err;
   }
 
-  return NextResponse.json({ error: 'name 또는 restore 가 필요합니다' }, { status: 400 });
+  return fail(400, 'name 또는 restore 가 필요합니다');
 }
+
+export const DELETE = handle(onDelete);
+export const PATCH = handle(onPatch);

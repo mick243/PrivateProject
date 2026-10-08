@@ -97,7 +97,8 @@ function start(inst) {
       PORT: String(inst.port),
       /**
        * 운영에서 PGlite 폴백은 끕니다 — 인스턴스 2개가 각자 다른 사본에 쓰면 어느
-       * 쪽도 정본이 아닙니다 (lib/db.ts FALLBACK_ENABLED). 밖에서 명시하면 그 값.
+       * 쪽도 정본이 아닙니다. (09-22 Prisma 이관 뒤의 앱에는 폴백이 아예 없어 이 값을 읽는
+       * 곳이 없습니다 — Prisma 이전 코드로 되돌렸을 때를 위해 남겨 둡니다.) 밖에서 명시하면 그 값.
        */
       DB_FALLBACK: process.env.DB_FALLBACK ?? 'off',
       /** /api/health 의 version 칸. 배포 스크립트가 커밋 해시를 넣어 주면 그대로 */

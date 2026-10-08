@@ -41,12 +41,13 @@ for d in /proc/[0-9]*; do
     IFS= read -r -d '' argv0 2>/dev/null < "$d/cmdline" && [[ -n "$argv0" ]] && name="${argv0##*/}"
   fi
   name="${name%% (*}"
-  # 서비스 — /proc/<pid>/cgroup 의 마지막 칸(arcade-finder.service 등). SSH 접속은 접속마다 번호가 바뀌어 하나로 묶는다
+  # 서비스 — /proc/<pid>/cgroup 의 마지막 칸(arcade-finder.service 등). SSH 접속은 접속마다 번호가 바뀌어 하나로 묶는다.
+  # 값에 빈칸을 두지 않는다 — 서버에서 `sort -k2` 로 줄 세울 때 칸이 밀린다
   unit=""
   read -r cg 2>/dev/null < "$d/cgroup" && unit="${cg##*/}"
   unit="${unit%.service}"
   case "$unit" in
-    session-*.scope) unit="ssh 세션" ;;
+    session-*.scope) unit="ssh-session" ;;
     init.scope) unit="systemd" ;;
     "") unit="-" ;;
   esac

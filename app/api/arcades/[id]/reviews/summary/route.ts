@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { badId, fail, handle, notFound, parseId } from '@/lib/api-errors';
 import { consume, DAY_MS, limitFromEnv, retryAfterLabel } from '@/lib/rate-limit';
 import {
   buildReviewSummary,
@@ -32,16 +33,12 @@ const GLOBAL_LIMIT = limitFromEnv('REVIEW_SUMMARY_LIMIT_GLOBAL', 200);
  *   { summary: null, reason: 'limit' | 'unavailable' }   503
  *   { summary: null, reason: 'failed' }                  502 — 모델 호출 실패
  */
-export async function GET(_request: Request, ctx: Ctx) {
-  const arcadeId = Number((await ctx.params).id);
-  if (!Number.isInteger(arcadeId) || arcadeId <= 0) {
-    return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
-  }
+async function onGet(_request: Request, ctx: Ctx) {
+  const arcadeId = parseId((await ctx.params).id);
+  if (arcadeId === null) return badId();
 
   const found = await lookupReviewSummary(arcadeId);
-  if (found.kind === 'no-arcade') {
-    return NextResponse.json({ error: '오락실을 찾을 수 없습니다' }, { status: 404 });
-  }
+  if (found.kind === 'no-arcade') return notFound('오락실을 찾을 수 없습니다');
   if (found.kind === 'ready') return NextResponse.json({ summary: found.view });
 
   const notEnough = () =>
@@ -57,10 +54,10 @@ export async function GET(_request: Request, ctx: Ctx) {
   const all = await consume('review-summary:global', GLOBAL_LIMIT, DAY_MS);
   if (!all.allowed) {
     console.warn(`[review-summary] 전체 일일 한도 ${all.limit} 도달 — ${retryAfterLabel(all.retryAfterMs)} 뒤 해제`);
-    return NextResponse.json(
-      { summary: null, reason: 'limit', error: '오늘은 AI 요약 요청이 많아 잠시 쉬고 있어요. 내일 다시 열어 주세요.' },
-      { status: 503, headers: { 'Retry-After': String(Math.ceil(all.retryAfterMs / 1000)) } },
-    );
+    return fail(503, '오늘은 AI 요약 요청이 많아 잠시 쉬고 있어요. 내일 다시 열어 주세요.', {
+      extra: { summary: null, reason: 'limit' },
+      retryAfterMs: all.retryAfterMs,
+    });
   }
 
   try {
@@ -68,15 +65,16 @@ export async function GET(_request: Request, ctx: Ctx) {
   } catch (err) {
     if (err instanceof NotEnoughReviews) return notEnough();
     if (err instanceof ReviewSummaryUnavailable) {
-      return NextResponse.json({ summary: null, reason: 'unavailable', error: err.message }, { status: 503 });
+      return fail(503, err.message, { extra: { summary: null, reason: 'unavailable' } });
     }
     // 리뷰 본문은 로그에 남기지 않습니다 — 사용자가 쓴 글입니다. 무엇이 실패했는지만.
     // undici 의 'fetch failed' 는 진짜 이유를 cause 에 숨기므로 그것까지 적습니다.
     const cause = err instanceof Error && err.cause instanceof Error ? ` (cause: ${err.cause.message})` : '';
     console.error(`[review-summary] arcade ${arcadeId}:`, err instanceof Error ? err.name + ': ' + err.message + cause : err);
-    return NextResponse.json(
-      { summary: null, reason: 'failed', error: '요약을 만들지 못했습니다. 잠시 뒤 다시 열어 주세요.' },
-      { status: 502 },
-    );
+    return fail(502, '요약을 만들지 못했습니다. 잠시 뒤 다시 열어 주세요.', {
+      extra: { summary: null, reason: 'failed' },
+    });
   }
 }
+
+export const GET = handle(onGet);

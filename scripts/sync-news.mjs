@@ -397,8 +397,8 @@ async function claimWindow() {
 
 async function main() {
   if (onStart) {
-    // 기동 직후에는 마이그레이션이 아직 안 돌았을 수 있습니다 — lib/db.ts 의 getDb()
-    // 는 지연 호출이라 첫 요청(클러스터의 health 프로브)에서야 스키마가 적용됩니다.
+    // 기동 직후에는 뷰가 아직 없을 수 있습니다 — lib/prisma.ts 는 첫 DB 요청(클러스터의
+    // health 프로브)에서 뷰를 다시 만듭니다. 마이그레이션은 배포 단계가 먼저 합니다.
     if (START_DELAY_MS > 0) await new Promise((r) => setTimeout(r, START_DELAY_MS));
     if (!(await claimWindow())) {
       console.log(`· 소식 동기화: ${MIN_HOURS}시간 안에 이미 돌았습니다 — 건너뜁니다`);

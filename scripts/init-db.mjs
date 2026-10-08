@@ -50,8 +50,8 @@ const forcePglite = process.argv.includes('--pglite');
 /** 실제 PostgreSQL 을 드롭·재시드해도 좋다는 확인 (머리말의 가드 참고) */
 const yes = process.argv.includes('--yes');
 
-// SQL 파일 목록은 scripts/db-files.mjs 에 있습니다 (migrate.mjs 와 공유).
-// ⚠ 그 파일은 lib/db.ts 와 같아야 합니다 — tests/db-lists.test.ts 가 대조합니다.
+// SQL 파일 목록은 scripts/db-files.mjs 하나에 있습니다 (migrate.mjs · prisma-migrations-build.mjs 와
+// 공유). db/ 폴더와 어긋나면 tests/db-lists.test.ts 가 잡습니다.
 
 /** exec/query 를 받아 전체 순서를 적용 */
 async function applyAll(run) {

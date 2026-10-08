@@ -11,8 +11,10 @@ import {
   type Part,
 } from '@google/genai';
 import { NextResponse } from 'next/server';
+import { fail, handle, parseBody, tooMany, unavailable } from '@/lib/api-errors';
 import { listMachines } from '@/lib/arcades';
 import { requirePlayer } from '@/lib/auth';
+import { addUsage, emptyUsage, TOOL_OUTPUT_CHAR_BUDGET, trimTurns } from '@/lib/chat-budget';
 import { consume, DAY_MS, limitFromEnv, retryAfterLabel } from '@/lib/rate-limit';
 import {
   searchArcades,
@@ -23,7 +25,7 @@ import {
   type ReportSearchArgs,
 } from '@/lib/chat-tools';
 import type { ChatSource } from '@/lib/chat-types';
-import { chatInputSchema, formatIssues } from '@/lib/validation';
+import { chatInputSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -119,6 +121,10 @@ const functionDeclarations: FunctionDeclaration[] = [
           type: 'string',
           description: '기종 이름. 정식 명칭·축약 명칭 모두 가능 (예: 펌프, Pump It Up, 사볼)',
         },
+        page: {
+          type: 'integer',
+          description: '쪽 번호(1부터). hasMore 일 때만 올림',
+        },
       },
       additionalProperties: false,
     },
@@ -140,6 +146,10 @@ const functionDeclarations: FunctionDeclaration[] = [
           type: 'integer',
           description: '최근 몇 시간 안의 제보만. 기본 24. 대기 제보는 4시간 뒤 삭제됩니다',
         },
+        page: {
+          type: 'integer',
+          description: '쪽 번호(1부터). hasMore 일 때만 올림',
+        },
       },
       additionalProperties: false,
     },
@@ -153,6 +163,10 @@ const functionDeclarations: FunctionDeclaration[] = [
       properties: {
         query: { type: 'string', description: '제목·본문에서 찾을 말' },
         machine: { type: 'string', description: '게임 탭으로 좁히기 (예: 펌프)' },
+        page: {
+          type: 'integer',
+          description: '쪽 번호(1부터). hasMore 일 때만 올림',
+        },
       },
       additionalProperties: false,
     },
@@ -229,57 +243,35 @@ async function runCalls(calls: FunctionCall[]): Promise<Part[]> {
 const CHAT_DAILY_LIMIT_PER_PLAYER = limitFromEnv('CHAT_DAILY_LIMIT', 40);
 const CHAT_DAILY_LIMIT_GLOBAL = limitFromEnv('CHAT_GLOBAL_DAILY_LIMIT', 2000);
 
-export async function POST(request: Request) {
+async function onPost(request: Request) {
   const guard = await requirePlayer(request);
   if (!guard.ok) {
-    return NextResponse.json(
-      { error: '챗봇은 로그인한 뒤 쓸 수 있어요. 오락실 탐색("오락실 찾아줘")은 로그인 없이도 됩니다.' },
-      { status: 401 },
-    );
+    return fail(401, '챗봇은 로그인한 뒤 쓸 수 있어요. 오락실 탐색("오락실 찾아줘")은 로그인 없이도 됩니다.');
   }
 
   // 키가 없으면 이 경로만 죽습니다. 우선순위 탐색은 클라이언트에서 끝나므로
   // 키 없이도 앱의 본체는 그대로 돌아갑니다.
   if (!process.env.GEMINI_API_KEY) {
-    return NextResponse.json(
-      {
-        error:
-          '챗봇이 아직 연결되지 않았습니다 (.env.local 에 GEMINI_API_KEY 를 넣어 주세요). 오락실 탐색은 키 없이도 됩니다 — "오락실 찾아줘" 라고 해 보세요.',
-      },
-      { status: 503 },
+    return unavailable(
+      '챗봇이 아직 연결되지 않았습니다 (.env.local 에 GEMINI_API_KEY 를 넣어 주세요). 오락실 탐색은 키 없이도 됩니다 — "오락실 찾아줘" 라고 해 보세요.',
     );
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
-  }
-
-  const parsed = chatInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: '입력값이 올바르지 않습니다', details: formatIssues(parsed.error) },
-      { status: 400 },
-    );
-  }
+  const body = await parseBody(request, chatInputSchema);
+  if (!body.ok) return body.response;
 
   // 입력이 올바른 요청만 셉니다 — 400 으로 튕기는 요청은 모델을 부르지 않습니다.
   const mine = await consume(`chat:player:${guard.playerId}`, CHAT_DAILY_LIMIT_PER_PLAYER, DAY_MS);
   if (!mine.allowed) {
-    return NextResponse.json(
-      { error: `오늘 챗봇 질문 한도(${mine.limit}회)를 다 썼어요. ${retryAfterLabel(mine.retryAfterMs)} 뒤에 다시 열려요.` },
-      { status: 429, headers: { 'Retry-After': String(Math.ceil(mine.retryAfterMs / 1000)) } },
+    return tooMany(
+      `오늘 챗봇 질문 한도(${mine.limit}회)를 다 썼어요. ${retryAfterLabel(mine.retryAfterMs)} 뒤에 다시 열려요.`,
+      mine.retryAfterMs,
     );
   }
   const all = await consume('chat:global', CHAT_DAILY_LIMIT_GLOBAL, DAY_MS);
   if (!all.allowed) {
     console.warn(`[chat] 전체 일일 한도 ${all.limit} 도달 — ${retryAfterLabel(all.retryAfterMs)} 뒤 해제`);
-    return NextResponse.json(
-      { error: '오늘은 챗봇 이용이 많아 잠시 쉬고 있어요. 내일 다시 시도해 주세요.' },
-      { status: 503, headers: { 'Retry-After': String(Math.ceil(all.retryAfterMs / 1000)) } },
-    );
+    return unavailable('오늘은 챗봇 이용이 많아 잠시 쉬고 있어요. 내일 다시 시도해 주세요.', all.retryAfterMs);
   }
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -296,22 +288,28 @@ export async function POST(request: Request) {
     system = buildSystem(rhythmGames);
   } catch (e) {
     console.error('[chat] machines', e);
-    return NextResponse.json({ error: '답변을 만들지 못했습니다' }, { status: 500 });
+    return fail(500, '답변을 만들지 못했습니다');
   }
 
+  // 대화는 최근 것부터 상한(lib/chat-budget.ts HISTORY_CHAR_BUDGET)까지만 싣습니다 — 매 왕복마다
+  // 다시 보내는 부분이라, 여기서 1자를 줄이면 모델 호출 수만큼 줄어듭니다.
+  const history = trimTurns(body.value.turns);
   // Gemini 는 조수 차례를 'model' 이라고 부릅니다.
-  const contents: Content[] = parsed.data.turns.map((t) => ({
+  const contents: Content[] = history.turns.map((t) => ({
     role: t.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: t.text }],
   }));
+  const usage = emptyUsage();
+  let toolChars = 0;
 
   try {
     let response: GenerateContentResponse | undefined;
 
     for (let step = 0; step < MAX_ITERATIONS; step++) {
       // 마지막 왕복에서는 함수 호출을 막아 **말로 끝내게** 합니다. 그냥 끊으면
-      // 도구를 부르다 만 턴이 마지막이 되어 답이 빈 채로 돌아갑니다.
-      const lastStep = step === MAX_ITERATIONS - 1;
+      // 도구를 부르다 만 턴이 마지막이 되어 답이 빈 채로 돌아갑니다. 도구 결과가 누적
+      // 상한을 넘은 뒤도 마찬가지입니다 — 쪽을 계속 넘기며 대화를 불리지 않게.
+      const lastStep = step === MAX_ITERATIONS - 1 || toolChars >= TOOL_OUTPUT_CHAR_BUDGET;
 
       response = await ai.models.generateContent({
         model: MODEL,
@@ -336,9 +334,10 @@ export async function POST(request: Request) {
       });
 
       collectSources(response, sources);
+      addUsage(usage, response.usageMetadata);
 
       const calls = response.functionCalls ?? [];
-      if (calls.length === 0) break;
+      if (calls.length === 0 || lastStep) break;
 
       // 모델 턴은 **손대지 않고 그대로** 되돌려 보냅니다. 생각 서명
       // (thoughtSignature)이 빠지면 다음 왕복에서 도구 호출 맥락이 끊깁니다.
@@ -348,12 +347,19 @@ export async function POST(request: Request) {
           parts: calls.map((call) => ({ functionCall: call })),
         },
       );
-      contents.push({ role: 'user', parts: await runCalls(calls) });
+      const outputs = await runCalls(calls);
+      toolChars += JSON.stringify(outputs).length;
+      contents.push({ role: 'user', parts: outputs });
     }
 
-    if (!response) {
-      return NextResponse.json({ error: '답변을 만들지 못했습니다' }, { status: 500 });
-    }
+    // 요청 하나가 쓴 토큰 — 비용과 상한이 맞는지 운영에서 보는 값입니다 (본문은 남기지 않습니다).
+    console.info(
+      `[chat] 토큰 입력 ${usage.prompt} · 출력 ${usage.output} · 생각 ${usage.thoughts} · 도구 ${usage.toolUse}` +
+        ` · 합 ${usage.total} (모델 ${usage.calls}번 · 도구 결과 ${toolChars}자 · 대화 ${history.turns.length}턴` +
+        `${history.dropped ? ` · 앞 ${history.dropped}턴 생략` : ''})`,
+    );
+
+    if (!response) return fail(500, '답변을 만들지 못했습니다');
 
     const finishReason = response.candidates?.[0]?.finishReason;
     if (response.promptFeedback?.blockReason || (finishReason && BLOCKED.has(finishReason))) {
@@ -371,23 +377,22 @@ export async function POST(request: Request) {
     // 뭘 해야 할지 알 수 있습니다.
     if (e instanceof ApiError) {
       if (e.status === 401 || e.status === 403) {
-        return NextResponse.json({ error: 'API 키가 올바르지 않습니다' }, { status: 502 });
+        return fail(502, 'API 키가 올바르지 않습니다');
       }
       if (e.status === 429) {
-        return NextResponse.json(
-          { error: '요청이 몰렸습니다. 잠시 뒤 다시 시도해 주세요' },
-          { status: 429 },
-        );
+        return tooMany('요청이 몰렸습니다. 잠시 뒤 다시 시도해 주세요');
       }
       if (e.status === 404) {
-        return NextResponse.json({ error: `이 키로는 ${MODEL} 을 쓸 수 없습니다` }, { status: 502 });
+        return fail(502, `이 키로는 ${MODEL} 을 쓸 수 없습니다`);
       }
     }
     // SDK 는 네트워크 실패를 전용 오류로 감싸지 않고 fetch 의 것을 그대로 던집니다.
     if (e instanceof TypeError) {
-      return NextResponse.json({ error: '네트워크에 연결하지 못했습니다' }, { status: 504 });
+      return fail(504, '네트워크에 연결하지 못했습니다');
     }
     console.error('[chat]', e);
-    return NextResponse.json({ error: '답변을 만들지 못했습니다' }, { status: 500 });
+    return fail(500, '답변을 만들지 못했습니다');
   }
 }
+
+export const POST = handle(onPost);
