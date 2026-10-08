@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { fail, handle, needLogin, notFound, parseId, readJson } from '@/lib/api-errors';
 import { sessionPlayerId } from '@/lib/auth';
 import { addFavorite, listFavoriteIds, removeFavorite } from '@/lib/favorites';
 import { isForeignKeyViolation } from '@/lib/pg-errors';
@@ -15,14 +16,6 @@ export const dynamic = 'force-dynamic';
  * 공개되는 값이라 티라도 나지만 즐겨찾기는 조용히 어긋납니다.
  */
 
-function parseArcadeId(raw: unknown): number | null {
-  const id = Number(raw);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
-
-const NEED_LOGIN = () =>
-  NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
-
 /**
  * GET /api/favorites
  *
@@ -30,7 +23,7 @@ const NEED_LOGIN = () =>
  * 한 번 부르고(사이드바가 별을 그릴지 정하려면 필요합니다), 로그인하지 않은
  * 상태는 오류가 아니라 정상입니다.
  */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const playerId = await sessionPlayerId(request);
   return NextResponse.json({
     arcadeIds: playerId === null ? [] : await listFavoriteIds(playerId),
@@ -44,30 +37,22 @@ export async function GET(request: Request) {
  * `PUT`(켠다)·`DELETE`(끈다)로 하라고 정해 두었는데 그 모양인 것은 글 추천 하나뿐이라,
  * 문서를 보고 PUT 을 부르면 405 가 났습니다 (2026-09-13 전체 점검). 코드를 옮겼습니다.
  */
-export async function PUT(request: Request) {
+async function onPut(request: Request) {
   const playerId = await sessionPlayerId(request);
-  if (playerId === null) return NEED_LOGIN();
+  if (playerId === null) return needLogin();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
-  }
+  const body = await readJson(request);
+  if (!body.ok) return body.response;
 
-  const arcadeId = parseArcadeId((body as { arcadeId?: unknown })?.arcadeId);
-  if (arcadeId === null) {
-    return NextResponse.json({ error: 'arcadeId 가 필요합니다' }, { status: 400 });
-  }
+  const arcadeId = parseId((body.value as { arcadeId?: unknown } | null)?.arcadeId);
+  if (arcadeId === null) return fail(400, 'arcadeId 가 필요합니다');
 
   try {
     await addFavorite(playerId, arcadeId);
   } catch (err) {
     // 없는 오락실이면 FK 위반이다. 존재 확인을 따로 하면 그 사이에 지워지는
     // 틈이 남으므로 DB 제약을 그대로 답으로 옮긴다.
-    if (isForeignKeyViolation(err)) {
-      return NextResponse.json({ error: '오락실을 찾을 수 없습니다' }, { status: 404 });
-    }
+    if (isForeignKeyViolation(err)) return notFound('오락실을 찾을 수 없습니다');
     throw err;
   }
 
@@ -80,15 +65,17 @@ export async function PUT(request: Request) {
  * 담아 두지 않았던 곳이어도 200 입니다. 별을 두 번 누른 것뿐인데 오류를 띄우면,
  * 화면에는 이미 빠져 있는 상태라 사람이 고칠 방법이 없습니다.
  */
-export async function DELETE(request: Request) {
+async function onDelete(request: Request) {
   const playerId = await sessionPlayerId(request);
-  if (playerId === null) return NEED_LOGIN();
+  if (playerId === null) return needLogin();
 
-  const arcadeId = parseArcadeId(new URL(request.url).searchParams.get('arcadeId'));
-  if (arcadeId === null) {
-    return NextResponse.json({ error: 'arcadeId 가 필요합니다' }, { status: 400 });
-  }
+  const arcadeId = parseId(new URL(request.url).searchParams.get('arcadeId'));
+  if (arcadeId === null) return fail(400, 'arcadeId 가 필요합니다');
 
   await removeFavorite(playerId, arcadeId);
   return NextResponse.json({ arcadeIds: await listFavoriteIds(playerId) });
 }
+
+export const GET = handle(onGet);
+export const PUT = handle(onPut);
+export const DELETE = handle(onDelete);

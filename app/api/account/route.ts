@@ -1,5 +1,15 @@
 import { NextResponse } from 'next/server';
 import {
+  conflict,
+  fail,
+  forbidden,
+  handle,
+  needLogin,
+  parseBody,
+  readOptionalJson,
+  tooMany,
+} from '@/lib/api-errors';
+import {
   accountStatus,
   changeNickname,
   clearLoginFailures,
@@ -12,7 +22,7 @@ import {
   setSessionCookie,
   verifyPlayerPassword,
 } from '@/lib/auth';
-import { accountUpdateSchema, formatIssues } from '@/lib/validation';
+import { accountUpdateSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,88 +42,72 @@ export const dynamic = 'force-dynamic';
 
 const lockKey = (playerId: number) => `account:${playerId}`;
 
+/** 계정 행이 사라진 세션 — 쿠키를 지우며 로그인부터 다시 */
+const gone = () => clearSessionCookie(needLogin());
+
+const locked = (lockedMs: number) =>
+  tooMany(`시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요`, lockedMs);
+
+/**
+ * 비밀번호가 있는 계정의 본인 확인. 통과하면 null, 막히면 돌려줄 응답.
+ * PUT(수정)과 DELETE(탈퇴)가 같은 순서로 확인합니다 — 잠금 → 입력 → 대조.
+ */
+async function confirmPassword(playerId: number, currentPassword: string | null | undefined) {
+  const key = lockKey(playerId);
+  const lockedMs = await loginLockRemainingMs(key);
+  if (lockedMs > 0) return locked(lockedMs);
+  if (!currentPassword) return fail(400, '현재 비밀번호를 입력해 주세요');
+  if (!(await verifyPlayerPassword(playerId, currentPassword))) {
+    await noteLoginFailure(key);
+    return forbidden('비밀번호가 올바르지 않습니다');
+  }
+  await clearLoginFailures(key);
+  return null;
+}
+
 /** GET — 화면을 그리는 데 필요한 것: 지금 이름과 "비밀번호가 있는가" */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const session = await getSession(request);
-  if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
+  if (!session) return needLogin();
 
   const status = await accountStatus(session.playerId);
-  if (!status) {
-    return clearSessionCookie(
-      NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }),
-    );
-  }
+  if (!status) return gone();
   return NextResponse.json({ nickname: status.nickname, hasPassword: status.hasPassword });
 }
 
 /** PUT — `{currentPassword?, nickname?, newPassword?}` → 변경 + 세션 쿠키 재발급 */
-export async function PUT(request: Request) {
+async function onPut(request: Request) {
   const session = await getSession(request);
-  if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
+  if (!session) return needLogin();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
-  }
-
-  const parsed = accountUpdateSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: formatIssues(parsed.error)[0] ?? '입력값이 올바르지 않습니다' },
-      { status: 400 },
-    );
-  }
+  // 이 화면은 details 를 보지 않고 error 한 줄을 띄웁니다 — 첫 문구를 머리로 (lib/api-errors.ts).
+  const body = await parseBody(request, accountUpdateSchema, 'first');
+  if (!body.ok) return body.response;
 
   const status = await accountStatus(session.playerId);
-  if (!status) {
-    return clearSessionCookie(
-      NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }),
-    );
-  }
+  if (!status) return gone();
 
   // 비밀번호가 있는 계정은 반드시 현재 비밀번호로 본인 확인.
   if (status.hasPassword) {
-    const key = lockKey(session.playerId);
-    const lockedMs = await loginLockRemainingMs(key);
-    if (lockedMs > 0) {
-      return NextResponse.json(
-        { error: `시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요` },
-        { status: 429 },
-      );
-    }
-    if (!parsed.data.currentPassword) {
-      return NextResponse.json({ error: '현재 비밀번호를 입력해 주세요' }, { status: 400 });
-    }
-    if (!(await verifyPlayerPassword(session.playerId, parsed.data.currentPassword))) {
-      await noteLoginFailure(key);
-      return NextResponse.json({ error: '비밀번호가 올바르지 않습니다' }, { status: 403 });
-    }
-    await clearLoginFailures(key);
+    const denied = await confirmPassword(session.playerId, body.value.currentPassword);
+    if (denied) return denied;
   }
 
   // 닉네임 → 비밀번호 순서. 닉네임이 반려되면(409) 아무것도 바뀌지 않은 상태로
   // 돌려주기 위해 비밀번호는 마지막에 겁니다.
   let user = { ...session, nickname: status.nickname, isAdmin: status.isAdmin };
-  if (parsed.data.nickname !== undefined) {
-    const result = await changeNickname(session.playerId, parsed.data.nickname);
+  if (body.value.nickname !== undefined) {
+    const result = await changeNickname(session.playerId, body.value.nickname);
     if (!result.ok) {
-      if (result.reason === 'gone') {
-        return clearSessionCookie(
-          NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }),
-        );
-      }
-      if (result.reason === 'reserved') {
-        return NextResponse.json({ error: '사용할 수 없는 닉네임입니다' }, { status: 409 });
-      }
-      return NextResponse.json({ error: '이미 사용 중인 닉네임입니다' }, { status: 409 });
+      if (result.reason === 'gone') return gone();
+      if (result.reason === 'reserved') return conflict('사용할 수 없는 닉네임입니다');
+      return conflict('이미 사용 중인 닉네임입니다');
     }
     user = result.user;
   }
 
-  if (parsed.data.newPassword !== undefined) {
-    await setPlayerPassword(session.playerId, parsed.data.newPassword);
+  if (body.value.newPassword !== undefined) {
+    await setPlayerPassword(session.playerId, body.value.newPassword);
   }
 
   // 닉네임이 바뀌었을 수 있으므로 세션 쿠키를 새 이름으로 다시 서명합니다.
@@ -129,53 +123,38 @@ export async function PUT(request: Request) {
  *
  * 무엇이 함께 지워지는지는 lib/auth.ts deleteAccount 와 /privacy 2항에 적혀 있습니다.
  */
-export async function DELETE(request: Request) {
+async function onDelete(request: Request) {
   const session = await getSession(request);
-  if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
+  if (!session) return needLogin();
 
-  let body: unknown = {};
-  try {
-    const text = await request.text();
-    body = text ? JSON.parse(text) : {};
-  } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
-  }
-  const raw = (body as { currentPassword?: unknown }).currentPassword;
+  // 소셜 계정은 본문 없이 보냅니다 — 빈 본문을 {} 로 받습니다.
+  const body = await readOptionalJson(request);
+  if (!body.ok) return body.response;
+  const raw = (body.value as { currentPassword?: unknown }).currentPassword;
   const currentPassword = typeof raw === 'string' ? raw : null;
 
   const status = await accountStatus(session.playerId);
-  if (!status) {
-    return clearSessionCookie(NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }));
-  }
+  if (!status) return gone();
   if (status.isAdmin) {
-    return NextResponse.json(
-      { error: '관리자 계정은 탈퇴할 수 없습니다. 설정(ADMIN_PASSWORD)에서 계정을 정리해 주세요' },
-      { status: 403 },
+    return forbidden(
+      '관리자 계정은 탈퇴할 수 없습니다. 설정(ADMIN_PASSWORD)에서 계정을 정리해 주세요',
     );
   }
 
   if (status.hasPassword) {
-    const key = lockKey(session.playerId);
-    const lockedMs = await loginLockRemainingMs(key);
-    if (lockedMs > 0) {
-      return NextResponse.json(
-        { error: `시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요` },
-        { status: 429 },
-      );
-    }
-    if (!currentPassword) {
-      return NextResponse.json({ error: '현재 비밀번호를 입력해 주세요' }, { status: 400 });
-    }
-    if (!(await verifyPlayerPassword(session.playerId, currentPassword))) {
-      await noteLoginFailure(key);
-      return NextResponse.json({ error: '비밀번호가 올바르지 않습니다' }, { status: 403 });
-    }
-    await clearLoginFailures(key);
+    const denied = await confirmPassword(session.playerId, currentPassword);
+    if (denied) return denied;
   }
 
   const deleted = await deleteAccount(session.playerId);
-  if (!deleted) {
-    return clearSessionCookie(NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }));
-  }
+  if (!deleted) return gone();
   return clearSessionCookie(new NextResponse(null, { status: 204 }));
 }
+
+/**
+ * 핸들러에서 빠져나온 예외를 JSON 500 으로 바꿉니다 (lib/api-errors.ts handle).
+ * 감싸지 않으면 본문 없는 500 이 나가고, 클라이언트의 `res.json()` 이 거기서 던집니다.
+ */
+export const GET = handle(onGet);
+export const PUT = handle(onPut);
+export const DELETE = handle(onDelete);

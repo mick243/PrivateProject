@@ -37,9 +37,7 @@
  */
 
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
-import { getDb } from '../lib/db.ts';
 import { geocodeAddress, NaverGeocodeError } from '../lib/naver-geocode.ts';
 import {
   classifyByName,
@@ -49,6 +47,7 @@ import {
 } from '../lib/localdata-games.ts';
 import { normalizeName } from '../lib/naver-local.ts';
 import { distanceKm } from '../lib/geo.ts';
+import { BULK_TX_OPTIONS, getPrismaClient } from '../lib/prisma.ts';
 
 // ─── .env.local 최소 파싱 (scripts/import-arcades.ts 와 같은 방식) ────
 const root = process.cwd();
@@ -89,20 +88,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function fail(lines: string[]): never {
   console.error(`\n${lines.join('\n')}\n`);
   process.exit(1);
-}
-
-/** PGlite 는 한 프로세스만 데이터 디렉터리를 엽니다 (scripts/import-arcades.ts 와 같은 가드) */
-function portInUse(port: number, timeoutMs = 800): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = net.connect({ host: '127.0.0.1', port });
-    const done = (v: boolean) => {
-      sock.destroy();
-      resolve(v);
-    };
-    sock.setTimeout(timeoutMs, () => done(false));
-    sock.once('connect', () => done(true));
-    sock.once('error', () => done(false));
-  });
 }
 
 // ─── ① 분류 ───────────────────────────────────────────────────────────
@@ -225,15 +210,6 @@ if (!doWrite && !doUnify) {
   process.exit(0);
 }
 
-if (!process.env.DATABASE_URL && (await portInUse(3000))) {
-  fail([
-    '포트 3000 에 무언가(아마도 next dev) 떠 있습니다. 먼저 멈춰 주세요.',
-    '  기본 DB(PGlite)는 한 프로세스만 데이터 디렉터리를 열 수 있어, 켜둔 채로',
-    '  쓰면 결과가 화면에 반영되지 않고 데이터가 깨질 수 있습니다.',
-    '  실제 Postgres(DATABASE_URL)를 쓰면 이 제한이 없습니다.',
-  ]);
-}
-
 if (!ready.length && doWrite) {
   fail([
     '넣을 것이 없습니다 — 좌표가 준비된 오락실이 0곳입니다.',
@@ -241,20 +217,16 @@ if (!ready.length && doWrite) {
   ]);
 }
 
-const db = await getDb();
+// DATABASE_URL 이 없으면 여기서 멈춥니다 (lib/prisma.ts — PGlite 로 내려가지 않습니다).
+const prisma = await getPrismaClient();
 
 let inserted = 0;
 let already = 0;
 let dupOfExisting = 0;
 
-if (doWrite) await db.transaction(async (tx) => {
+if (doWrite) await prisma.$transaction(async (tx) => {
   // 겹침 판정에 쓸 기존 행. 709곳 규모라 한 번에 읽어 메모리에서 비교합니다.
-  const { rows: existing } = await tx.query<{
-    id: number;
-    name: string;
-    lat: number;
-    lng: number;
-  }>(`SELECT id, name, lat, lng FROM arcades`);
+  const existing = await tx.arcades.findMany({ select: { id: true, name: true, lat: true, lng: true } });
   const existingIndexed = existing.map((r) => ({ ...r, key: normalizeName(r.name) }));
 
   for (const p of ready) {
@@ -266,11 +238,8 @@ if (doWrite) await db.transaction(async (tx) => {
     const address = addressOf(p);
     if (!name || !address || lat === null || lng === null) continue;
 
-    const { rows: mine } = await tx.query<{ id: number }>(
-      `SELECT id FROM arcades WHERE source_ref = $1 LIMIT 1`,
-      [ref],
-    );
-    if (mine[0]) {
+    const mine = await tx.arcades.findFirst({ where: { source_ref: ref }, select: { id: true } });
+    if (mine) {
       already += 1;
       continue;
     }
@@ -290,18 +259,14 @@ if (doWrite) await db.transaction(async (tx) => {
       continue;
     }
 
-    // 이름·주소·좌표만. 영업시간·전화·기종은 넣지 않습니다 (정보가 없습니다).
-    await tx.query(
-      `INSERT INTO arcades
-         (name, address, lat, lng, open_time, close_time, is_24h, phone, note,
-          source, source_ref)
-       VALUES ($1, $2, $3, $4, NULL, NULL, FALSE, NULL, NULL, 'localdata', $5)`,
-      [name, address, lat, lng, ref],
-    );
+    // 이름·주소·좌표만. 영업시간·전화·기종은 넣지 않습니다 (정보가 없습니다 — 스키마 기본값).
+    await tx.arcades.create({
+      data: { name, address, lat, lng, source: 'localdata', source_ref: ref },
+    });
     inserted += 1;
     existingIndexed.push({ id: -1, name, lat, lng, key });
   }
-});
+}, BULK_TX_OPTIONS);
 
 // ─── ④ 띄어쓰기 통일 ─────────────────────────────────────────────────
 /*
@@ -315,9 +280,7 @@ if (doWrite) await db.transaction(async (tx) => {
  */
 let renamed = 0;
 if (doUnify) {
-  const { rows: all } = await db.query<{ id: number; name: string; source: string | null }>(
-    `SELECT id, name, source FROM arcades`,
-  );
+  const all = await prisma.arcades.findMany({ select: { id: true, name: true, source: true } });
   const changes = unifySpellings(all);
 
   if (changes.length) {
@@ -325,14 +288,11 @@ if (doUnify) {
     const logFile = path.join(dataDir, 'renamed-spellings.json');
     fs.writeFileSync(logFile, `${JSON.stringify(changes, null, 2)}\n`, 'utf8');
 
-    await db.transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       for (const c of changes) {
-        await tx.query(`UPDATE arcades SET name = $2, updated_at = now() WHERE id = $1`, [
-          c.id,
-          c.to,
-        ]);
+        await tx.arcades.update({ where: { id: c.id }, data: { name: c.to, updated_at: new Date() } });
       }
-    });
+    }, BULK_TX_OPTIONS);
     renamed = changes.length;
     console.log(`\n띄어쓰기 통일 — ${n(renamed)}행 이름 변경`);
     const groups = new Map<string, string>();
@@ -345,16 +305,18 @@ if (doUnify) {
   }
 }
 
-const { rows: after } = await db.query<{ source: string | null; n: number }>(
-  `SELECT source, COUNT(*)::int AS n FROM arcades GROUP BY source ORDER BY source`,
-);
+const after = await prisma.arcades.groupBy({
+  by: ['source'],
+  _count: { _all: true },
+  orderBy: { source: 'asc' },
+});
 
 if (doWrite) console.log(`\n반영 완료 — 새로 ${n(inserted)}곳`);
 if (already) console.log(`  이미 넣어 둔 것 ${n(already)}곳 건너뜀 (재실행)`);
 if (dupOfExisting) console.log(`  기존 행과 같은 오락실 ${n(dupOfExisting)}곳 건너뜀`);
 if (noCoord.length) console.log(`  주소로 좌표를 못 찾아 넣지 못한 곳 ${n(noCoord.length)}곳`);
 console.log('\n현재 arcades 구성:');
-for (const r of after) console.log(`  ${r.source ?? '(출처 미기록)'}: ${n(r.n)}곳`);
+for (const r of after) console.log(`  ${r.source ?? '(출처 미기록)'}: ${n(r._count._all)}곳`);
 console.log(
   `\n영업시간·보유 기종은 인허가 데이터에 없어 전부 '정보 없음' 입니다.` +
     `\n판단보류 ${n(buckets.unknown.length)}곳은 ${path.relative(root, UNKNOWN_FILE)} 에 있습니다 — 훑어보고 살릴 것이 있으면 알려주세요.\n`,

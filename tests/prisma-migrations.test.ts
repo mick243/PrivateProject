@@ -13,7 +13,7 @@ import { DERIVED_SQL_FILE, MIGRATION_FILES, SCHEMA_FILES } from '@/scripts/db-fi
 /**
  * `prisma/migrations/` 가 `db/` 와 어긋나지 않았는지 봅니다.
  *
- * tests/db-lists.test.ts 가 `lib/db.ts` 와 `scripts/db-files.mjs` 를 대조하는 것과 같은
+ * tests/db-lists.test.ts 가 `scripts/db-files.mjs` 를 db/ 폴더와 대조하는 것과 같은
  * 자리입니다. 목록이 어긋나면 **조용히** 어긋나기 때문입니다 — 2026-08-24 에 030~036 이
  * 빠진 채 이력만 남아 데이터가 비어 있었습니다. 마이그레이션 폴더는 생성물이므로
  * 대조도 생성기로 합니다: `npm run db:prisma:build` 를 돌린 결과와 디스크가 같아야 합니다.
@@ -29,7 +29,7 @@ describe('prisma/migrations', () => {
   /**
    * 뷰는 마이그레이션이 아닙니다. 넣으면 (1) 항상 마지막이어야 하는 뷰 폴더의 이름이
    * 새 마이그레이션마다 밀려 이미 적용된 DB 와 어긋나고 (2) 집계식 한 줄 고치는 데
-   * 새 파일이 필요해집니다. 기동 시 적용(lib/db.ts)과 `npm run db:views` 로 갑니다.
+   * 새 파일이 필요해집니다. 기동 시 적용(lib/prisma.ts bootChecks)과 `npm run db:views` 로 갑니다.
    */
   it('뷰는 마이그레이션에 들어가지 않는다', () => {
     expect(ORDERED_FILES).not.toContain(DERIVED_SQL_FILE);

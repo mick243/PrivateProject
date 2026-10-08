@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { handle, needLogin } from '@/lib/api-errors';
 import { getSession, revokeSessions, setSessionCookie } from '@/lib/auth';
 
 export const runtime = 'nodejs';
@@ -22,10 +23,12 @@ export const dynamic = 'force-dynamic';
  * 누른 사람의 쿠키는 새 번호로 다시 발급합니다 — 안 그러면 "다른 기기" 가 아니라
  * "나까지 전부" 가 됩니다. 비밀번호 변경(app/api/account PUT)이 같은 모양입니다.
  */
-export async function DELETE(request: Request) {
+async function onDelete(request: Request) {
   const session = await getSession(request);
-  if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
+  if (!session) return needLogin();
 
   await revokeSessions(session.playerId);
   return setSessionCookie(NextResponse.json({ user: session }), session.playerId);
 }
+
+export const DELETE = handle(onDelete);

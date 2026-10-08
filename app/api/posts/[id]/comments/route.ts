@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { badId, fail, forbidden, handle, needLogin, notFound, parseBody, parseId } from '@/lib/api-errors';
 import { isAdminRequest, requirePlayer, sessionPlayerId } from '@/lib/auth';
 import {
   createComment,
@@ -7,19 +8,12 @@ import {
   getPost,
   lastCommentOffset,
 } from '@/lib/board';
-import { formatIssues, postCommentInputSchema } from '@/lib/validation';
+import { postCommentInputSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ id: string }> };
-
-function parseId(raw: string): number | null {
-  const id = Number(raw);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
-
-const BAD_ID = () => NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
 
 /**
  * POST /api/posts/:id/comments — 댓글 작성
@@ -31,34 +25,20 @@ const BAD_ID = () => NextResponse.json({ error: '잘못된 id 입니다' }, { st
  * 그 페이지를 담아 보냅니다 — 1페이지를 보고 있었다면 방금 쓴 댓글이 화면에
  * 없는 상태로 응답이 오게 되고, 사용자는 등록이 안 된 줄 압니다.
  */
-export async function POST(request: Request, ctx: Ctx) {
+async function onPost(request: Request, ctx: Ctx) {
   const postId = parseId((await ctx.params).id);
-  if (postId === null) return BAD_ID();
+  if (postId === null) return badId();
 
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
-  }
-
-  const parsed = postCommentInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: '입력값이 올바르지 않습니다', details: formatIssues(parsed.error) },
-      { status: 400 },
-    );
-  }
+  const body = await parseBody(request, postCommentInputSchema);
+  if (!body.ok) return body.response;
 
   const existing = await getPost(postId, null);
-  if (!existing) {
-    return NextResponse.json({ error: '글을 찾을 수 없습니다' }, { status: 404 });
-  }
+  if (!existing) return notFound('글을 찾을 수 없습니다');
 
-  await createComment({ ...parsed.data, postId, playerId: guard.playerId });
+  await createComment({ ...body.value, postId, playerId: guard.playerId });
   return NextResponse.json(
     {
       post: await getPost(
@@ -78,21 +58,17 @@ export async function POST(request: Request, ctx: Ctx) {
  *
  *   본인이든 관리자든 근거는 세션 쿠키입니다.
  */
-export async function DELETE(request: Request, ctx: Ctx) {
+async function onDelete(request: Request, ctx: Ctx) {
   const postId = parseId((await ctx.params).id);
-  if (postId === null) return BAD_ID();
+  if (postId === null) return badId();
 
   const { searchParams } = new URL(request.url);
   const commentId = parseId(searchParams.get('commentId') ?? '');
   const playerId = await sessionPlayerId(request);
-  if (commentId === null) {
-    return NextResponse.json({ error: 'commentId 가 필요합니다' }, { status: 400 });
-  }
+  if (commentId === null) return fail(400, 'commentId 가 필요합니다');
 
   const isAdmin = await isAdminRequest(request);
-  if (!isAdmin && playerId === null) {
-    return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
-  }
+  if (!isAdmin && playerId === null) return needLogin();
 
   const rawOffset = Number(searchParams.get('commentOffset'));
   const commentOffset = Number.isInteger(rawOffset) && rawOffset > 0 ? rawOffset : 0;
@@ -104,10 +80,11 @@ export async function DELETE(request: Request, ctx: Ctx) {
   if (removedFrom === null) {
     // 관리자에게는 "없는 댓글", 그 외에는 "남의 댓글" — 관리자는 소유자 검사를
     // 거치지 않으므로 실패의 뜻이 하나뿐이다.
-    return isAdmin
-      ? NextResponse.json({ error: '댓글을 찾을 수 없습니다' }, { status: 404 })
-      : NextResponse.json({ error: '본인이 쓴 댓글만 삭제할 수 있습니다' }, { status: 403 });
+    return isAdmin ? notFound('댓글을 찾을 수 없습니다') : forbidden('본인이 쓴 댓글만 삭제할 수 있습니다');
   }
 
   return NextResponse.json({ post: await getPost(postId, playerId, commentOffset) });
 }
+
+export const POST = handle(onPost);
+export const DELETE = handle(onDelete);

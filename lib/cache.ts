@@ -31,7 +31,7 @@ interface Entry {
   expiresAt: number;
 }
 
-// dev 서버 HMR 마다 캐시가 새로 뜨지 않도록 globalThis 에 둡니다 (lib/db.ts 와 같은 이유).
+// dev 서버 HMR 마다 캐시가 새로 뜨지 않도록 globalThis 에 둡니다 (lib/prisma.ts 와 같은 이유).
 const globalForCache = globalThis as unknown as { __refCache?: Map<string, Entry> };
 const store: Map<string, Entry> = (globalForCache.__refCache ??= new Map());
 

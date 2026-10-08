@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { badId, handle, parseId } from '@/lib/api-errors';
 import { requirePlayer } from '@/lib/auth';
 import { getChartDetail, setClear } from '@/lib/tier';
 
@@ -20,10 +21,8 @@ type Ctx = { params: Promise<{ id: string }> };
  * (클리어하지 않은 사람의 투표가 남아 있으면 안 되므로).
  */
 async function apply(request: Request, ctx: Ctx, cleared: boolean): Promise<NextResponse> {
-  const chartId = Number((await ctx.params).id);
-  if (!Number.isInteger(chartId) || chartId <= 0) {
-    return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
-  }
+  const chartId = parseId((await ctx.params).id);
+  if (chartId === null) return badId();
 
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
@@ -34,7 +33,7 @@ async function apply(request: Request, ctx: Ctx, cleared: boolean): Promise<Next
 }
 
 /** PUT /api/charts/:id/clear — 클리어했다고 표시 */
-export const PUT = (request: Request, ctx: Ctx) => apply(request, ctx, true);
+export const PUT = handle((request: Request, ctx: Ctx) => apply(request, ctx, true));
 
 /** DELETE /api/charts/:id/clear — 표시를 지움 (그 채보의 내 투표도 함께 사라집니다) */
-export const DELETE = (request: Request, ctx: Ctx) => apply(request, ctx, false);
+export const DELETE = handle((request: Request, ctx: Ctx) => apply(request, ctx, false));

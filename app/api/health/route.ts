@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { ping } from '@/lib/typed-sql';
-import { getPrismaClient } from '@/lib/prisma';
+import { handle } from '@/lib/api-errors';
+import { pingDatabase } from '@/lib/health';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,13 +20,12 @@ export const dynamic = 'force-dynamic';
  * `checks` 의 값은 'ok' | 'fail' 만 씁니다. Pulse 프로브가 항목마다 `check.<이름>` 지표(1/0)로
  * 편입하는 규약이라, 여기 항목을 하나 늘리면 대시보드에 차트가 하나 늘어납니다.
  */
-export async function GET() {
+async function onGet() {
   const startedAt = Date.now();
   const checks: Record<'db' | 'db_primary', 'ok' | 'fail'> = { db: 'fail', db_primary: 'fail' };
 
   try {
-    const prisma = await getPrismaClient();
-    await prisma.$queryRawTyped(ping());
+    await pingDatabase();
     checks.db = 'ok';
     checks.db_primary = 'ok';
   } catch (err) {
@@ -51,3 +50,5 @@ export async function GET() {
     },
   );
 }
+
+export const GET = handle(onGet);

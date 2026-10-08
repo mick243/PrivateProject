@@ -1,14 +1,14 @@
 /**
- * SQL 파일 목록 — 스크립트(init-db · migrate)가 공유합니다.
+ * SQL 파일 목록 — **이 파일 하나가 정본**입니다. 옛 러너(init-db · migrate)와 Prisma
+ * 마이그레이션 생성기(prisma-migrations-build.mjs)가 함께 읽습니다.
  *
- * ⚠ 이 세 목록은 `lib/db.ts` 와 같아야 합니다. 스크립트는 `.ts` 를 import 할 수
- *   없어서 옮겨 적은 것이고, `tests/db-lists.test.ts` 가 둘을 대조합니다.
- *   `lib/db.ts` 를 고치면 여기도 고치세요 — 어긋나면 **조용히** 어긋납니다
- *   (2026-08-24 에 030~036 이 빠진 채 이력만 남아 데이터가 비어 있었습니다).
+ * 2026-09-28 까지는 같은 목록이 `lib/db.ts` 에도 있어 두 벌을 손으로 맞췄습니다. 어긋나면
+ * **조용히** 어긋납니다 — 2026-08-24 에 030~036 이 빠진 채 이력만 남아 데이터가 비어
+ * 있었습니다. lib/db.ts 를 지우면서 목록은 여기 하나가 됐고, db/ 폴더와의 대조는
+ * `tests/db-lists.test.ts`, prisma/migrations 와의 대조는 `tests/prisma-migrations.test.ts` 가 합니다.
  */
 
-// 적용 순서 = lib/db.ts 의 SQL_GROUPS 와 동일.
-// tier 는 machines 를, community/board 는 arcades + players/charts 를 참조한다.
+// 적용 순서. tier 는 machines 를, community/board 는 arcades + players/charts 를 참조한다.
 export const SCHEMA_GROUPS = [
   { sentinel: 'arcades', files: ['schema.sql', 'seed.sql'] },
   { sentinel: 'charts', files: ['schema-tier.sql', 'seed-tier.sql'] },
@@ -19,7 +19,7 @@ export const SCHEMA_GROUPS = [
 
 export const SCHEMA_FILES = SCHEMA_GROUPS.flatMap((g) => g.files);
 
-// 이미 적용된 스키마를 고치는 변경 (lib/db.ts MIGRATION_FILES).
+// 이미 적용된 스키마를 고치는 변경.
 // 새로 만든 DB 는 시드에 이미 최종 상태가 있어 아무 일도 하지 않지만, 이력을
 // 남겨야 서버가 뜰 때 다시 실행하지 않는다.
 export const MIGRATION_FILES = [
@@ -108,7 +108,7 @@ export const MIGRATION_FILES = [
 // 파생 객체(뷰). 테이블이 다 만들어진 뒤 마지막에.
 export const DERIVED_SQL_FILE = 'views.sql';
 
-/** lib/db.ts MIGRATION_LOCK_KEY 와 같은 값 — 서버와 스크립트가 같은 잠금을 잡아야 합니다 */
+/** lib/prisma.ts MIGRATION_LOCK_KEY 와 같은 값 — 서버(뷰 재생성)와 스크립트가 같은 잠금을 잡아야 합니다 */
 export const MIGRATION_LOCK_KEY = 72_028_531;
 
 export const MIGRATIONS_TABLE = `

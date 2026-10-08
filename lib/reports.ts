@@ -180,6 +180,8 @@ export interface ListReportsParams {
    */
   q?: string | null;
   limit?: number;
+  /** 건너뛸 수 — 챗봇 도구의 쪽 넘기기 (최신순이라 새 제보가 오면 한 칸씩 밀릴 수 있습니다) */
+  offset?: number;
 }
 
 export async function listReports(params: ListReportsParams): Promise<MachineReport[]> {
@@ -191,6 +193,7 @@ export async function listReports(params: ListReportsParams): Promise<MachineRep
     sinceHours = null,
     q = null,
     limit = 50,
+    offset = 0,
   } = params;
 
   // 빈 검색어는 조건을 걸지 않는 것과 같다.
@@ -224,6 +227,7 @@ export async function listReports(params: ListReportsParams): Promise<MachineRep
     where,
     orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
     take: limit,
+    skip: offset,
     include: reportInclude,
   });
   const counts = await cabinetCounts(prisma, rows);

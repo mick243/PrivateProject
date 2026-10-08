@@ -31,7 +31,7 @@
  * ─────────────────────────────────────────────────────────────────────
  *
  * .ts 로 두는 이유: Node 24 는 타입만 지운 채 .ts 를 그대로 실행하므로
- * lib/naver-local.ts 와 lib/db.ts 를 **그대로 가져다 씁니다**. 파싱·좌표 변환을
+ * lib/naver-local.ts 와 lib/prisma.ts 를 **그대로 가져다 씁니다**. 파싱·좌표 변환을
  * .mjs 로 옮겨 적으면 테스트가 검증하는 코드와 실제로 도는 코드가 갈라집니다.
  *
  * ⚠ 가져오는 것과 못 가져오는 것
@@ -43,7 +43,7 @@
  *   자세한 사정은 lib/naver-local.ts 의 파일 주석에 적어 두었습니다.
  */
 
-import { getDb } from '../lib/db.ts';
+import { BULK_TX_OPTIONS, getPrismaClient } from '../lib/prisma.ts';
 import {
   crawlArcades,
   dedupePlaces,
@@ -54,7 +54,6 @@ import {
 import { buildArcadeQueries, countRegions } from '../lib/kr-regions.ts';
 import { loadScriptEnv } from '../lib/script-env.ts';
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 
 // ─── .env.local (lib/script-env.ts — scripts/ 의 .ts 도구 공용) ────────
@@ -271,54 +270,14 @@ if (!write) {
 }
 
 // ─── DB 반영 ─────────────────────────────────────────────────────────
-/**
- * 포트가 열려 있는지만 봅니다.
- *
- * [왜 확인하는가]
- *   PGlite(기본 DB)는 **한 프로세스만** 데이터 디렉터리를 열 수 있습니다.
- *   `next dev` 가 떠 있는 채로 여기서 쓰면 두 가지가 벌어집니다:
- *     1. 서버는 자기 커넥션에 물린 옛 데이터를 계속 내보냅니다 — 수입 결과가
- *        화면에 안 보여서 "왜 안 바뀌지" 로 한참 헤매게 됩니다. (실제로 겪었습니다)
- *     2. 같은 디렉터리에 두 프로세스가 쓰면 파일이 깨질 수 있습니다.
- *   DATABASE_URL(실제 Postgres)을 쓰는 경우에는 해당되지 않습니다.
- *
- * [왜 fetch 가 아닌가]
- *   undici 의 커넥션 풀이 핸들을 붙잡고 있어서 곧바로 process.exit 하면
- *   Windows 에서 libuv 어서션이 찍히고 종료 코드가 망가집니다.
- *   소켓을 직접 열고 바로 닫으면 그럴 일이 없습니다.
- */
-function portInUse(port: number, timeoutMs = 800): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = net.connect({ host: '127.0.0.1', port });
-    const done = (v: boolean) => {
-      sock.destroy();
-      resolve(v);
-    };
-    sock.setTimeout(timeoutMs, () => done(false));
-    sock.once('connect', () => done(true));
-    sock.once('error', () => done(false));
-  });
-}
-
-if (!process.env.DATABASE_URL && (await portInUse(3000))) {
-  fail(
-    [
-      '포트 3000 에 무언가(아마도 next dev) 떠 있습니다. 먼저 멈춰 주세요.',
-      '  기본 DB(PGlite)는 한 프로세스만 데이터 디렉터리를 열 수 있어, 켜둔 채로',
-      '  쓰면 결과가 화면에 반영되지 않고 데이터가 깨질 수 있습니다.',
-      '  실제 Postgres(DATABASE_URL)를 쓰면 이 제한이 없습니다.',
-      '',
-      '  (수집 진행분은 이미 저장돼 있으니 다시 돌려도 호출을 낭비하지 않습니다)',
-    ].join('\n'),
-  );
-}
-
-const db = await getDb();
+// DATABASE_URL 이 없으면 여기서 멈춥니다 (lib/prisma.ts). 예전 경로(lib/db.ts)는 조용히
+// .pglite 로 내려가 "끝났다" 고 말한 뒤 실 DB 에는 아무것도 남기지 않을 수 있었습니다.
+const prisma = await getPrismaClient();
 
 let inserted = 0;
 let updated = 0;
 
-await db.transaction(async (tx) => {
+await prisma.$transaction(async (tx) => {
   /*
    * 이미 들어가 있는 행 중 지금 기준에 안 맞는 것을 걷어냅니다.
    *
@@ -328,14 +287,13 @@ await db.transaction(async (tx) => {
    * 카테고리 기준까지 여기서 적용하면, 이어서 하기 중인 상태에서 아직 다시
    * 만나지 못한 지역의 행을 지워 버립니다.
    */
-  const { rows: stale } = await tx.query<{ id: number; name: string }>(
-    `SELECT id, name FROM arcades WHERE source = 'naver'`,
-  );
+  const stale = await tx.arcades.findMany({
+    where: { source: 'naver' },
+    select: { id: true, name: true },
+  });
   const toDrop = stale.filter((r) => isExcludedByName(r.name));
   if (toDrop.length) {
-    await tx.query(`DELETE FROM arcades WHERE id = ANY($1::int[])`, [
-      toDrop.map((r) => r.id),
-    ]);
+    await tx.arcades.deleteMany({ where: { id: { in: toDrop.map((r) => r.id) } } });
     console.log(
       `
 뽑기·가챠 전문점 ${toDrop.length}곳 제거 (리듬게임 기체가 없는 업종)`,
@@ -348,10 +306,8 @@ await db.transaction(async (tx) => {
     // 예시 데이터에 붙은 제보·리뷰는 그 오락실에 대한 **꾸며낸 이야기**입니다.
     // 실제 업소 행이 같은 id 를 물려받으면 남의 가게에 없는 리뷰가 붙습니다.
     // ON DELETE CASCADE 가 딸린 행들을 함께 지웁니다.
-    const { rows } = await tx.query<{ id: number }>(
-      `DELETE FROM arcades WHERE source = 'seed' RETURNING id`,
-    );
-    console.log(`\n예시 데이터 ${rows.length}곳 삭제 (딸린 제보·리뷰 포함)`);
+    const { count } = await tx.arcades.deleteMany({ where: { source: 'seed' } });
+    console.log(`\n예시 데이터 ${count}곳 삭제 (딸린 제보·리뷰 포함)`);
   } else if (dropSeed && hitLimit) {
     console.log(
       `\n(가상) 예시 데이터는 남겨 둡니다 — 아직 다 모으지 못했습니다.` +
@@ -371,13 +327,11 @@ await db.transaction(async (tx) => {
      * 열쇠를 겸합니다 (이름+주소에서 파생되므로 둘은 같은 기준입니다).
      */
     const ref = p.mapUrl;
-    const { rows: found } = await tx.query<{ id: number }>(
-      `SELECT id FROM arcades
-        WHERE source_ref = $1
-           OR (source = 'naver' AND name = $2 AND address = $3)
-        LIMIT 1`,
-      [ref, p.name, p.address],
-    );
+    const found = await tx.arcades.findFirst({
+      where: { OR: [{ source_ref: ref }, { source: 'naver', name: p.name, address: p.address }] },
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    });
 
     // 홈페이지는 제 칸(arcades.homepage, migrate-055)으로 갑니다.
     //
@@ -385,43 +339,58 @@ await db.transaction(async (tx) => {
     // 보이는 한 줄 메모**라서 목록 카드마다 "네이버 지역 검색 · 스포츠,오락>오락실 ·
     // https://…utm_source=qr" 이 그대로 찍혔습니다. 출처는 source/source_ref 가
     // 이미 들고 있으므로 메모에 적을 이유가 없습니다.
-    const homepage = p.homepage ?? null;
+    //
+    // 네이버는 링크가 없으면 **빈 문자열**을 줍니다(lib/naver-local.ts `item.link ?? ''`). 빈 값은
+    // "없음" 으로 읽습니다 — 옛 SQL 의 COALESCE('', homepage) 는 NULL 이 아니라서 사람이 적어 둔
+    // 홈페이지를 '' 로 덮었습니다 (2026-09-28 픽스처 실행으로 확인).
+    const homepage = p.homepage || null;
 
-    if (found[0]) {
+    if (found) {
       // 이름·주소·좌표만 갱신합니다. 영업시간과 기종은 사람이 채운 값일 수
       // 있으므로 건드리지 않습니다 — 네이버는 그 정보를 주지 않으니
       // 덮어쓰면 확인해서 넣은 값을 지우는 셈입니다.
-      await tx.query(
-        `UPDATE arcades
-            SET name = $2, address = $3, lat = $4, lng = $5,
-                source = 'naver', source_ref = $6,
-                -- 사람이 적어 둔 홈페이지를 빈 값으로 덮지 않는다
-                homepage = COALESCE($7, arcades.homepage),
-                updated_at = now()
-          WHERE id = $1`,
-        [found[0].id, p.name, p.address, p.lat, p.lng, ref, homepage],
-      );
+      await tx.arcades.update({
+        where: { id: found.id },
+        data: {
+          name: p.name,
+          address: p.address,
+          lat: p.lat,
+          lng: p.lng,
+          source: 'naver',
+          source_ref: ref,
+          // 사람이 적어 둔 홈페이지를 빈 값으로 덮지 않는다 (옛 SQL 의 COALESCE($7, homepage))
+          ...(homepage === null ? {} : { homepage }),
+          updated_at: new Date(),
+        },
+      });
       updated += 1;
     } else {
-      await tx.query(
-        `INSERT INTO arcades
-           (name, address, lat, lng, open_time, close_time, is_24h, phone, note,
-            homepage, source, source_ref)
-         VALUES ($1, $2, $3, $4, NULL, NULL, FALSE, NULL, NULL, $5, 'naver', $6)`,
-        [p.name, p.address, p.lat, p.lng, homepage, ref],
-      );
+      // 영업시간·전화·메모는 비워 둡니다(스키마 기본값) — 네이버가 주지 않는 정보입니다.
+      await tx.arcades.create({
+        data: {
+          name: p.name,
+          address: p.address,
+          lat: p.lat,
+          lng: p.lng,
+          homepage,
+          source: 'naver',
+          source_ref: ref,
+        },
+      });
       inserted += 1;
     }
   }
-});
+}, BULK_TX_OPTIONS);
 
-const { rows: after } = await db.query<{ source: string | null; n: number }>(
-  `SELECT source, COUNT(*)::int AS n FROM arcades GROUP BY source ORDER BY source`,
-);
+const after = await prisma.arcades.groupBy({
+  by: ['source'],
+  _count: { _all: true },
+  orderBy: { source: 'asc' },
+});
 
 console.log(`\n반영 완료 — 새로 ${inserted}곳, 갱신 ${updated}곳`);
 console.log('현재 arcades 구성:');
-for (const r of after) console.log(`  ${r.source ?? '(출처 미기록)'}: ${r.n}곳`);
+for (const r of after) console.log(`  ${r.source ?? '(출처 미기록)'}: ${r._count._all}곳`);
 console.log(
   `\n영업시간은 지역 검색 응답에 없어 전부 '정보 없음' 입니다.\n` +
     `source_ref 의 네이버 링크에서 확인해 관리자 화면에서 채워 주세요.\n`,

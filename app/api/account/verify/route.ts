@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { forbidden, handle, needLogin, parseBody, tooMany } from '@/lib/api-errors';
 import {
   clearLoginFailures,
   getSession,
@@ -6,7 +7,7 @@ import {
   noteLoginFailure,
   verifyPlayerPassword,
 } from '@/lib/auth';
-import { accountVerifySchema, formatIssues } from '@/lib/validation';
+import { accountVerifySchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,39 +20,27 @@ export const dynamic = 'force-dynamic';
  * 그 상태가 곧 두 번째 세션이 되어 만료·회수를 따로 관리해야 합니다.
  * 시도 제한 키는 PUT 과 같습니다 — 이 라우트로 우회 대입하는 것을 막습니다.
  */
-export async function POST(request: Request) {
+async function onPost(request: Request) {
   const session = await getSession(request);
-  if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
+  if (!session) return needLogin();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
-  }
-
-  const parsed = accountVerifySchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: formatIssues(parsed.error)[0] ?? '입력값이 올바르지 않습니다' },
-      { status: 400 },
-    );
-  }
+  // /account 화면은 error 한 줄만 띄웁니다 — 첫 문구를 머리로 (lib/api-errors.ts).
+  const body = await parseBody(request, accountVerifySchema, 'first');
+  if (!body.ok) return body.response;
 
   const key = `account:${session.playerId}`;
   const lockedMs = await loginLockRemainingMs(key);
   if (lockedMs > 0) {
-    return NextResponse.json(
-      { error: `시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요` },
-      { status: 429 },
-    );
+    return tooMany(`시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요`, lockedMs);
   }
 
-  if (!(await verifyPlayerPassword(session.playerId, parsed.data.password))) {
+  if (!(await verifyPlayerPassword(session.playerId, body.value.password))) {
     await noteLoginFailure(key);
-    return NextResponse.json({ error: '비밀번호가 올바르지 않습니다' }, { status: 403 });
+    return forbidden('비밀번호가 올바르지 않습니다');
   }
 
   await clearLoginFailures(key);
   return NextResponse.json({ ok: true });
 }
+
+export const POST = handle(onPost);

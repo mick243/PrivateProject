@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { badId, fail, handle, parseId, tooMany, unavailable } from '@/lib/api-errors';
 import { countMachineGuesses, listMachineGuesses } from '@/lib/arcades';
 import { clientKey, isAdminRequest, sessionPlayerId } from '@/lib/auth';
 import { MachineGuessUnavailable, guessMachines } from '@/lib/machine-guess';
@@ -26,10 +27,7 @@ const IP_LIMIT = limitFromEnv('GUESS_LIMIT_PER_IP', 1);
 const ANON_PER_ARCADE_LIMIT = limitFromEnv('GUESS_LIMIT_ANON_PER_ARCADE', 1);
 const GLOBAL_LIMIT = limitFromEnv('GUESS_LIMIT_GLOBAL', 200);
 
-function arcadeIdOf(raw: string): number | null {
-  const n = Number(raw);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
+type Ctx = { params: Promise<{ id: string }> };
 
 /**
  * GET /api/arcades/:id/guesses — 이 오락실의 보유 기종 **추정**.
@@ -39,9 +37,9 @@ function arcadeIdOf(raw: string): number | null {
  *
  * 로그인을 요구하지 않습니다 — 읽기이고, 개인에 따라 달라지는 값이 없습니다.
  */
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const arcadeId = arcadeIdOf((await params).id);
-  if (arcadeId === null) return NextResponse.json({ error: '잘못된 주소입니다' }, { status: 400 });
+async function onGet(_request: Request, ctx: Ctx) {
+  const arcadeId = parseId((await ctx.params).id);
+  if (arcadeId === null) return badId();
   return NextResponse.json({ guesses: await listMachineGuesses(arcadeId) });
 }
 
@@ -54,9 +52,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
  * 관리자만은 그 경우에도 다시 돕니다. 모델이나 검색 결과가 좋아지면 같은
  * 자리를 갱신하는 것이 맞고, 관리자가 굳이 눌렀다는 것이 그 뜻입니다.
  */
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const arcadeId = arcadeIdOf((await params).id);
-  if (arcadeId === null) return NextResponse.json({ error: '잘못된 주소입니다' }, { status: 400 });
+async function onPost(request: Request, ctx: Ctx) {
+  const arcadeId = parseId((await ctx.params).id);
+  if (arcadeId === null) return badId();
 
   const admin = await isAdminRequest(request);
 
@@ -90,19 +88,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     const mine = await consume(key, limit, DAY_MS);
     if (!mine.allowed) {
-      return NextResponse.json(
-        { error: `오늘 AI 검색 한도(${mine.limit}회)를 다 썼어요. ${retryAfterLabel(mine.retryAfterMs)} 뒤에 다시 열려요.` },
-        { status: 429, headers: { 'Retry-After': String(Math.ceil(mine.retryAfterMs / 1000)) } },
+      return tooMany(
+        `오늘 AI 검색 한도(${mine.limit}회)를 다 썼어요. ${retryAfterLabel(mine.retryAfterMs)} 뒤에 다시 열려요.`,
+        mine.retryAfterMs,
       );
     }
 
     const all = await consume('guess:global', GLOBAL_LIMIT, DAY_MS);
     if (!all.allowed) {
       console.warn(`[guess] 전체 일일 한도 ${all.limit} 도달 — ${retryAfterLabel(all.retryAfterMs)} 뒤 해제`);
-      return NextResponse.json(
-        { error: '오늘은 AI 검색이 많아 잠시 쉬고 있어요. 내일 다시 시도해 주세요.' },
-        { status: 503, headers: { 'Retry-After': String(Math.ceil(all.retryAfterMs / 1000)) } },
-      );
+      return unavailable('오늘은 AI 검색이 많아 잠시 쉬고 있어요. 내일 다시 시도해 주세요.', all.retryAfterMs);
     }
   }
 
@@ -110,9 +105,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json(await guessMachines(arcadeId));
   } catch (err) {
     if (err instanceof MachineGuessUnavailable) {
-      return NextResponse.json({ error: err.message }, { status: 503 });
+      return unavailable(err.message);
     }
     console.error('[guess] 실패 —', err);
-    return NextResponse.json({ error: '검색 중 오류가 났습니다' }, { status: 502 });
+    return fail(502, '검색 중 오류가 났습니다');
   }
 }
+
+export const GET = handle(onGet);
+export const POST = handle(onPost);

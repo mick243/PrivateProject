@@ -1,5 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Db } from '@/lib/db';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Sample } from '@/lib/telemetry';
 
 /**
@@ -158,42 +157,17 @@ describe('snapshot — 창을 지표로 바꾼다', () => {
   });
 });
 
-describe('withTelemetry — Db 어댑터를 감싼다', () => {
-  // Db.query 는 제네릭이라 vi.fn 의 반환 타입과 맞지 않는다 — 대역은 통째로 캐스팅한다
-  const fake = {
-    query: vi.fn(async () => ({ rows: [{ ok: 1 }] })),
-    exec: vi.fn(async () => {}),
-    transaction: vi.fn(async (fn: (tx: { query: () => Promise<{ rows: never[] }> }) => Promise<unknown>) =>
-      fn({ query: async () => ({ rows: [] }) }),
-    ),
-  } as unknown as Db;
-
-  it('query / exec / transaction 안의 tx.query 가 모두 잡힌다', async () => {
-    t.snapshot();
-    const db = t.withTelemetry(fake);
-    await db.query('SELECT * FROM arcades');
-    await db.exec('UPDATE players SET x = 1');
-    await db.transaction((tx) => tx.query('DELETE FROM posts WHERE id = 1'));
-    const m = byName(t.snapshot());
-    expect(m['app.db.qpm']).toBeGreaterThan(0);
-    expect(m['query.SELECT arcades.qpm']).toBeDefined();
-    expect(m['query.UPDATE players.qpm']).toBeDefined();
-    expect(m['query.DELETE posts.qpm']).toBeDefined();
-  });
-
-  it('실패한 쿼리는 에러로 세고 예외는 그대로 던진다', async () => {
-    t.snapshot();
-    const failing = { ...fake, query: vi.fn(async () => { throw new Error('boom'); }) } as unknown as Db;
-    await expect(t.withTelemetry(failing).query('SELECT * FROM reviews')).rejects.toThrow('boom');
-    expect(byName(t.snapshot())['query.SELECT reviews.errors']).toBe(1);
-  });
-
-  it('계측이 꺼져 있으면 원본을 그대로 돌려준다 — 비용 0', () => {
+// 옛 어댑터(lib/db.ts)를 감싸던 withTelemetry(db) 는 어댑터와 함께 지웠습니다 (2026-09-28).
+// Prisma 경로의 계측은 lib/prisma.ts 의 $extends 가 recordOperation 으로 합니다.
+describe('계측이 꺼져 있으면 — 비용 0', () => {
+  it('PULSE_AGENT_KEY 가 없으면 기록하지 않는다', () => {
     delete process.env.PULSE_AGENT_KEY;
     expect(t.enabled()).toBe(false);
-    expect(t.withTelemetry(fake)).toBe(fake);
     t.recordHttp('GET /api/games', 200, 1);
-    expect(byName(t.snapshot())['app.http.rpm']).toBe(0);
+    t.recordQuery('SELECT * FROM arcades', 1, true);
+    const m = byName(t.snapshot());
+    expect(m['app.http.rpm']).toBe(0);
+    expect(m['app.db.qpm']).toBe(0);
   });
 });
 

@@ -19,6 +19,7 @@
     "db:prisma:sql:check": "node scripts/prisma-typed-sql.mjs --check",
     "db:prisma:build": "node scripts/prisma-migrations-build.mjs",
     "db:prisma:check": "node scripts/prisma-migrations-build.mjs --check",
+    "data:release": "node scripts/data-release.ts",
     "db:prisma:baseline": "node scripts/prisma-baseline.mjs",
     "db:migrate:prisma": "prisma migrate deploy",
     "db:prisma:drift": "prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code",

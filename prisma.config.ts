@@ -36,8 +36,9 @@ export default defineConfig({
   tables: {
     /**
      * 옛 마이그레이션 러너(scripts/migrate.mjs · lib/db.ts)가 쓰는 이력 테이블입니다.
-     * Prisma 의 데이터모델에는 없지만 DB 에는 남아 있어야 합니다 — `DB_CLIENT` 를 비우면
-     * 옛 경로로 되돌아갈 수 있게 남겨 두는 것이 이관 계획입니다(docs/PRISMA-MIGRATION.md).
+     * Prisma 의 데이터모델에는 없지만 DB 에는 남아 있어야 합니다 — 앱 코드를 git 으로 되돌리면
+     * 옛 러너가 이 표를 보고 그대로 돌 수 있게 남겨 두는 것이 이관 계획입니다
+     * (docs/PRISMA-MIGRATION.md §3-3 되돌리기).
      *
      * 여기 적어 두지 않으면 `migrate diff`(= npm run db:prisma:drift)가 매번
      * "schema_migrations 를 지워야 한다" 고 말합니다. 잡음이 섞인 드리프트 검사는

@@ -23,11 +23,11 @@
  * 가져다 쓰기 위해서입니다.
  */
 
-import { getDb } from '../lib/db.ts';
 import { SOURCES, type ChartSource } from '../lib/chart-sources.ts';
+import { BULK_TX_OPTIONS, getPrismaClient } from '../lib/prisma.ts';
 import { describeTarget, loadScriptEnv } from '../lib/script-env.ts';
 
-// 첫 getDb() 보다 먼저. 없으면 실 DB 대신 .pglite 에 조용히 들어간다.
+// 첫 getPrismaClient() 보다 먼저 — DATABASE_URL 을 .env.local 에서 읽어 옵니다.
 loadScriptEnv();
 
 const args = process.argv.slice(2);
@@ -46,14 +46,13 @@ function usage(): void {
 
 /** machines.short_name → id. 없으면 이름이 틀린 것이므로 멈춘다. */
 async function machineIdOf(shortName: string): Promise<number> {
-  const db = await getDb();
-  const { rows } = await db.query<{ id: number }>(
-    `SELECT id FROM machines WHERE short_name = $1`,
-    [shortName],
-  );
-  const id = rows[0]?.id;
-  if (id === undefined) throw new Error(`machines 에 short_name='${shortName}' 이 없습니다`);
-  return Number(id);
+  const prisma = await getPrismaClient();
+  const row = await prisma.machines.findFirst({
+    where: { short_name: shortName },
+    select: { id: true },
+  });
+  if (!row) throw new Error(`machines 에 short_name='${shortName}' 이 없습니다`);
+  return row.id;
 }
 
 interface Tally {
@@ -78,13 +77,13 @@ async function applyOne(key: string, src: ChartSource): Promise<void> {
   for (const s of songs) seen.set(s.title, (seen.get(s.title) ?? 0) + 1);
   const dupTitles = [...seen].filter(([, n]) => n > 1).map(([t]) => t);
 
-  const db = await getDb();
+  const prisma = await getPrismaClient();
 
   // 출처에서 사라진 곡 — 지우지 않고 세기만 한다 (머리말 참고).
-  const { rows: existing } = await db.query<{ title: string }>(
-    `SELECT title FROM songs WHERE machine_id = $1`,
-    [machineId],
-  );
+  const existing = await prisma.songs.findMany({
+    where: { machine_id: machineId },
+    select: { title: true },
+  });
   const incoming = new Set(songs.map((s) => s.title));
   const missing = existing.map((r) => r.title).filter((t) => !incoming.has(t));
 
@@ -98,49 +97,70 @@ async function applyOne(key: string, src: ChartSource): Promise<void> {
     return;
   }
 
-  await db.transaction(async (tx) => {
+  await prisma.$transaction(async (tx) => {
     // 모드 목록부터 — 채보의 mode 가 machine_modes 에 없으면 화면이 코드를 날것으로 그린다.
+    // 이미 있으면 이름만 따라잡습니다 (순서는 사람이 정한 값일 수 있어 두고).
     for (const [i, m] of src.modes.entries()) {
-      await tx.query(
-        `INSERT INTO machine_modes (machine_id, code, label, sort_order)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (machine_id, code) DO UPDATE SET label = EXCLUDED.label`,
-        [machineId, m.code, m.label, i + 1],
-      );
+      await tx.machine_modes.upsert({
+        where: { machine_id_code: { machine_id: machineId, code: m.code } },
+        create: { machine_id: machineId, code: m.code, label: m.label, sort_order: i + 1 },
+        update: { label: m.label },
+      });
     }
 
     for (const song of songs) {
-      const { rows } = await tx.query<{ id: number; inserted: boolean }>(
-        `INSERT INTO songs (machine_id, title, artist)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (machine_id, title)
-           DO UPDATE SET artist = COALESCE(EXCLUDED.artist, songs.artist)
-         RETURNING id, (xmax = 0) AS inserted`,
-        [machineId, song.title, song.artist],
-      );
-      const songId = Number(rows[0]!.id);
-      if (rows[0]!.inserted) tally.songsNew += 1;
+      // 열쇠는 (기종, 제목). 새 곡을 세야 해서 upsert 대신 찾고 나서 씁니다 — 옛 SQL 은
+      // ON CONFLICT … RETURNING (xmax = 0) 으로 한 문장에 했습니다. 도구는 혼자 쓰므로
+      // 찾기와 쓰기 사이에 끼어들 사람이 없습니다.
+      const had = await tx.songs.findUnique({
+        where: { machine_id_title: { machine_id: machineId, title: song.title } },
+        select: { id: true },
+      });
+      let songId: number;
+      if (had) {
+        songId = had.id;
+        // 출처가 작곡가를 비워 보내면 있던 값을 지킵니다 (옛 SQL 의 COALESCE(EXCLUDED.artist, songs.artist)).
+        if (song.artist !== null) {
+          await tx.songs.update({ where: { id: songId }, data: { artist: song.artist } });
+        }
+      } else {
+        const created = await tx.songs.create({
+          data: { machine_id: machineId, title: song.title, artist: song.artist },
+          select: { id: true },
+        });
+        songId = created.id;
+        tally.songsNew += 1;
+      }
 
       for (const c of song.charts) {
         // level 만 갱신한다 — 투표·집계 컬럼은 손대지 않는다. 난이도 표기가 바뀌어도
         // (13 → 13+) 그건 **다른 층**이라 새 행이 되고, 옛 행은 사람이 정리한다.
-        const { rows: cr } = await tx.query<{ inserted: boolean }>(
-          // 열쇠에 version_id · difficulty 가 함께 들어갑니다 (migrate-059). 여기서
-          // 넣는 채보는 둘 다 NULL 이지만, **추론은 제약의 컬럼 전부와 맞아야** 해서
-          // 다섯 개를 그대로 적습니다 — 셋만 적으면 "matching the ON CONFLICT
-          // specification" 을 못 찾아 임포터가 통째로 죽습니다.
-          `INSERT INTO charts (song_id, mode, level, level_label)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT (song_id, version_id, mode, difficulty, level_label)
-             DO UPDATE SET level = EXCLUDED.level
-           RETURNING (xmax = 0) AS inserted`,
-          [songId, c.mode, c.level, c.levelLabel],
-        );
-        if (cr[0]!.inserted) tally.chartsNew += 1;
-        else tally.chartsUpdated += 1;
+        //
+        // 열쇠는 (곡, 버전, 모드, 난이도, 층 이름) 이고 NULLS NOT DISTINCT 입니다 (migrate-059).
+        // 여기서 넣는 채보는 버전·난이도가 NULL 인데, Prisma 의 복합 unique 입력은 NULL 을
+        // 받지 않아 findFirst 로 찾습니다 — `version_id: null` 은 IS NULL 로 나갑니다.
+        const chart = await tx.charts.findFirst({
+          where: {
+            song_id: songId,
+            version_id: null,
+            mode: c.mode,
+            difficulty: null,
+            level_label: c.levelLabel,
+          },
+          select: { id: true },
+        });
+        if (chart) {
+          await tx.charts.update({ where: { id: chart.id }, data: { level: c.level } });
+          tally.chartsUpdated += 1;
+        } else {
+          await tx.charts.create({
+            data: { song_id: songId, mode: c.mode, level: c.level, level_label: c.levelLabel },
+          });
+          tally.chartsNew += 1;
+        }
       }
     }
-  });
+  }, BULK_TX_OPTIONS);
 
   report(key, tally, chartCount, true);
 }

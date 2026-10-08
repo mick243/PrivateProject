@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { handle } from '@/lib/api-errors';
 import { requireAdmin } from '@/lib/auth';
 import { listEmoticonsForAdmin, normalizeAdminQuery } from '@/lib/emoticons';
 
@@ -16,7 +17,7 @@ export const dynamic = 'force-dynamic';
  * 응답 `{ rows, total, page, pageSize }` — 페이지 번호는 서버가 다듬은 값으로
  * 돌려줍니다. 화면이 보낸 값이 잘려도(페이지 크기 상한) 화면이 그대로 따라옵니다.
  */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
@@ -30,3 +31,5 @@ export async function GET(request: Request) {
   const { rows, total } = await listEmoticonsForAdmin(query);
   return NextResponse.json({ rows, total, page: query.page, pageSize: query.pageSize });
 }
+
+export const GET = handle(onGet);

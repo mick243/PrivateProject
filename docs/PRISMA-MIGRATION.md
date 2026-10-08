@@ -6,6 +6,12 @@
 SQL 문자열이 없고, `lib/db.ts` 는 scripts/ 전용으로 남았습니다. 중간 단계였던 `DB_CLIENT` 스위치는
 없어졌습니다 — 앱은 항상 Prisma 입니다.
 
+**2026-09-28 (2차 · main 반영 2026-10-08)** — 그 scripts/ 의 `.ts` 도구 여섯 개도 Prisma 로 옮기고, 쓰는 곳이 없어진
+`lib/db.ts`(627줄)를 지웠습니다. 적용 순서 목록은 `scripts/db-files.mjs` 하나가 됐습니다. 환경 사이에 데이터를
+옮기는 `npm run data:release` 도 Prisma 로 새로 만들었습니다(docs/DATA-SOURCES.md). §11. 이 2차는 09-28 에
+`portfolio-backend-optimization` 워크트리에서 만들어 미커밋으로 남아 있다가, 10-08 에 그사이 main(디자인 · 배포 ·
+모니터링 36커밋) 위로 손으로 옮겼습니다.
+
 측정과 확인은 전부 2026-09-22 에 이 장비에서 한 것입니다.
 
 ---
@@ -43,14 +49,18 @@ SQL 문자열이 없고, `lib/db.ts` 는 scripts/ 전용으로 남았습니다. 
 | `db/migrate-080-restore-missing-fks.sql` | 개발 DB 에서 사라진 외래키 12개 복구 (§7) |
 | `lib/prisma.ts` | 앱의 유일한 DB 진입점 — 클라이언트 싱글턴 · 기동 점검(미적용 경고 · 뷰 재생성) · 쿼리 계측 |
 | `prisma/sql/*.sql` | TypedSQL 9개 — 반경 검색·서열표·DB 함수 호출·원자적 UPSERT·수명 삭제·ping |
-| `lib/db.ts` | **scripts/ 전용**으로 격하 (node-postgres 직결 · PGlite 폴백 · 옛 러너) |
+| `lib/typed-sql/*.ts` | 위 쿼리들의 **생성 모듈을 커밋해 둔 것** — DB 없는 CI·새 설치에서도 타입 검사가 되게 (§10) |
+| `scripts/prisma-typed-sql.mjs` | `prisma generate --sql` → `lib/typed-sql/` 복사 · 원본 해시 대조(`--check`) |
+| `tests/typed-sql.test.ts` | 원본 `.sql` 을 고치고 다시 만들지 않았으면 실패 (DB 불필요) |
+| ~~`lib/db.ts`~~ | ~~scripts/ 전용으로 격하~~ → **2026-09-28 삭제**(main 반영 10-08) — 쓰던 도구 6개를 Prisma 로 옮김 (§11) |
+| `lib/data-release.ts` · `scripts/data-release.ts` | 데이터 릴리스 — 외부 원천 데이터를 자연 키로 내보내고 적재 (docs/DATA-SOURCES.md §4) |
 | `lib/pg-errors.ts` | 제약 위반 판정이 Prisma 에러 모양도 받음 |
 | `tests/prisma-migrations.test.ts` | 폴더가 `db/` 와 어긋나면 실패 |
 | `tests/prisma-smoke.test.ts` | 실 DB 스모크 — 조회 함수 31개가 던지지 않고 값을 주는지 (DB 필요 · 기본 건너뜀) |
 
 npm 스크립트: `db:views` · `db:prisma:build` · `db:prisma:check` · `db:prisma:baseline` ·
 `db:migrate:prisma` · `db:prisma:drift` · `db:prisma:smoke` · `db:prisma:generate` ·
-`db:prisma:studio`.
+`db:prisma:studio` · `db:prisma:sql`(DB 필요) · `db:prisma:sql:check`(DB 불필요).
 
 ---
 
@@ -96,14 +106,15 @@ DATABASE_URL=…/arcade_finder_prisma_verify npx prisma migrate deploy
 즉 `db/` 의 옛 파일을 고치면 이미 배포된 DB 가 막힙니다. 지금 규칙("적용된 것은 고치지
 않고 새 파일을 만든다")과 같지만, 이제는 **도구가 강제**합니다.
 
-새 마이그레이션은 지금처럼 `db/migrate-080-….sql` 을 만들고 `scripts/db-files.mjs`
-(+`lib/db.ts`) 목록에 더한 뒤 `npm run db:prisma:build` 를 돌리면 됩니다.
+새 마이그레이션은 지금처럼 `db/migrate-081-….sql` 을 만들고 `scripts/db-files.mjs` 목록(2026-09-28 부터
+이것 하나)에 더한 뒤 `npm run db:prisma:build` 를 돌리면 됩니다. 사용자 데이터 표에 행을 넣으면
+안 됩니다 — tests/data-release.test.ts (docs/DATA-SOURCES.md §2).
 `npm run db:prisma:check` 가 어긋남을 종료 코드로 알리고, `tests/prisma-migrations.test.ts`
 가 같은 것을 테스트에서 잡습니다.
 
 ### 뷰는 마이그레이션에 넣지 않았습니다
 
-`db/views.sql` 은 그대로 **기동마다 다시 적용**합니다 (Prisma 경로도 같습니다 — lib/db.ts).
+`db/views.sql` 은 그대로 **기동마다 다시 적용**합니다 (Prisma 경로도 같습니다 — lib/prisma.ts bootChecks).
 처음에는 마지막 마이그레이션으로 넣었다가 되돌렸습니다. 두 가지가 깨졌습니다:
 
 1. 뷰는 항상 마지막이어야 하는데(migrate-039 가 만든 `condition_window_days` 를 참조합니다)
@@ -190,7 +201,10 @@ DATABASE_URL=…/arcade_finder_new npm run db:views           # 뷰 2개 (앱이
 | `bytea` | `Buffer` | `Uint8Array` | → `Buffer` |
 | `timestamptz` | 정확 | **세션 시간대만큼 어긋남** | 풀을 UTC 로 고정 |
 
-`lib/prisma.ts` 의 `normalizeValue` 가 앞의 셋을 되돌립니다. BigInt 가 특히 위험합니다 —
+중간 단계(`DB_CLIENT` 스위치)에서는 `normalizeValue` 가 앞의 셋을 되돌렸습니다. 전환을 마친 지금은
+그 함수가 없고, TypedSQL 쿼리가 `count(*)::int`·`::float8` 처럼 **SQL 에서 형을 정해** 돌려주며
+남는 `Decimal`·`Date` 는 `lib/prisma.ts` 의 `num()`·`iso()` 가 받습니다 (2026-09-28 확인 —
+`lib/typed-sql/*.ts` 의 결과 타입에 `bigint` 가 하나도 없습니다). BigInt 가 특히 위험합니다 —
 `JSON.stringify` 가 그 자리에서 던지므로 `COUNT(*)` 를 응답에 싣는 라우트가 500 이 됩니다.
 
 **시간대는 정확성 문제입니다.** 드라이버 어댑터를 통한 `$queryRaw` 는 timestamptz 를
@@ -223,7 +237,7 @@ Prisma Client  { code: 'P2003', meta: { … } }   ·  중복은 P2002
 
 ## 5. 전환으로 달라진 동작
 
-| | 옛 경로 (lib/db.ts · 이제 scripts 전용) | 앱 (lib/prisma.ts) |
+| | 옛 경로 (lib/db.ts · 2026-09-28 삭제) | 앱 (lib/prisma.ts) |
 |---|---|---|
 | PGlite 폴백 | 있음 (`.pglite/`) | **없음** — Prisma 7 에 PGlite 어댑터가 없습니다. DATABASE_URL 필수 |
 | 기동 시 마이그레이션 | **적용함** (advisory lock) | 적용하지 않음 · 빠진 것이 있으면 경고만 |
@@ -236,10 +250,14 @@ Prisma Client  { code: 'P2003', meta: { … } }   ·  중복은 P2002
 앞의 둘은 감출 수 없는 차이라 기동 로그로 드러냅니다. 배포 순서가 **"마이그레이션 먼저,
 그다음 기동"** 으로 고정됐습니다 (deploy/README.md §2 · GUIDELINES §3).
 
-왕복 수가 늘어난 자리 둘 — 옛 SQL 은 슬롯 점유 시간을 아끼려고 한 문장에 합쳤던 것입니다:
-`board.listPosts`(목록 + 고정 공지: UNION ALL 1 → 병렬 2) · `board.getPost`(데이터 변경 CTE 1 →
-글 1 + 댓글∥첨부 1). 지금 기준선(DAU 3,000 · 피크 3.4 req/s)에서 왕복 하나는 재이지
-않습니다. 수백 req/s 에 가까워지면 이 둘을 TypedSQL 로 되돌리는 것이 첫 후보입니다.
+왕복 수가 늘어난 자리 — 옛 SQL 은 슬롯 점유 시간을 아끼려고 한 문장에 합쳤던 것입니다.
+~~`board.listPosts`(목록 + 고정 공지: UNION ALL 1 → 병렬 2) · `board.getPost`(데이터 변경 CTE 1 →
+글 1 + 댓글∥첨부 1)~~ — **이 숫자는 Prisma 연산 수였습니다.** 2026-09-28 에 PostgreSQL 로 나간 **SQL 문장**을
+목표 규모 DB 에서 세 보니 `listPosts` 1 → **12**, `getPost` 1 → **9**, 제보 피드 3 → 8 이었습니다 — 기본 관계 로딩이
+`include` 한 관계마다 문장을 하나씩 보내기 때문입니다(`IN (…)` 으로 묶어 N+1 은 아님). 앱과 DB 가 한 장비라 호출
+시간은 늘지 않았고(글 목록 4.9 → 3.7ms), `relationJoins` 는 깊은 offset 에서 5배 느려져 켜지 않았습니다 —
+전후 표와 판단 근거는 [DB-WORKLOAD.md](DB-WORKLOAD.md) §2. 수백 req/s 에 가까워지거나 DB 가 다른 장비로 가면
+이 둘이 첫 후보입니다.
 
 ---
 
@@ -413,7 +431,7 @@ npm run db:prisma:drift     # 종료 코드 2 = 차이 있음
 - [x] ~~개발 DB 에 `migrate-080` 적용~~ — 2026-09-22 17:45 적용됨 (FK 42/42 검증)
 - [x] ~~`deploy/README.md` 의 배포 순서에 `db:migrate:prisma` 반영~~ — 2026-09-22 (GUIDELINES §3 · README 도)
 - [x] ~~모듈별 Prisma Client 이관~~ — 2026-09-22 전부 (§6 결과)
-- [x] ~~DB 없는 빌드에서 TypedSQL 모듈이 없어 타입 검사가 깨짐~~ — 2026-09-29. `prisma generate --sql`
+- [x] ~~DB 없는 빌드에서 TypedSQL 모듈이 없어 타입 검사가 깨짐~~ — 2026-09-29 (경위 · 검증 · 버린 대안은 §10). `prisma generate --sql`
       은 DB 에 붙어야 모듈을 만드는데 postinstall(`prisma generate`)·Vercel 빌드는 DB 없이 돕니다.
       생성된 모듈을 `lib/typed-sql/` 로 꺼내 커밋하고, 머리에 원본 sha256 을 적어
       `npm run db:prisma:sql:check` · `tests/typed-sql.test.ts` 가 DB 없이 대조합니다.
@@ -428,8 +446,11 @@ npm run db:prisma:drift     # 종료 코드 2 = 차이 있음
       "89개 미적용" 경고가 찍힙니다(동작은 됩니다 — 스키마는 이미 최신). 사본에서만 검증했으니
       실제 DB 에는 사람이 한 번 돌리세요 (DDL 0줄 · `--dry-run` 먼저).
 - [ ] `tier_settings` 잔재 컬럼 2개를 지울지 결정 (§7)
-- [ ] `scripts/` 의 적재·점검 도구(import-*.ts 등 ~100개 원시 쿼리)는 lib/db.ts 그대로 — 필요해지면 따로
-- [ ] `npm run db:init` · `db:snapshot` 등 PGlite 전제 스크립트 정리 여부
+- [x] ~~`scripts/` 의 적재·점검 도구는 lib/db.ts 그대로~~ — 2026-09-28 `.ts` 여섯 개를 Prisma 로 (§11 · main 반영 10-08).
+      `.mjs` 관리 도구(dedupe · sync-news · prune · purge-demo · guess, 호출 45곳)는 아직 원시 SQL
+      — 이유는 docs/DATA-SOURCES.md §5
+- [ ] `npm run db:init --pglite` · `db:snapshot` · `migrate-pglite-to-pg` 등 PGlite 도구 삭제 여부 — 읽는 곳이
+      없습니다 (앱의 폴백은 09-22 에, lib/db.ts 는 09-28 에 사라짐)
 
 ---
 
@@ -475,3 +496,86 @@ Prisma 가 모델 단위로만 보는 것을 넘어서려면 카탈로그를 직
 즉 **외래키 복구(migrate-080) 뒤 개발 DB 와 마이그레이션은 잔재 컬럼 2개를 빼면 완전히
 같습니다.** 그 2개는 아무 코드도 읽지 않는 옛 흔적이고(SSOT §4.4), 지우는 것은 되돌릴 수
 없어 남겨 둡니다.
+
+---
+
+## 10. TypedSQL 은 DB 가 있어야 만들어집니다 — 생성물을 저장소에 둡니다 (2026-09-28)
+
+이관을 이어받아 새 워크트리에서 검증하다 찾았습니다. **CI 가 첫 푸시에 빨간불**이 났을 결함입니다.
+
+| 단계 | 무엇이 도나 | DB |
+|---|---|---|
+| `npm ci` → postinstall | `prisma generate` — 클라이언트만 | 필요 없음 |
+| `prisma generate --sql` | TypedSQL 모듈(`sql/*.ts`) — SQL 을 실제 DB 에 PREPARE 해 타입을 받아 옴 | **필요** |
+| CI (`.github/workflows/ci.yml`) | typecheck → test → build | **없음** (Postgres 서비스를 두지 않는 설계) |
+
+생성물이 gitignore(`lib/generated/`) 안에만 있으니, 새로 받은 저장소에서는 `./generated/prisma/sql` 이
+없어 **타입 검사 오류 41건**(파일 8개 — 모듈 없음 8건 + 그 여파로 결과가 `unknown` 이 된 자리 33건)으로 멈춥니다
+(실측: 이관본 그대로에 `prisma generate` 만 돌린 상태).
+이관한 워크트리에는 누군가 한 번 `--sql` 로 만든 파일이 남아 있어서 드러나지 않았습니다.
+
+### 어떻게 풀었나
+
+생성된 TypedSQL 모듈은 `@prisma/client/runtime/client` 하나만 import 하는 **자립형 파일**입니다
+(생성된 클라이언트 폴더를 참조하지 않습니다). 그래서 그대로 꺼내 커밋합니다.
+
+```
+prisma/sql/tierCharts.sql  ──(npm run db:prisma:sql · DB 필요)──▶  lib/typed-sql/tierCharts.ts  (커밋)
+                                                                    // source-sha256: <원본 해시>
+```
+
+- 앱은 `./typed-sql` 에서 import 합니다 (`./generated/prisma/sql` 을 더 쓰지 않습니다).
+- 모듈 머리에 원본 `.sql` 의 sha256 을 적습니다. **`.sql` 만 고치고 다시 만들지 않으면 실행되는 것은
+  옛 SQL** 이라(모듈에 SQL 문자열이 박혀 있습니다) 그걸 DB 없이 잡아야 합니다 —
+  `npm run db:prisma:sql:check` 와 `tests/typed-sql.test.ts` 가 해시 · 박힌 SQL 본문 · 목록을 대조합니다.
+- 해시가 못 잡는 것: **컬럼 타입이 바뀌어 결과 타입이 달라진 경우.** 마이그레이션을 더한 뒤에는
+  `npm run db:prisma:sql` 을 한 번 돌리세요 (DB 에 붙어 다시 만듭니다).
+
+### 검증 (CI 재현)
+
+`.env.local` 을 치우고 `lib/generated/` 를 지운 뒤 CI 와 같은 순서로:
+
+| | 고치기 전 | 고친 뒤 |
+|---|---|---|
+| `prisma generate` (DB 없음) | 성공 (sql/ 없음) | 성공 (sql/ 없음) |
+| `npm run typecheck` | **오류 41건** (파일 8개) | 0 |
+| `npm test` | (타입 검사에서 멈춤) | 통과 |
+
+### 버린 대안
+
+| 대안 | 왜 안 했나 |
+|---|---|
+| CI 에 Postgres 서비스 + `migrate deploy` + `generate --sql` | CI 가 DB 없이 도는 것은 의도된 설계(ci.yml 머리말)이고, 빌드마다 마이그레이션 89개(시드 포함)를 적용하게 됩니다. 로컬에서 새로 받은 사람도 여전히 막힙니다 |
+| postinstall 을 `prisma generate --sql` 로 | `npm ci` 가 DB 없이는 실패합니다 — 문제를 옮길 뿐입니다 |
+| TypedSQL 을 `$queryRaw` + 손으로 쓴 타입으로 | 결과 타입을 DB 가 보증하지 않게 되고, TS 안에 SQL 문자열이 돌아옵니다(§6 의 원칙과 반대) |
+
+---
+
+## 11. scripts/ 도 Prisma 로 — lib/db.ts 삭제 (2026-09-28)
+
+앱이 Prisma 로 옮겨 간 뒤에도 앱 데이터를 **쓰는** 도구 여섯 개가 옛 어댑터 `lib/db.ts` 로 원시 SQL 을
+돌리고 있었습니다. 옛 어댑터는 `DATABASE_URL` 이 없으면 **조용히 `.pglite` 로 내려가** 도구가 "끝났다" 고
+말한 뒤 실 DB 에는 아무것도 남기지 않을 수 있었고(lib/script-env.ts 가 경고하던 함정), 스키마가 바뀌어도
+원시 SQL 이라 타입 검사가 잡지 못했습니다.
+
+| 도구 | 옮긴 것 | 실행 확인 (개발 DB 사본 · 픽스처 · 외부 API 호출 없음) |
+|---|---|---|
+| `import-arcades.ts` | 조회 · 삭제 · 찾기(OR) · 갱신 · 삽입 · 출처별 집계 | 새로 1 · 갱신 1 → 다시 돌리면 새로 0 · 갱신 2 |
+| `import-charts.ts` | 모드 upsert · 곡/채보 찾고 쓰기 (NULL 이 든 복합 키라 findFirst) | 1회차 새 곡 2 · 새 채보 3 → 2회차 새 곡 1 · 새 채보 2 · 기존 3 · 작곡가 NULL 은 기존 값 유지 · 모드 이름 갱신·순서 유지 |
+| `import-localdata-arcades.ts` | 겹침 판정 · 삽입 · 띄어쓰기 통일 | 새로 1 · 기존 행과 같은 곳 1 건너뜀 → 다시 돌리면 새로 0 |
+| `verify-arcades-naver.ts` | 조회 · 복구 파일 · 병합 · 삭제 · 집계 | `--report --delete`: localdata 한 곳 삭제 · 복구 파일에 행 전체(17칸) |
+| `regeocode-arcades.ts` · `regeocode-building-center.ts` | 조회 · 좌표 갱신 | `--limit 0` 으로 조회 경로까지 (좌표 갱신은 외부 지오코딩이 있어야 돌아 타입 검사로만) |
+
+- 트랜잭션 제한 시간은 `BULK_TX_OPTIONS`(10분 — lib/prisma.ts). 앱의 `TX_OPTIONS`(15초)는 요청 하나 기준이라
+  채보 6,000개를 넣는 도구에는 짧습니다.
+- PGlite 전용이던 "포트 3000 이 열려 있으면 멈춤" 가드는 뺐습니다 — PostgreSQL 에서는 해당이 없습니다.
+- **옮기다 찾은 결함 하나** — `import-arcades.ts` 가 사람이 적어 둔 홈페이지를 빈 문자열로 덮었습니다. 네이버는
+  링크가 없으면 `''` 를 주는데 옛 SQL 은 `COALESCE('', homepage)` 라 NULL 이 아니어서 덮었습니다(주석의
+  의도와 반대). 빈 값을 "없음" 으로 읽게 고쳤고, 사람이 넣은 값이 남는 것을 픽스처로 확인했습니다.
+- `lib/db.ts` 를 지우며 함께 정리한 것: 목록이 두 벌이던 `SQL_GROUPS`·`MIGRATION_FILES`(이제
+  `scripts/db-files.mjs` 하나 — tests/db-lists.test.ts 가 db/ 폴더와 대조), 폴백 판정 테스트(db-fallback.test.ts
+  6개), 옛 어댑터를 감싸던 `withTelemetry(db)`(lib/telemetry.ts). 테스트 수가 750 → 740 으로 준 것은 이
+  때문입니다(지운 코드의 테스트).
+- ⚠ 이관 때부터 **풀 대기 지표(`db.wait`)가 비어 있습니다** — 옛 어댑터가 `recordPoolQuery` 를 불렀고,
+  Prisma 경로는 연산 단위(`recordOperation`)만 잽니다. 되살리려면 lib/prisma.ts 의 풀을 감싸야 합니다.
+- 규칙으로 고정: `scripts/*.ts` 가 `pg` 나 `lib/db` 를 import 하면 tests/architecture.test.ts 가 실패합니다.

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { badId, handle, notFound, parseId, readJson } from '@/lib/api-errors';
 import { requirePlayer } from '@/lib/auth';
 import { getPost, setLike } from '@/lib/board';
 
@@ -6,11 +7,6 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ id: string }> };
-
-function parseId(raw: unknown): number | null {
-  const id = Number(raw);
-  return Number.isInteger(id) && id > 0 ? id : null;
-}
 
 /**
  * 추천 — `PUT` 으로 켜고 `DELETE` 로 끕니다. 둘 다 **여러 번 불러도 같습니다.**
@@ -53,19 +49,14 @@ function offsetOf(raw: unknown): number {
  * 화면 복원용 곁가지 하나뿐이라, 그것 때문에 추천이 400 으로 실패하면 안 됩니다.
  */
 async function offsetFromBody(request: Request): Promise<number> {
-  try {
-    const body = (await request.json()) as { commentOffset?: unknown } | null;
-    return offsetOf(body?.commentOffset);
-  } catch {
-    return 0;
-  }
+  // 깨진 본문도 400 이 아니라 "1페이지" 입니다 — 위 이유 그대로. readJson 의 실패는 버립니다.
+  const body = await readJson(request);
+  return body.ok ? offsetOf((body.value as { commentOffset?: unknown } | null)?.commentOffset) : 0;
 }
 
 async function apply(request: Request, ctx: Ctx, liked: boolean): Promise<NextResponse> {
   const postId = parseId((await ctx.params).id);
-  if (postId === null) {
-    return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
-  }
+  if (postId === null) return badId();
 
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
@@ -75,9 +66,7 @@ async function apply(request: Request, ctx: Ctx, liked: boolean): Promise<NextRe
     ? await offsetFromBody(request)
     : offsetOf(new URL(request.url).searchParams.get('commentOffset'));
 
-  if (!(await getPost(postId, null))) {
-    return NextResponse.json({ error: '글을 찾을 수 없습니다' }, { status: 404 });
-  }
+  if (!(await getPost(postId, null))) return notFound('글을 찾을 수 없습니다');
 
   const result = await setLike(postId, playerId, liked);
   return NextResponse.json({
@@ -87,7 +76,7 @@ async function apply(request: Request, ctx: Ctx, liked: boolean): Promise<NextRe
 }
 
 /** PUT /api/posts/:id/like — 추천을 켭니다 (본문 `{commentOffset?}` 은 생략 가능) */
-export const PUT = (request: Request, ctx: Ctx) => apply(request, ctx, true);
+export const PUT = handle((request: Request, ctx: Ctx) => apply(request, ctx, true));
 
 /** DELETE /api/posts/:id/like?commentOffset=10 — 추천을 끕니다 */
-export const DELETE = (request: Request, ctx: Ctx) => apply(request, ctx, false);
+export const DELETE = handle((request: Request, ctx: Ctx) => apply(request, ctx, false));

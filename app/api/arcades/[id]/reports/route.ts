@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { json } from '@/lib/http';
-import { badId, badJson, handle, invalid, parseId } from '@/lib/api-errors';
+import { badId, conflict, handle, notFound, parseBody, parseId, tooMany } from '@/lib/api-errors';
 import { getArcade } from '@/lib/arcades';
 import { clientKey, sessionPlayerId } from '@/lib/auth';
 import { consume, limitFromEnv, retryAfterLabel, TEN_MINUTES_MS } from '@/lib/rate-limit';
@@ -61,21 +61,10 @@ async function onPost(request: Request, ctx: Ctx) {
   const arcadeId = parseId((await ctx.params).id);
   if (arcadeId === null) return badId();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return badJson();
-  }
+  const body = await parseBody(request, reportInputSchema);
+  if (!body.ok) return body.response;
 
-  const parsed = reportInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return invalid(parsed.error);
-  }
-
-  if (!(await getArcade(arcadeId))) {
-    return NextResponse.json({ error: '오락실을 찾을 수 없습니다' }, { status: 404 });
-  }
+  if (!(await getArcade(arcadeId))) return notFound('오락실을 찾을 수 없습니다');
 
   const playerId = await sessionPlayerId(request);
   const ip = playerId === null ? clientKey(request) : null;
@@ -87,15 +76,15 @@ async function onPost(request: Request, ctx: Ctx) {
         : [`report:anon:arcade:${arcadeId}`, ANON_PER_ARCADE_LIMIT];
   const quota = await consume(key, limit, TEN_MINUTES_MS);
   if (!quota.allowed) {
-    return NextResponse.json(
-      { error: `제보가 너무 잦습니다. ${retryAfterLabel(quota.retryAfterMs)} 뒤에 다시 시도해 주세요` },
-      { status: 429, headers: { 'Retry-After': String(Math.ceil(quota.retryAfterMs / 1000)) } },
+    return tooMany(
+      `제보가 너무 잦습니다. ${retryAfterLabel(quota.retryAfterMs)} 뒤에 다시 시도해 주세요`,
+      quota.retryAfterMs,
     );
   }
 
   try {
     const result = await createReport({
-      ...parsed.data,
+      ...body.value,
       arcadeId,
       playerId,
     });
@@ -107,7 +96,7 @@ async function onPost(request: Request, ctx: Ctx) {
     // 둘 다 "화면이 낡았다" 는 뜻이라 409 — 입력이 틀린 게 아니라 그 사이에
     // 보유 기종/대수가 바뀐 것이다.
     if (err instanceof MachineNotAtArcadeError || err instanceof CabinetNotFoundError) {
-      return NextResponse.json({ error: err.message }, { status: 409 });
+      return conflict(err.message);
     }
     throw err;
   }

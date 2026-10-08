@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { conflict, fail, handle, notFound, tooMany } from '@/lib/api-errors';
 import { appOrigin } from '@/lib/app-url';
 import { requirePlayer } from '@/lib/auth';
 import { isEmailMaskingOn } from '@/lib/email-mask';
@@ -27,12 +28,12 @@ export const dynamic = 'force-dynamic';
  *   보고 있으므로, after() 로 미루면 성공했는지 알려 줄 수 없습니다. 가입
  *   (app/api/auth/signup)은 반대입니다 — 메일이 늦다고 가입이 늦어지면 안 됩니다.
  */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
 
   const status = await verificationStatus(guard.playerId);
-  if (!status) return NextResponse.json({ error: '계정을 찾을 수 없습니다' }, { status: 404 });
+  if (!status) return notFound('계정을 찾을 수 없습니다');
 
   return NextResponse.json({
     ...status,
@@ -41,28 +42,22 @@ export async function GET(request: Request) {
   });
 }
 
-export async function POST(request: Request) {
+async function onPost(request: Request) {
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
 
   if (isEmailMaskingOn()) {
-    return NextResponse.json(
-      { error: '시험 기간에는 이메일을 가려서 저장하고 있어 확인 메일을 보낼 수 없습니다' },
-      { status: 409 },
-    );
+    return conflict('시험 기간에는 이메일을 가려서 저장하고 있어 확인 메일을 보낼 수 없습니다');
   }
 
   const status = await verificationStatus(guard.playerId);
-  if (!status) return NextResponse.json({ error: '계정을 찾을 수 없습니다' }, { status: 404 });
+  if (!status) return notFound('계정을 찾을 수 없습니다');
   if (!status.email) {
     // 소셜로만 가입한 계정입니다 — players.email 이 비어 있어 보낼 곳이 없습니다.
-    return NextResponse.json(
-      { error: '이 계정에는 등록된 이메일이 없습니다' },
-      { status: 409 },
-    );
+    return conflict('이 계정에는 등록된 이메일이 없습니다');
   }
   if (status.verified) {
-    return NextResponse.json({ error: '이미 확인된 이메일입니다' }, { status: 409 });
+    return conflict('이미 확인된 이메일입니다');
   }
 
   const issued = await sendVerificationMail(guard.playerId, appOrigin(request), {
@@ -72,24 +67,19 @@ export async function POST(request: Request) {
   if (!issued.ok) {
     if (issued.reason === 'too-soon') {
       const s = issued.retryAfterS ?? 60;
-      return NextResponse.json(
-        {
-          error:
-            s > 120
-              ? '메일을 너무 자주 보냈습니다. 잠시 후 다시 시도해 주세요'
-              : `${s}초 후에 다시 보낼 수 있습니다`,
-        },
-        { status: 429, headers: { 'retry-after': String(s) } },
+      return tooMany(
+        s > 120 ? '메일을 너무 자주 보냈습니다. 잠시 후 다시 시도해 주세요' : `${s}초 후에 다시 보낼 수 있습니다`,
+        s * 1000,
       );
     }
     // 발송 실패(제공자 오류·키 미설정)는 사용자가 고칠 수 없습니다. 그대로
     // 말해 주고 다시 누를 수 있게 둡니다 — 성공한 척하면 오지 않는 메일을
     // 기다리게 됩니다.
-    return NextResponse.json(
-      { error: '메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요' },
-      { status: 502 },
-    );
+    return fail(502, '메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요');
   }
 
   return NextResponse.json({ sent: true, email: status.email });
 }
+
+export const GET = handle(onGet);
+export const POST = handle(onPost);

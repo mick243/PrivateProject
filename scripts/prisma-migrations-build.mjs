@@ -6,8 +6,8 @@
  *   node scripts/prisma-migrations-build.mjs --prune    목록에 없는 폴더까지 지움
  *
  * 왜 손으로 만들지 않고 생성하나:
- *   적용 순서의 정본은 `scripts/db-files.mjs` 하나다 (lib/db.ts 와 대조하는 테스트가
- *   이미 있다 — tests/db-lists.test.ts). 마이그레이션 폴더를 손으로 만들면 정본이
+ *   적용 순서의 정본은 `scripts/db-files.mjs` 하나다 (db/ 폴더와의 대조는
+ *   tests/db-lists.test.ts). 마이그레이션 폴더를 손으로 만들면 정본이
  *   둘이 되고, 2026-08-24 에 030~036 이 빠진 채 이력만 남았던 사고가 그대로 재현된다.
  *   여기서 생성하면 목록이 곧 폴더다. tests/prisma-migrations.test.ts 가 대조한다.
  *
@@ -34,7 +34,7 @@ export const DB_DIR = path.join(root, 'db');
 export const MIGRATIONS_DIR = path.join(root, 'prisma', 'migrations');
 
 /**
- * 적용 순서 = 스키마 그룹 → 마이그레이션. lib/db.ts applySchema 와 같은 순서다.
+ * 적용 순서 = 스키마 그룹 → 마이그레이션. 옛 러너(scripts/init-db.mjs · migrate.mjs)와 같은 순서다.
  *
  * **`views.sql` 은 일부러 뺐다.** 뷰는 지금도 마이그레이션이 아니라 "기동마다 다시
  * 적용하는 파생 객체" 이고(db/views.sql 머리말), 그 성질을 Prisma 로 옮기면 두 가지가
@@ -44,7 +44,7 @@ export const MIGRATIONS_DIR = path.join(root, 'prisma', 'migrations');
  *      적용된 DB 에는 옛 이름이 남아 `migrate status` 가 계속 어긋났다고 말한다.
  *   2. 집계식을 고칠 때 파일 하나만 고치면 되던 것이, 새 마이그레이션 파일을 만들어야
  *      하는 일로 바뀐다.
- * 그래서 뷰는 그대로 둔다 — Prisma 경로도 기동할 때 적용하고(lib/db.ts), 손으로는
+ * 그래서 뷰는 그대로 둔다 — Prisma 경로도 기동할 때 적용하고(lib/prisma.ts bootChecks), 손으로는
  * `npm run db:views` 로 적용한다. 데이터가 없는 객체라 몇 번을 다시 만들어도 안전하다.
  *
  * ⚠ 이 목록은 **덧붙이기만** 한다. 중간에 끼워 넣으면 그 뒤 폴더 이름이 전부 밀리고,

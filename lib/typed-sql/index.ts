@@ -1,4 +1,5 @@
 // 생성물 — scripts/prisma-typed-sql.mjs 가 씁니다. prisma/sql/*.sql 하나당 한 줄.
+export * from './arcadeSearchPage.ts';
 export * from './arcadesWithMachines.ts';
 export * from './consumeRateCounter.ts';
 export * from './noteLoginFailure.ts';

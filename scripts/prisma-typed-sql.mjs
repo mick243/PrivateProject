@@ -9,7 +9,7 @@
  * PostgreSQL 에 PREPARE 해서 파라미터·결과 컬럼의 타입을 받아 오기 때문입니다. 그런데
  *
  *   · `npm ci` 의 postinstall 은 `prisma generate` (--sql 없음) — DB 없이 돌아야 합니다
- *   · CI·Vercel 빌드는 DB 없이 typecheck → build 를 돕니다
+ *   · CI 는 DB 없이 typecheck → test → build 를 돕니다 (.github/workflows/ci.yml 머리말)
  *
  * 그래서 생성물이 gitignore(`lib/generated/`) 안에만 있으면, **새로 받은 저장소는 타입
  * 검사가 깨집니다** — 파일 8개에서 오류 41건입니다(`Cannot find module './generated/prisma/sql'`
@@ -27,7 +27,7 @@
  *
  * ⚠ 해시가 잡는 것은 "SQL 을 고쳤는데 다시 안 만들었다" 입니다. **테이블 컬럼 타입이
  *   바뀌어 결과 타입이 달라진 것**은 DB 에 붙어 다시 만들어야만 보입니다 — 마이그레이션을
- *   더한 뒤에는 `npm run db:prisma:sql` 을 한 번 돌리세요 (docs/PRISMA-MIGRATION.md §8).
+ *   더한 뒤에는 `npm run db:prisma:sql` 을 한 번 돌리세요 (docs/PRISMA-MIGRATION.md §10).
  */
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';

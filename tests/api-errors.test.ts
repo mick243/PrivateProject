@@ -1,14 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   badId,
   badJson,
+  conflict,
   fail,
+  forbidden,
   handle,
   invalid,
   needLogin,
   notFound,
+  parseBody,
   parseId,
   readJson,
+  readOptionalJson,
+  tooMany,
+  unavailable,
 } from '@/lib/api-errors';
 import { arcadeInputSchema } from '@/lib/validation';
 
@@ -48,8 +55,12 @@ describe('표준 실패 응답', () => {
       [badId(), 400],
       [badJson(), 400],
       [needLogin(), 401],
+      [forbidden('본인이 쓴 글만 수정·삭제할 수 있습니다'), 403],
       [notFound('오락실을 찾을 수 없습니다'), 404],
       [fail(409, '이미 있습니다'), 409],
+      [conflict('이미 사용 중인 닉네임입니다'), 409],
+      [tooMany('시도가 너무 많습니다'), 429],
+      [unavailable('지역 검색이 설정되지 않았습니다'), 503],
     ];
     for (const [res, status] of cases) {
       expect(res.status).toBe(status);
@@ -76,6 +87,64 @@ describe('표준 실패 응답', () => {
   it('details 가 없으면 키 자체를 넣지 않는다', async () => {
     const body = (await fail(400, '그냥 실패').json()) as Record<string, unknown>;
     expect('details' in body).toBe(false);
+  });
+
+  it("'first' 머리 문구는 첫 필드 문구를 error 로 — details 를 안 보는 화면(/account)용", async () => {
+    const parsed = arcadeInputSchema.safeParse({});
+    if (parsed.success) throw new Error('실패해야 하는 입력');
+    const body = (await invalid(parsed.error, 'first').json()) as { error: string; details: string[] };
+    expect(body.error).toBe(body.details[0]);
+    expect(body.error).not.toBe('입력값이 올바르지 않습니다');
+  });
+
+  it('extra 는 error 옆에 실리고 error 를 덮어쓰지 못한다 (리뷰 요약의 reason)', async () => {
+    const res = fail(503, '쉬는 중', { extra: { summary: null, reason: 'limit', error: '덮어쓰기' } });
+    expect(await res.json()).toEqual({ summary: null, reason: 'limit', error: '쉬는 중' });
+  });
+
+  it('retryAfterMs 는 Retry-After(초, 올림)로 — 한도·일시 중단 응답', async () => {
+    expect(tooMany('잠시 후', 1_500).headers.get('retry-after')).toBe('2');
+    expect(unavailable('내일 다시', 3_600_000).headers.get('retry-after')).toBe('3600');
+    // 남은 시간을 모르면 헤더를 붙이지 않습니다 — 틀린 값보다 없는 편이 낫습니다.
+    expect(tooMany('잠시 후').headers.get('retry-after')).toBeNull();
+  });
+});
+
+describe('parseBody — 본문 읽기 + 스키마 검증', () => {
+  const schema = z.object({ value: z.number(), note: z.string().default('') });
+  const post = (body: string) => req('http://localhost/api/x', { method: 'POST', body });
+
+  it('통과하면 zod 가 변환·기본값까지 채운 값을 준다', async () => {
+    const parsed = await parseBody(post('{"value":3}'), schema);
+    expect(parsed).toEqual({ ok: true, value: { value: 3, note: '' } });
+  });
+
+  it('깨진 JSON 은 badJson 과 같은 400', async () => {
+    const parsed = await parseBody(post('{oops'), schema);
+    if (parsed.ok) throw new Error('실패해야 함');
+    expect(parsed.response.status).toBe(400);
+    expect(await parsed.response.json()).toEqual(await badJson().json());
+  });
+
+  it('스키마 위반은 invalid 와 같은 400 + details', async () => {
+    const parsed = await parseBody(post('{"value":"셋"}'), schema);
+    if (parsed.ok) throw new Error('실패해야 함');
+    const body = (await parsed.response.json()) as { error: string; details: string[] };
+    expect(parsed.response.status).toBe(400);
+    expect(body.error).toBe('입력값이 올바르지 않습니다');
+    expect(body.details[0]).toMatch(/^value: /);
+  });
+});
+
+describe('readOptionalJson — 본문이 없어도 되는 요청', () => {
+  it('빈 본문은 {} — 소셜 계정의 탈퇴처럼 실을 것이 없는 경우', async () => {
+    const parsed = await readOptionalJson(req('http://localhost/api/x', { method: 'DELETE' }));
+    expect(parsed).toEqual({ ok: true, value: {} });
+  });
+
+  it('깨진 JSON 은 여전히 400', async () => {
+    const parsed = await readOptionalJson(req('http://localhost/api/x', { method: 'DELETE', body: '{' }));
+    expect(parsed.ok).toBe(false);
   });
 });
 

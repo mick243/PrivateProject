@@ -5,8 +5,11 @@
  *   npm run db:snapshot -- --yes   실제로 복사합니다
  *
  * 지금 PostgreSQL 에 들어 있는 내용을 **로컬 사본**(.pglite/)에 그대로 떠 둡니다.
- * PostgreSQL 이 안 떠 있을 때 lib/db.ts 가 이 사본으로 내려가 앱을 그대로 띄웁니다
- * (lib/db.ts createDbWithFallback 주석 참고).
+ *
+ * ⚠ **이 사본을 읽는 곳이 이제 없습니다.** PostgreSQL 이 안 떠 있을 때 이 사본으로 내려가던
+ *   폴백(lib/db.ts)은 2026-09-22 Prisma 이관으로 앱에서 빠졌고, 09-28 에 파일째 지웠습니다.
+ *   Prisma 7 에는 PGlite 어댑터가 없습니다. 삭제 후보입니다 — docs/DATA-SOURCES.md §5.
+ *   환경 사이에 데이터를 옮기는 일은 `npm run data:release` 가 합니다.
  *
  * 전제:
  *   1. .env.local 에 DATABASE_URL 이 있어야 합니다 (원본 PostgreSQL)
@@ -250,7 +253,7 @@ try {
   if (mismatch) process.exit(1);
 
   console.log('\n✔ 스냅샷 완료 — 모든 테이블의 행 수가 일치합니다.');
-  console.log('  PostgreSQL 이 안 뜨면 이 사본으로 앱이 돌아갑니다 (lib/db.ts 폴백).');
+  console.log('  ⚠ 앱은 이 사본을 읽지 않습니다 (PGlite 폴백은 2026-09-22 Prisma 이관으로 사라졌습니다).');
   console.log('  ⚠ 사본은 뜬 시점에서 멈춥니다. PostgreSQL 이 바뀌면 다시 뜨세요.');
 } catch (err) {
   await target.exec('ROLLBACK').catch(() => {});

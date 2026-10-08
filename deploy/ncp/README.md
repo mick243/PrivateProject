@@ -95,7 +95,9 @@ cat /root/arcade-finder-secrets.env                         # 관리자 비밀�
 리허설에서 확인한 순서입니다. 개발 DB 의 **실제 오락실 926곳 · 곡 · 채보를 그대로** 가져가고, 시드 데이터를 지웁니다.
 
 ⚠ 이 방법은 개발 DB 의 **계정 · 글 · 리뷰까지 함께** 옮깁니다(내가 만든 테스트 계정 포함). 기준 데이터만 옮기는
-도구(`npm run data:release`)는 `portfolio-backend-optimization` 워크트리에 미커밋으로 있어, 그것을 main 에 합친 뒤라면 그쪽이 더 깔끔합니다.
+도구 `npm run data:release` 가 2026-10-08 에 main 에 들어왔습니다 — 절차는 [docs/DATA-SOURCES.md](../../docs/DATA-SOURCES.md) §4 ·
+[deploy/README.md](../README.md). 빈 DB 에서 끝까지 돌려 본 것은 로컬뿐이고, 이 서버를 그것으로 채워 본 적은 아직 없습니다 —
+아래 덤프 복원이 리허설과 실서버에서 확인한 길입니다.
 
 PC 에서 (개발 DB 는 읽기만 합니다):
 

@@ -2,80 +2,56 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import {
+  DERIVED_SQL_FILE,
+  MIGRATION_FILES,
+  MIGRATION_LOCK_KEY,
+  SCHEMA_GROUPS,
+} from '@/scripts/db-files.mjs';
 
 /**
- * `lib/db.ts` 와 `scripts/db-files.mjs`(init-db · migrate 가 공유) 의 SQL 파일 목록이 같은지 봅니다.
+ * `scripts/db-files.mjs` — SQL 파일 목록의 **유일한** 정본 — 이 db/ 폴더와 맞는지 봅니다.
  *
- * 두 곳에 같은 목록이 있는 이유는 init 스크립트가 `.ts` 를 import 할 수 없어서
- * 옮겨 적은 것입니다(그 파일 주석에 적혀 있습니다). 사람이 손으로 맞추는 목록은
- * 반드시 어긋나고, 어긋나면 **조용히** 어긋납니다 — `db:init` 이 만든 DB 에
- * 마이그레이션 몇 개가 빠진 채로 이력만 남아, 그 데이터가 영구히 비어 있게 됩니다.
- * 2026-08-24 에 030~036 이 빠져 실제로 그 상태가 됐습니다.
+ * 사람이 손으로 맞추는 목록은 반드시 어긋나고, 어긋나면 **조용히** 어긋납니다 — 목록에 없는
+ * 파일은 영원히 적용되지 않고, `db:init` 이 만든 DB 에는 이력만 남은 채 데이터가 비어 있게
+ * 됩니다. 2026-08-24 에 030~036 이 빠져 실제로 그 상태가 됐습니다.
  *
- * 파일을 문자열로 읽어 비교합니다 — `lib/db.ts` 를 import 하면 `getDb()` 쪽
- * 모듈까지 끌려 들어옵니다.
+ * 2026-09-28 까지는 같은 목록이 `lib/db.ts` 에도 있어 둘을 대조하는 테스트가 여기 있었습니다.
+ * lib/db.ts 를 지우면서 목록이 하나가 됐고, 남은 대조는 둘입니다: 이 파일(db/ 폴더)과
+ * tests/prisma-migrations.test.ts(prisma/migrations).
  */
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
-
-/** `NAME = [ ... ]` 안의 따옴표 문자열을 순서대로 */
-function listOf(source: string, name: string): string[] {
-  const body = new RegExp(`${name}\\s*=\\s*\\[(.*?)\\]`, 's').exec(source);
-  if (!body) throw new Error(`${name} 목록을 찾지 못했습니다`);
-  return [...body[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-}
-
-const dbTs = read('lib/db.ts');
-const initMjs = read('scripts/db-files.mjs');
-
-/** lib/db.ts 는 스키마 파일을 SQL_GROUPS 안에 나눠 들고 있다 */
-function schemaFilesFromGroups(source: string, name = 'SQL_GROUPS'): string[] {
-  const groups = new RegExp(`${name}\\s*=\\s*\\[(.*?)\\n\\](?: as const)?;`, 's').exec(source);
-  if (!groups) throw new Error(`${name} 를 찾지 못했습니다`);
-  return [...groups[1].matchAll(/files:\s*\[([^\]]+)\]/g)].flatMap((m) =>
-    [...m[1].matchAll(/'([^']+)'/g)].map((q) => q[1]),
-  );
-}
-
-describe('lib/db.ts ↔ scripts/db-files.mjs 목록', () => {
-  it('마이그레이션 목록이 순서까지 같다', () => {
-    expect(listOf(initMjs, 'MIGRATION_FILES')).toEqual(listOf(dbTs, 'MIGRATION_FILES'));
-  });
-
-  it('스키마·시드 목록이 순서까지 같다 (적용 순서가 FK 순서다)', () => {
-    expect(schemaFilesFromGroups(initMjs, 'SCHEMA_GROUPS')).toEqual(schemaFilesFromGroups(dbTs));
-  });
-
-  it('마이그레이션 잠금 키가 같다 — 다르면 서버와 스크립트가 서로를 기다리지 않는다', () => {
-    const key = (s: string) => /MIGRATION_LOCK_KEY\s*=\s*([\d_]+)/.exec(s)?.[1];
-    expect(key(initMjs)).toBe(key(dbTs));
-  });
-
-  it('뷰 파일이 같다', () => {
-    const view = (s: string) => /DERIVED_SQL_FILE\s*=\s*'([^']+)'/.exec(s)?.[1];
-    expect(view(initMjs)).toBe(view(dbTs));
-  });
-});
+const dbDir = path.join(root, 'db');
 
 describe('db/ 폴더와 목록', () => {
-  const listed = listOf(dbTs, 'MIGRATION_FILES');
   const onDisk = fs
-    .readdirSync(path.join(root, 'db'))
+    .readdirSync(dbDir)
     .filter((f) => f.startsWith('migrate-') && f.endsWith('.sql'))
     .sort();
 
   it('db/ 의 마이그레이션 파일이 모두 목록에 있다 — 목록에 없으면 영원히 적용되지 않는다', () => {
-    expect(onDisk.filter((f) => !listed.includes(f))).toEqual([]);
+    expect(onDisk.filter((f) => !MIGRATION_FILES.includes(f))).toEqual([]);
   });
 
-  it('목록의 모든 항목이 실제 파일이다 — 없으면 서버가 뜨다가 죽는다', () => {
-    expect(listed.filter((f) => !onDisk.includes(f))).toEqual([]);
+  it('목록의 모든 항목이 실제 파일이다 — 없으면 러너가 중간에 멈춘다', () => {
+    expect(MIGRATION_FILES.filter((f) => !onDisk.includes(f))).toEqual([]);
   });
 
-  it('번호가 겹치지 않는다 — 같은 번호가 둘이면 순서를 읽을 수 없다', () => {
-    const numbers = listed.map((f) => f.slice('migrate-'.length, 'migrate-'.length + 3));
-    const dupes = numbers.filter((n, i) => numbers.indexOf(n) !== i);
-    expect(dupes).toEqual([]);
+  it('번호가 겹치지 않고 오름차순이다 — 파일 이름 순서가 곧 적용 순서다', () => {
+    const numbers = MIGRATION_FILES.map((f) => Number(f.slice('migrate-'.length, 'migrate-'.length + 3)));
+    expect(numbers.filter((n, i) => numbers.indexOf(n) !== i)).toEqual([]);
+    expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
+  });
+
+  it('스키마·시드·뷰 파일이 실제로 있다', () => {
+    const files = [...SCHEMA_GROUPS.flatMap((g) => g.files), DERIVED_SQL_FILE];
+    expect(files.filter((f) => !fs.existsSync(path.join(dbDir, f)))).toEqual([]);
+  });
+
+  it('마이그레이션 잠금 키가 lib/prisma.ts 와 같다 — 다르면 서버와 러너가 서로를 기다리지 않는다', () => {
+    const prismaTs = fs.readFileSync(path.join(root, 'lib', 'prisma.ts'), 'utf8');
+    const key = /MIGRATION_LOCK_KEY\s*=\s*([\d_]+)/.exec(prismaTs)?.[1]?.replaceAll('_', '');
+    expect(Number(key)).toBe(MIGRATION_LOCK_KEY);
   });
 });

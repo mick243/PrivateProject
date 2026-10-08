@@ -316,6 +316,56 @@ describe('POST /api/chat', () => {
     expect(json.text).toBe('이 질문에는 답할 수 없습니다.');
   });
 
+  /**
+   * 토큰 상한 (lib/chat-budget.ts, 2026-09-28). 대화 전체를 왕복마다 다시 싣던 때는 24턴 × 4,000자
+   * 대화에서 질문 하나가 모델로 858,396자를 보냈습니다.
+   */
+  it('긴 대화는 최근 것부터 상한까지만 싣고, 뺀 것을 알린다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    queue = [textCandidate('답')];
+    // 사용자 말로 끝나는 23턴 × 4,000자 — 입력 검증을 통과하는 가장 긴 모양에 가깝다
+    const turns = Array.from({ length: 23 }, (_, i) => ({ role: i % 2 === 0 ? 'user' : 'assistant', text: '가'.repeat(4000) }));
+
+    await post(turns);
+
+    const sent = received[0].contents as { role: string; parts: { text: string }[] }[];
+    const chars = sent.reduce((n, c) => n + c.parts[0]!.text.length, 0);
+    expect(sent.length).toBeLessThan(24);
+    expect(chars).toBeLessThanOrEqual(12_000 + 40);
+    expect(sent[0]!.role).toBe('user');
+    expect(sent[0]!.parts[0]!.text).toMatch(/^\[앞선 대화 \d+개는 길이 제한으로 생략했습니다\]/);
+  });
+
+  it('도구 결과가 누적 상한을 넘으면 다음 왕복에서 도구를 막아 말로 끝낸다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    const tools = await import('@/lib/chat-tools');
+    vi.mocked(tools.searchPosts).mockResolvedValue({ big: 'x'.repeat(7000) });
+    try {
+      queue = [
+        callCandidate('search_posts', { query: '1' }),
+        callCandidate('search_posts', { query: '2' }),
+        textCandidate('찾은 데까지'),
+      ];
+      const { json } = await post([{ role: 'user', text: '다 찾아줘' }]);
+
+      // 두 번 받은 결과가 14,000자를 넘겨 세 번째 요청은 함수 호출이 막혀 있다 (왕복 상한 8 전에)
+      expect(received).toHaveLength(3);
+      expect(received[1].toolConfig.functionCallingConfig).toBeUndefined();
+      expect(received[2].toolConfig.functionCallingConfig.mode).toBe('NONE');
+      expect(json.text).toBe('찾은 데까지');
+    } finally {
+      vi.mocked(tools.searchPosts).mockImplementation(async (args: unknown) => ({ echo: args, rows: [{ title: '펌프 후기' }] }));
+    }
+  });
+
+  it('도구 선언은 셋 다 쪽 번호(page)를 받는다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    queue = [textCandidate('답')];
+    await post([{ role: 'user', text: '안녕' }]);
+    const decls = received[0].tools.flatMap((t: any) => t.functionDeclarations ?? []);
+    for (const d of decls) expect(d.parametersJsonSchema.properties.page.type).toBe('integer');
+  });
+
   it('입력이 규칙에 맞지 않으면 400 으로 막는다', async () => {
     process.env.GEMINI_API_KEY = 'stub-key';
     // 마지막이 조수 차례라 모델이 답할 순서가 아니다

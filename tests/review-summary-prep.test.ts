@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   EMOTICON_IMAGES_PER_REVIEW,
+  limitImages,
   prepareReviewParts,
+  REVIEW_SUMMARY_CHAR_BUDGET,
   REVIEW_SUMMARY_KEYS,
+  REVIEW_SUMMARY_MAX_IMAGES,
+  REVIEW_SUMMARY_MAX_REVIEWS,
   REVIEW_SUMMARY_MIN,
+  selectReviewsForSummary,
+  summaryBasisLabel,
 } from '@/lib/review-summary-types';
 
 /**
@@ -99,5 +105,51 @@ describe('prepareReviewParts', () => {
   it('대기·혼잡은 평가 칸이 아니다 — 지점이 관여할 수 없는 일 (2026-09-17 결정)', () => {
     expect(REVIEW_SUMMARY_KEYS.map((k) => k.key)).toEqual(['good', 'bad', 'condition']);
     expect(REVIEW_SUMMARY_KEYS.map((k) => k.label)).not.toContain('대기');
+  });
+});
+
+/**
+ * 요청 하나의 분량 상한 (2026-09-28). 상한이 없을 때 리뷰 300개 · 이모티콘만 40개인 오락실의
+ * 요약 요청이 27.8MB 였습니다 — 같은 그림 두 장을 리뷰마다 다시 붙였습니다(Gemini 인라인 한도 20MB).
+ */
+describe('요약 요청의 상한', () => {
+  const review = (body: string, rating = 4) => ({ rating, body });
+
+  it('최근 것부터 리뷰 수 상한까지만 고른다', () => {
+    const many = Array.from({ length: REVIEW_SUMMARY_MAX_REVIEWS + 40 }, (_, i) => review(`리뷰${i}`));
+    const picked = selectReviewsForSummary(many);
+    expect(picked).toHaveLength(REVIEW_SUMMARY_MAX_REVIEWS);
+    expect(picked[0]).toBe(many[0]); // 입력 순서(= 최근순)를 지킨다
+  });
+
+  it('본문 글자 상한을 넘기 전에서 멈춘다 — 첫 리뷰는 길어도 넣는다', () => {
+    const long = 'ㄱ'.repeat(REVIEW_SUMMARY_CHAR_BUDGET + 10);
+    expect(selectReviewsForSummary([review(long), review('짧음')])).toHaveLength(1);
+    const half = 'ㄴ'.repeat(REVIEW_SUMMARY_CHAR_BUDGET / 2);
+    expect(selectReviewsForSummary([review(half), review(half), review('넘침')])).toHaveLength(2);
+  });
+
+  it('같은 그림은 한 번만 붙이고, 다시 나오면 이름으로 가리킨다', () => {
+    const parts = prepareReviewParts([review('[[emo:7]]'), review('[[emo:7]]'), review('[[emo:12]]')], names);
+    const limited = limitImages(parts);
+    const images = limited.filter((p) => p.kind === 'emoticon-image') as { emoticonId: number }[];
+    expect(images.map((p) => p.emoticonId)).toEqual([7, 12]);
+    expect(limited.some((p) => p.kind === 'text' && p.text.includes('"울음" — 앞에 붙인 그림과 같습니다'))).toBe(true);
+  });
+
+  it('서로 다른 그림도 상한까지만 — 나머지는 이름 한 줄', () => {
+    const ids = Array.from({ length: REVIEW_SUMMARY_MAX_IMAGES + 3 }, (_, i) => i + 100);
+    const parts = prepareReviewParts(ids.map((id) => review(`[[emo:${id}]]`)), new Map());
+    const limited = limitImages(parts);
+    expect(limited.filter((p) => p.kind === 'emoticon-image')).toHaveLength(REVIEW_SUMMARY_MAX_IMAGES);
+    expect(limited.filter((p) => p.kind === 'text' && p.text.includes('그림 수 상한'))).toHaveLength(3);
+    expect(limited).toHaveLength(parts.length); // 조각 수는 그대로 — 리뷰 번호가 어긋나지 않게
+  });
+
+  it('일부만 읽은 요약은 화면에 "최근 후기 N개 기준 (전체 M개)" 로 밝힌다', () => {
+    expect(summaryBasisLabel({ reviewCount: 300, basedOn: 60 })).toBe('최근 후기 60개 기준 (전체 300개)');
+    expect(summaryBasisLabel({ reviewCount: 12, basedOn: 12 })).toBe('후기 12개 기준');
+    // 상한 전에 저장된 요약(basedOn 없음)은 예전 문구 그대로
+    expect(summaryBasisLabel({ reviewCount: 12, basedOn: null })).toBe('후기 12개 기준');
   });
 });

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { badId, handle, parseId } from '@/lib/api-errors';
 import { requirePlayer } from '@/lib/auth';
 import { getChartDetail, setSpecial } from '@/lib/tier';
 
@@ -20,10 +21,8 @@ type Ctx = { params: Promise<{ id: string }> };
  *   되면 관리자 전용으로 좁히거나 합의 인원(min_votes 처럼)을 올려야 합니다.
  */
 async function apply(request: Request, ctx: Ctx, special: boolean): Promise<NextResponse> {
-  const chartId = Number((await ctx.params).id);
-  if (!Number.isInteger(chartId) || chartId <= 0) {
-    return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
-  }
+  const chartId = parseId((await ctx.params).id);
+  if (chartId === null) return badId();
 
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
@@ -33,7 +32,7 @@ async function apply(request: Request, ctx: Ctx, special: boolean): Promise<Next
 }
 
 /** PUT /api/charts/:id/special — 특수 패턴으로 표시 */
-export const PUT = (request: Request, ctx: Ctx) => apply(request, ctx, true);
+export const PUT = handle((request: Request, ctx: Ctx) => apply(request, ctx, true));
 
 /** DELETE /api/charts/:id/special — 표시를 뺌 */
-export const DELETE = (request: Request, ctx: Ctx) => apply(request, ctx, false);
+export const DELETE = handle((request: Request, ctx: Ctx) => apply(request, ctx, false));

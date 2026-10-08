@@ -5,9 +5,12 @@ import type { Prisma } from './generated/prisma/client.ts';
 import { getPrismaClient, iso, num } from './prisma';
 import { listReviews } from './reviews';
 import {
+  limitImages,
   prepareReviewParts,
   REVIEW_SUMMARY_KEYS,
+  REVIEW_SUMMARY_MAX_REVIEWS,
   REVIEW_SUMMARY_MIN,
+  selectReviewsForSummary,
   type ReviewSummary,
   type ReviewSummaryView,
 } from './review-summary-types';
@@ -26,6 +29,12 @@ import { read } from './uploads';
  * 그 리뷰의 이모티콘 파일을 inlineData 로 붙여 모델이 그림을 보게 합니다. 글이 있는
  * 리뷰는 이모티콘을 이름으로 바꿔 글에 끼웁니다 — 판단은 lib/review-summary-types.ts
  * prepareReviewParts 가 하고(순수 함수, 테스트 있음), 여기는 파일만 읽어 붙입니다.
+ *
+ * ─── 한 요청의 분량에 상한이 있습니다 (2026-09-28) ──────────
+ * 최근 리뷰 60개 · 본문 15,000자 · 서로 다른 그림 4장까지만 보냅니다(lib/review-summary-types.ts).
+ * 상한이 없을 때 리뷰 300개(이모티콘만 40개)인 오락실의 요청이 27.8MB 였습니다 — 같은 그림을
+ * 리뷰마다 다시 붙였기 때문입니다. 저장하는 review_count 는 **전체** 수(낡음 판정용)이고, 실제로
+ * 읽은 수는 summary JSON 의 basedOn 에 함께 둡니다 — 화면이 "최근 후기 N개 기준" 이라고 밝힙니다.
  *
  * ─── 숫자는 모델에 맡기지 않습니다 ────────────────────────
  * 별점 평균은 arcades.rating_avg(SQL)에서 읽습니다. 모델이 "평균 4.2" 라고 적으면
@@ -136,11 +145,14 @@ export async function lookupReviewSummary(arcadeId: number): Promise<SummaryLook
   if (!cached || !cached.summary) return { kind: 'missing', reviewCount, ratingAvg };
   if (cached.review_count !== reviewCount) return { kind: 'stale', reviewCount, ratingAvg };
 
+  // 저장된 JSON 에는 세 칸과 basedOn(읽은 수)이 같이 있습니다. 화면에는 세 칸만 summary 로 넘깁니다.
+  const stored = cached.summary as Record<string, unknown>;
   return {
     kind: 'ready',
     view: {
-      summary: cached.summary as unknown as ReviewSummary,
+      summary: Object.fromEntries(REVIEW_SUMMARY_KEYS.map(({ key }) => [key, stored[key] ?? null])) as unknown as ReviewSummary,
       reviewCount: cached.review_count,
+      basedOn: typeof stored.basedOn === 'number' ? stored.basedOn : null,
       ratingAvg,
       createdAt: iso(cached.created_at),
     },
@@ -158,10 +170,13 @@ export async function buildReviewSummary(arcadeId: number): Promise<ReviewSummar
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new ReviewSummaryUnavailable('GEMINI_API_KEY 가 없어 요약할 수 없습니다');
 
-  const reviews = await listReviews(arcadeId);
-  if (reviews.length < REVIEW_SUMMARY_MIN) {
+  const prisma = await getPrismaClient();
+  const total = await prisma.arcade_reviews.count({ where: { arcade_id: arcadeId } });
+  if (total < REVIEW_SUMMARY_MIN) {
     throw new NotEnoughReviews(`리뷰가 ${REVIEW_SUMMARY_MIN}개 이상이어야 요약합니다`);
   }
+  // 최근 것부터 상한만큼 — 전부 읽어 오지 않습니다.
+  const reviews = selectReviewsForSummary(await listReviews(arcadeId, { limit: REVIEW_SUMMARY_MAX_REVIEWS }));
 
   // 본문에 박힌 이모티콘 id 를 모아 이름·파일을 한 번에 읽습니다 (지운 것도 — 옛 리뷰).
   const ids: number[] = [];
@@ -171,12 +186,19 @@ export async function buildReviewSummary(arcadeId: number): Promise<ReviewSummar
   const emoticons = await getEmoticonsByIds(ids);
   const names = new Map([...emoticons].map(([id, e]) => [id, e.name]));
 
-  const prepared = prepareReviewParts(
-    reviews.map((r) => ({ rating: r.rating, body: r.body })),
-    names,
+  // 같은 그림은 한 번만, 서로 다른 그림은 상한까지만 (limitImages).
+  const prepared = limitImages(
+    prepareReviewParts(
+      reviews.map((r) => ({ rating: r.rating, body: r.body })),
+      names,
+    ),
   );
 
-  const parts: Part[] = [{ text: `오락실 리뷰 ${reviews.length}개입니다. 최근 것부터입니다.` }];
+  const head =
+    reviews.length < total
+      ? `오락실 리뷰 ${total}개 중 최근 ${reviews.length}개입니다. 최근 것부터입니다.`
+      : `오락실 리뷰 ${reviews.length}개입니다. 최근 것부터입니다.`;
+  const parts: Part[] = [{ text: head }];
   for (const p of prepared) {
     if (p.kind === 'text') {
       parts.push({ text: p.text });
@@ -197,7 +219,7 @@ export async function buildReviewSummary(arcadeId: number): Promise<ReviewSummar
 
   const images = parts.filter((p) => 'inlineData' in p).length;
   // 본문은 남기지 않습니다 — 얼마나 큰 요청이었는지만 (운영에서 비용·실패를 볼 때 씁니다).
-  console.info(`[review-summary] arcade ${arcadeId}: 리뷰 ${reviews.length}개 · 그림 ${images}장 → ${MODEL}`);
+  console.info(`[review-summary] arcade ${arcadeId}: 리뷰 ${reviews.length}/${total}개 · 그림 ${images}장 → ${MODEL}`);
 
   const ai = new GoogleGenAI({ apiKey });
   const call = (body: Part[]) =>
@@ -248,21 +270,21 @@ export async function buildReviewSummary(arcadeId: number): Promise<ReviewSummar
     REVIEW_SUMMARY_KEYS.map(({ key }) => [key, tidy(parsed[key])]),
   ) as unknown as ReviewSummary;
 
-  const prisma = await getPrismaClient();
-  const summaryJson = summary as unknown as Prisma.InputJsonValue;
+  const summaryJson = { ...summary, basedOn: reviews.length } as unknown as Prisma.InputJsonValue;
   // 저장(UPSERT)과 평점 읽기를 한 트랜잭션 묶음으로 — 옛 SQL 은 RETURNING 안의 서브쿼리 하나였습니다.
   const [saved, arcade] = await prisma.$transaction([
     prisma.arcade_review_summaries.upsert({
       where: { arcade_id: arcadeId },
-      create: { arcade_id: arcadeId, review_count: reviews.length, summary: summaryJson, model: MODEL },
-      update: { review_count: reviews.length, summary: summaryJson, model: MODEL, created_at: new Date() },
+      create: { arcade_id: arcadeId, review_count: total, summary: summaryJson, model: MODEL },
+      update: { review_count: total, summary: summaryJson, model: MODEL, created_at: new Date() },
       select: { created_at: true },
     }),
     prisma.arcades.findUnique({ where: { id: arcadeId }, select: { rating_avg: true } }),
   ]);
   return {
     summary,
-    reviewCount: reviews.length,
+    reviewCount: total,
+    basedOn: reviews.length,
     ratingAvg: num(arcade?.rating_avg ?? null),
     createdAt: iso(saved.created_at),
   };

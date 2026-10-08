@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { handle } from '@/lib/api-errors';
 import { appUrl } from '@/lib/app-url';
 import { linkOAuthAccount, readCookie, setSessionCookie } from '@/lib/auth';
 import { safeNext } from '@/lib/auth-types';
@@ -36,7 +37,7 @@ type Ctx = { params: Promise<{ provider: string }> };
  * 자세히 적어 주면(=state 가 틀렸는지, 토큰 교환이 막혔는지) 공격자에게 어디까지
  * 통했는지 알려 주는 셈이라, 자세한 건 서버 로그에만 남깁니다.
  */
-export async function GET(request: Request, ctx: Ctx) {
+async function onGet(request: Request, ctx: Ctx) {
   const { provider } = await ctx.params;
   const url = new URL(request.url);
 
@@ -107,3 +108,6 @@ export async function GET(request: Request, ctx: Ctx) {
     return fail('provider');
   }
 }
+
+/** 리다이렉트로 답하는 라우트 — [provider]/route.ts 의 handle() 설명과 같습니다 */
+export const GET = handle(onGet);

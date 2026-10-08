@@ -9,17 +9,48 @@
  * 반환값은 모델이 읽을 요약 JSON 입니다. 전체 레코드를 그대로 실으면 한 번
  * 검색에 수십 KB 가 들어가 대화가 금방 컨텍스트를 넘깁니다.
  *
+ * ─── 쪽 나누기 (2026-09-28) ──────────────────────────────────────
+ * 한 번에 PAGE_SIZE 건만 돌려주고, 더 있으면 `hasMore: true` 로 알립니다. 모델은 필요할 때만
+ * `page` 를 올려 다음 묶음을 부릅니다 — 모델이 읽는 양(토큰)을 질문이 요구하는 만큼으로 묶는
+ * 장치입니다. 자르기는 **DB 에서** 합니다. 예전에는 오락실 도구가 조건에 맞는 곳을 전부
+ * 집계한 뒤 앞의 8곳만 썼습니다(목표 규모에서 기종 하나로 찾으면 926곳 · 28.5ms).
+ * 한 요청이 도구 결과로 모델에 돌려줄 수 있는 누적 분량은 라우트가 따로 막습니다
+ * (lib/chat-budget.ts TOOL_OUTPUT_CHAR_BUDGET).
+ *
  * ⚠ 서버 전용입니다 (getPrismaClient → pg). 클라이언트에서 import 하지 마세요.
  */
 
-import { listArcades, listMachines } from './arcades';
+import { listMachines, pageArcades } from './arcades';
 import { listPosts } from './board';
 import { listReports } from './reports';
 import type { ReportKind } from './community-types';
 import type { Arcade } from './types';
 
-/** 도구 하나가 돌려주는 건수 상한 — 모델이 읽을 분량을 넘기지 않기 위한 것 */
-const MAX_ROWS = 8;
+/** 도구 한 번이 돌려주는 건수 — 모델이 읽을 분량을 묶는 단위 */
+export const PAGE_SIZE = 5;
+/** 쪽 번호 상한. 모델이 끝없이 넘기지 않게 (5 × 20 = 100건까지) */
+export const MAX_PAGE = 20;
+/** 메모·본문 발췌를 모델에 넘길 때의 글자 상한 */
+const NOTE_CHARS = 120;
+
+/** 모델이 준 page 를 1…MAX_PAGE 로 */
+export function pageOf(raw: unknown): number {
+  const n = Math.trunc(Number(raw));
+  return Number.isFinite(n) ? Math.min(Math.max(n, 1), MAX_PAGE) : 1;
+}
+
+/** 모든 도구가 같은 모양으로 쪽 정보를 붙입니다 — 모델이 한 번 배우면 셋 다 넘길 수 있게 */
+function pageInfo(page: number, hasMore: boolean, total?: number | null) {
+  return {
+    page,
+    pageSize: PAGE_SIZE,
+    ...(total === undefined || total === null ? {} : { total }),
+    hasMore: hasMore && page < MAX_PAGE,
+  };
+}
+
+const clip = (s: string | null | undefined, max = NOTE_CHARS) =>
+  s ? (s.length > max ? `${s.slice(0, max)}…` : s) : undefined;
 
 /**
  * "펌프" · "Pump It Up" · "PIU" 중 무엇으로 물어도 같은 기종을 찾습니다.
@@ -44,31 +75,35 @@ function hoursOf(a: Arcade): string {
   return '미등록';
 }
 
-/** 오락실 1건을 모델이 읽을 만큼만 납작하게 */
-function summarizeArcade(a: Arcade) {
+/** 오락실 1건을 모델이 읽을 만큼만 납작하게. 비어 있는 칸은 싣지 않습니다(JSON 에서 빠짐) */
+export function summarizeArcade(a: Arcade) {
   return {
     name: a.name,
     address: a.address,
     hours: hoursOf(a),
-    rating: a.ratingAvg === null ? null : `${a.ratingAvg.toFixed(1)} (${a.reviewCount}건)`,
-    machines: a.machines.map((m) => ({
-      name: m.name,
-      cabinets: m.cabinetCount,
+    rating: a.ratingAvg === null ? undefined : `${a.ratingAvg.toFixed(1)} (${a.reviewCount}건)`,
+    machines: a.machines.map((m) => {
       // 화면과 같은 값 — 등록값과 제보를 종합해 뷰가 반올림한 정수입니다.
-      condition: m.cabinets
+      const condition = m.cabinets
         .map((c) => c.conditionSummary?.value ?? null)
-        .filter((v): v is number => v !== null),
-      // 수명 안의 제보가 없으면 아예 담지 않습니다. 0 으로 채우면
-      // "지금 줄 없음" 이라는 없는 정보가 생깁니다.
-      waitNow: m.live?.waitCount ?? undefined,
-    })),
-    note: a.note ?? undefined,
+        .filter((v): v is number => v !== null);
+      return {
+        name: m.name,
+        cabinets: m.cabinetCount,
+        condition: condition.length ? condition : undefined,
+        // 수명 안의 제보가 없으면 아예 담지 않습니다. 0 으로 채우면
+        // "지금 줄 없음" 이라는 없는 정보가 생깁니다.
+        waitNow: m.live?.waitCount ?? undefined,
+      };
+    }),
+    note: clip(a.note),
   };
 }
 
 export interface ArcadeSearchArgs {
   query?: string | null;
   machine?: string | null;
+  page?: number | null;
 }
 
 export async function searchArcades(args: ArcadeSearchArgs): Promise<unknown> {
@@ -76,17 +111,16 @@ export async function searchArcades(args: ArcadeSearchArgs): Promise<unknown> {
   if (args.machine && machineIds.length === 0) {
     return { error: `'${args.machine}' 이라는 기종을 찾지 못했습니다`, arcades: [] };
   }
-
-  const arcades = await listArcades({
-    q: args.query ?? null,
-    machineIds: machineIds.length ? machineIds : null,
-  });
+  const page = pageOf(args.page);
+  const { arcades, total } = await pageArcades(
+    { q: args.query ?? null, machineIds: machineIds.length ? machineIds : null },
+    { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE },
+  );
 
   return {
-    total: arcades.length,
+    ...pageInfo(page, total !== null && page * PAGE_SIZE < total, total),
     // 좌표 기준 조회가 아니므로 거리는 없습니다 — 순위는 지도 화면이 냅니다.
-    arcades: arcades.slice(0, MAX_ROWS).map(summarizeArcade),
-    truncated: arcades.length > MAX_ROWS,
+    arcades: arcades.map(summarizeArcade),
   };
 }
 
@@ -94,6 +128,7 @@ export interface ReportSearchArgs {
   machine?: string | null;
   kind?: ReportKind | null;
   sinceHours?: number | null;
+  page?: number | null;
 }
 
 /**
@@ -105,15 +140,20 @@ export interface ReportSearchArgs {
  */
 export async function searchReports(args: ReportSearchArgs): Promise<unknown> {
   const machineIds = await resolveMachineIds(args.machine);
-  const reports = await listReports({
+  const page = pageOf(args.page);
+  // 하나 더 읽어 다음 쪽이 있는지 압니다 — 피드는 전체 수를 세지 않습니다(최신순 · 계속 바뀜).
+  const rows = await listReports({
     machineId: machineIds[0] ?? null,
     kinds: args.kind ? [args.kind] : null,
     sinceHours: args.sinceHours ?? 24,
-    limit: MAX_ROWS,
+    limit: PAGE_SIZE + 1,
+    offset: (page - 1) * PAGE_SIZE,
   });
+  const reports = rows.slice(0, PAGE_SIZE);
 
   return {
     note: '제보가 없다는 것은 "상태가 좋다"가 아니라 "최근 제보가 없다"는 뜻입니다. 대기 제보는 4시간 뒤 삭제됩니다.',
+    ...pageInfo(page, rows.length > PAGE_SIZE),
     reports: reports.map((r) => ({
       arcade: r.arcadeName,
       machine: r.machineName,
@@ -123,7 +163,7 @@ export async function searchReports(args: ReportSearchArgs): Promise<unknown> {
       condition: r.condition ?? undefined,
       // 사용자가 쓴 문장이 모델 프롬프트에 들어가는 자리입니다. 길이를 자르고
       // "누가 쓴 것" 임을 표시해, 메모 안의 지시문이 시스템 규칙처럼 읽히지 않게 합니다.
-      comment: r.comment ? `[사용자 메모] ${r.comment.slice(0, 200)}` : undefined,
+      comment: r.comment ? `[사용자 메모] ${clip(r.comment, 200)}` : undefined,
       by: r.nickname ?? '익명',
       at: r.createdAt,
     })),
@@ -133,26 +173,29 @@ export async function searchReports(args: ReportSearchArgs): Promise<unknown> {
 export interface PostSearchArgs {
   query?: string | null;
   machine?: string | null;
+  page?: number | null;
 }
 
 /** 커뮤니티 게시판 (/community 와 같은 소스) */
 export async function searchPosts(args: PostSearchArgs): Promise<unknown> {
   const machineIds = await resolveMachineIds(args.machine);
-  const { posts, total } = await listPosts({
+  const page = pageOf(args.page);
+  const { posts, total, hasMore } = await listPosts({
     machineId: machineIds[0] ?? null,
     q: args.query ?? null,
     sort: 'recent',
-    limit: MAX_ROWS,
+    limit: PAGE_SIZE,
+    offset: (page - 1) * PAGE_SIZE,
   });
 
   return {
-    total,
+    ...pageInfo(page, hasMore, total),
     posts: posts.map((p) => ({
       title: p.title,
       // 게임 없는 공지는 '공지' 로 — null 을 그대로 주면 답변에 "게임: null" 이 샌다
       game: p.machineShortName ?? '공지',
       category: p.categoryLabel,
-      excerpt: p.excerpt,
+      excerpt: clip(p.excerpt),
       by: p.nickname,
       likes: p.likeCount,
       comments: p.commentCount,

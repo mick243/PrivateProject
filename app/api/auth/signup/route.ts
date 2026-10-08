@@ -1,4 +1,5 @@
 import { after, NextResponse } from 'next/server';
+import { conflict, handle, parseBody, tooMany } from '@/lib/api-errors';
 import { appOrigin } from '@/lib/app-url';
 import {
   clearLoginFailures,
@@ -11,7 +12,7 @@ import {
 } from '@/lib/auth';
 import { sendVerificationMail } from '@/lib/email-verify';
 import { isUniqueViolation } from '@/lib/pg-errors';
-import { formatIssues, signupInputSchema } from '@/lib/validation';
+import { signupInputSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,7 +37,7 @@ export const dynamic = 'force-dynamic';
  * 시도 제한은 로그인과 같은 통을 쓰되 키를 나눕니다 — 가입 실패로 로그인이
  * 잠기면 이미 계정이 있는 사람이 남의 시도 때문에 못 들어옵니다.
  */
-export async function POST(request: Request) {
+async function onPost(request: Request) {
   /**
    * 가입 제한은 IP 밖에 근거가 없습니다 — 아직 계정이 없으니 계정 단위로 셀 수가
    * 없습니다. 그래서 **클라이언트를 신뢰할 수 있을 때만** 셉니다
@@ -54,39 +55,20 @@ export async function POST(request: Request) {
   const key = ip === null ? null : `signup:${ip}`;
   const lockedFor = key === null ? 0 : await loginLockRemainingMs(key);
   if (lockedFor > 0) {
-    return NextResponse.json(
-      { error: `가입 시도가 많습니다. ${Math.ceil(lockedFor / 60000)}분 후 다시 시도해 주세요` },
-      { status: 429 },
-    );
+    return tooMany(`가입 시도가 많습니다. ${Math.ceil(lockedFor / 60000)}분 후 다시 시도해 주세요`, lockedFor);
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
-  }
-
-  const parsed = signupInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: '입력값이 올바르지 않습니다', details: formatIssues(parsed.error) },
-      { status: 400 },
-    );
-  }
+  const body = await parseBody(request, signupInputSchema);
+  if (!body.ok) return body.response;
 
   try {
-    const result = await createAccount(
-      parsed.data.nickname,
-      parsed.data.password,
-      parsed.data.email,
-    );
+    const result = await createAccount(body.value.nickname, body.value.password, body.value.email);
     if (!result.ok) {
       // 로그인과 달리 "이미 있는 아이디" 를 숨기지 않습니다. 숨기면 가입이
       // 불가능해집니다 — 무엇을 고쳐야 하는지 알려 줄 방법이 없습니다.
       // 어차피 플레이어 목록에 닉네임이 그대로 보입니다.
       if (key !== null) await noteLoginFailure(key);
-      return NextResponse.json({ error: conflictMessage(result.reason) }, { status: 409 });
+      return conflict(conflictMessage(result.reason));
     }
 
     if (key !== null) await clearLoginFailures(key);
@@ -107,14 +89,13 @@ export async function POST(request: Request) {
     // 같은 순간에 같은 아이디·같은 주소로 두 명이 가입한 경우 (createAccount 의
     // 선검사와 INSERT 사이). 500 이 아니라 위와 같은 안내로 돌려줍니다.
     if (isUniqueViolation(err)) {
-      return NextResponse.json(
-        { error: conflictMessage(signupConflictReason(err)) },
-        { status: 409 },
-      );
+      return conflict(conflictMessage(signupConflictReason(err)));
     }
     throw err;
   }
 }
+
+export const POST = handle(onPost);
 
 /**
  * 겹쳤을 때 뭐라고 할 것인가.

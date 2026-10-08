@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { json } from '@/lib/http';
-import { badId, badJson, handle, invalid, notFound, parseId } from '@/lib/api-errors';
+import { badId, handle, notFound, parseBody, parseId } from '@/lib/api-errors';
 import { deleteArcade, getArcade, updateArcade } from '@/lib/arcades';
 import { requireAdmin } from '@/lib/auth';
-import { arcadeInputSchema, formatIssues } from '@/lib/validation';
+import { arcadeInputSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,19 +33,10 @@ async function onPut(request: Request, ctx: Ctx) {
   const id = parseId((await ctx.params).id);
   if (id === null) return badId();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return badJson();
-  }
+  const body = await parseBody(request, arcadeInputSchema);
+  if (!body.ok) return body.response;
 
-  const parsed = arcadeInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return invalid(parsed.error);
-  }
-
-  const arcade = await updateArcade(id, parsed.data);
+  const arcade = await updateArcade(id, body.value);
   return arcade ? NextResponse.json({ arcade }) : NOT_FOUND();
 }
 

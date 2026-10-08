@@ -30,9 +30,8 @@
  */
 
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
-import { getDb } from '../lib/db.ts';
+import { BULK_TX_OPTIONS, getPrismaClient } from '../lib/prisma.ts';
 import { NaverLocalError, searchLocal, type NaverLocalItem } from '../lib/naver-local.ts';
 import {
   buildQueries,
@@ -82,19 +81,6 @@ function fail(lines: string[]): never {
   process.exit(1);
 }
 
-function portInUse(port: number, timeoutMs = 800): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = net.connect({ host: '127.0.0.1', port });
-    const done = (v: boolean) => {
-      sock.destroy();
-      resolve(v);
-    };
-    sock.setTimeout(timeoutMs, () => done(false));
-    sock.once('connect', () => done(true));
-    sock.once('error', () => done(false));
-  });
-}
-
 interface Arcade {
   id: number;
   name: string;
@@ -117,10 +103,12 @@ interface CacheEntry {
   source: string | null;
 }
 
-const db = await getDb();
-const { rows: arcades } = await db.query<Arcade>(
-  `SELECT id, name, address, lat, lng, source FROM arcades ORDER BY id`,
-);
+// DATABASE_URL 이 없으면 여기서 멈춥니다 (lib/prisma.ts — PGlite 로 내려가지 않습니다).
+const prisma = await getPrismaClient();
+const arcades: Arcade[] = await prisma.arcades.findMany({
+  orderBy: { id: 'asc' },
+  select: { id: true, name: true, address: true, lat: true, lng: true, source: true },
+});
 console.log(`DB 오락실 ${n(arcades.length)}곳`);
 
 fs.mkdirSync(dataDir, { recursive: true });
@@ -352,14 +340,12 @@ console.log(`\n전체 판정 내역: ${path.relative(root, CACHE_FILE)}`);
   if (plans.length > 12) console.log(`  … 그 외 ${n(plans.length - 12)}개 그룹`);
 
   if (doMerge && plans.length) {
-    if (!process.env.DATABASE_URL && (await portInUse(3000))) {
-      fail(['포트 3000 에 무언가 떠 있습니다. 먼저 멈춰 주세요 (PGlite 는 한 프로세스만 엽니다).']);
-    }
     const dropIds = plans.flatMap((p) => p.dropIds);
-    const { rows: doomed } = await db.query<Record<string, unknown>>(
-      `SELECT * FROM arcades WHERE id = ANY($1::int[]) ORDER BY id`,
-      [dropIds],
-    );
+    // 복구용이라 행 전체를 남깁니다 (rating_avg 는 문자열 · 시각은 ISO — 옛 node-postgres 와 같은 모양).
+    const doomed = await prisma.arcades.findMany({
+      where: { id: { in: dropIds } },
+      orderBy: { id: 'asc' },
+    });
     fs.writeFileSync(
       MERGED_FILE,
       `${JSON.stringify({ plans, dropped: doomed }, null, 2)}
@@ -370,19 +356,19 @@ console.log(`\n전체 판정 내역: ${path.relative(root, CACHE_FILE)}`);
 복구용 저장: ${path.relative(root, MERGED_FILE)}`);
 
     let renamed = 0;
-    await db.transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       for (const p of plans) {
-        const { rows } = await tx.query<{ id: number }>(
-          `UPDATE arcades SET name = $2, updated_at = now()
-            WHERE id = $1 AND name <> $2 RETURNING id`,
-          [p.keepId, p.name],
-        );
-        renamed += rows.length;
+        // 이름이 이미 같으면 건드리지 않습니다 — updated_at 이 괜히 움직이지 않게.
+        const { count } = await tx.arcades.updateMany({
+          where: { id: p.keepId, name: { not: p.name } },
+          data: { name: p.name, updated_at: new Date() },
+        });
+        renamed += count;
       }
       if (dropIds.length) {
-        await tx.query(`DELETE FROM arcades WHERE id = ANY($1::int[])`, [dropIds]);
+        await tx.arcades.deleteMany({ where: { id: { in: dropIds } } });
       }
-    });
+    }, BULK_TX_OPTIONS);
     console.log(`병합 완료 — 이름 변경 ${n(renamed)}행 · 삭제 ${n(dropIds.length)}행`);
   } else if (plans.length) {
     console.log(`
@@ -399,37 +385,29 @@ if (!doDelete) {
   process.exit(0);
 }
 
-if (!process.env.DATABASE_URL && (await portInUse(3000))) {
-  fail([
-    '포트 3000 에 무언가(아마도 next dev) 떠 있습니다. 먼저 멈춰 주세요.',
-    '  PGlite 는 한 프로세스만 데이터 디렉터리를 열 수 있습니다.',
-  ]);
-}
-
 if (!absent.length) {
   console.log('\n지울 것이 없습니다.');
   process.exit(0);
 }
 
 // 복구용으로 행 전체를 먼저 남깁니다.
-const { rows: doomed } = await db.query<Record<string, unknown>>(
-  `SELECT * FROM arcades WHERE id = ANY($1::int[]) ORDER BY id`,
-  [absent.map((a) => a.id)],
-);
+const doomed = await prisma.arcades.findMany({
+  where: { id: { in: absent.map((a) => a.id) } },
+  orderBy: { id: 'asc' },
+});
 fs.writeFileSync(DELETED_FILE, `${JSON.stringify(doomed, null, 2)}\n`, 'utf8');
 console.log(`\n복구용 저장: ${path.relative(root, DELETED_FILE)} (${n(doomed.length)}행)`);
 
-const { rows: gone } = await db.query<{ id: number }>(
-  `DELETE FROM arcades WHERE id = ANY($1::int[]) RETURNING id`,
-  [absent.map((a) => a.id)],
-);
-console.log(`삭제 ${n(gone.length)}곳`);
+const gone = await prisma.arcades.deleteMany({ where: { id: { in: absent.map((a) => a.id) } } });
+console.log(`삭제 ${n(gone.count)}곳`);
 
-const { rows: after } = await db.query<{ source: string | null; n: number }>(
-  `SELECT source, COUNT(*)::int AS n FROM arcades GROUP BY source ORDER BY source`,
-);
+const after = await prisma.arcades.groupBy({
+  by: ['source'],
+  _count: { _all: true },
+  orderBy: { source: 'asc' },
+});
 console.log('\n남은 arcades:');
-for (const r of after) console.log(`  ${r.source ?? '(출처 미기록)'}: ${n(r.n)}곳`);
+for (const r of after) console.log(`  ${r.source ?? '(출처 미기록)'}: ${n(r._count._all)}곳`);
 console.log(
   `\n판단불가 ${n(unclear.length)}곳은 그대로 뒀습니다 — 5건 상한 때문에 "없다" 고 말할 수 없는 것들입니다.\n`,
 );

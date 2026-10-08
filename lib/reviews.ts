@@ -36,11 +36,14 @@ function toReview(r: ReviewRow): ArcadeReview {
   };
 }
 
-export async function listReviews(arcadeId: number): Promise<ArcadeReview[]> {
+/** 최근 것부터. limit 이 없으면 전부 (상세 화면이 쪽을 나눠 그립니다 — components/ArcadeReviews.tsx) */
+export async function listReviews(arcadeId: number, opts: { limit?: number } = {}): Promise<ArcadeReview[]> {
   const prisma = await getPrismaClient();
   const rows = await prisma.arcade_reviews.findMany({
     where: { arcade_id: arcadeId },
-    orderBy: { created_at: 'desc' },
+    // id 로 마지막 순서를 못 박습니다 — 같은 시각에 쓴 리뷰가 있으면 상한이 어느 쪽을 자를지 흔들립니다.
+    orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+    ...(opts.limit === undefined ? {} : { take: opts.limit }),
     include: reviewInclude,
   });
   return rows.map(toReview);

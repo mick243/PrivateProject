@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { conflict, handle, needLogin, parseBody } from '@/lib/api-errors';
 import {
   claimNickname,
   clearSessionCookie,
@@ -7,7 +8,7 @@ import {
   setPlayerPassword,
   setSessionCookie,
 } from '@/lib/auth';
-import { formatIssues, nicknameInputSchema } from '@/lib/validation';
+import { nicknameInputSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,61 +26,43 @@ export const dynamic = 'force-dynamic';
  */
 
 /** GET — 지금 물어볼 상태인가, 미리 채워 둘 이름은 무엇인가 */
-export async function GET(request: Request) {
+async function onGet(request: Request) {
   const session = await getSession(request);
-  if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
+  if (!session) return needLogin();
 
   const status = await nicknameStatus(session.playerId);
   // 계정이 사라졌다면 쿠키도 같이 정리합니다 (app/api/auth/session 과 같은 처리).
-  if (!status) return clearSessionCookie(NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }));
+  if (!status) return clearSessionCookie(needLogin());
 
   return NextResponse.json(status);
 }
 
 /** POST — `{nickname, password?}` → 이름 확정 (+ 선택한 경우 비밀번호 설정) + 세션 쿠키 재발급 */
-export async function POST(request: Request) {
+async function onPost(request: Request) {
   const session = await getSession(request);
-  if (!session) return NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 });
+  if (!session) return needLogin();
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'JSON 본문을 파싱할 수 없습니다' }, { status: 400 });
-  }
+  const body = await parseBody(request, nicknameInputSchema);
+  if (!body.ok) return body.response;
 
-  const parsed = nicknameInputSchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: '입력값이 올바르지 않습니다', details: formatIssues(parsed.error) },
-      { status: 400 },
-    );
-  }
-
-  const result = await claimNickname(session.playerId, parsed.data.nickname);
+  const result = await claimNickname(session.playerId, body.value.nickname);
   if (!result.ok) {
-    if (result.reason === 'gone') {
-      return clearSessionCookie(
-        NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }),
-      );
-    }
+    if (result.reason === 'gone') return clearSessionCookie(needLogin());
     if (result.reason === 'settled') {
       // 뒤로 가기로 이 화면에 다시 온 경우가 대부분입니다. 실패이긴 하지만
       // 사용자가 고칠 것이 없으므로 무엇이 끝났는지만 알려 줍니다.
-      return NextResponse.json({ error: '닉네임은 이미 정해졌습니다' }, { status: 409 });
+      return conflict('닉네임은 이미 정해졌습니다');
     }
-    if (result.reason === 'reserved') {
-      return NextResponse.json({ error: '사용할 수 없는 닉네임입니다' }, { status: 409 });
-    }
+    if (result.reason === 'reserved') return conflict('사용할 수 없는 닉네임입니다');
     // 가입과 같은 이유로 "이미 있다"를 숨기지 않습니다 — 숨기면 무엇을 고쳐야
     // 하는지 알려 줄 방법이 없고, 어차피 플레이어 목록에 이름이 그대로 보입니다.
-    return NextResponse.json({ error: '이미 사용 중인 닉네임입니다' }, { status: 409 });
+    return conflict('이미 사용 중인 닉네임입니다');
   }
 
   // 비밀번호는 이름이 확정된 뒤에 겁니다 — 이름이 409 로 반려됐는데 비밀번호만
   // 먼저 박히면, 사용자는 실패로 알고 있는데 계정 상태는 바뀌어 있게 됩니다.
-  if (parsed.data.password !== undefined) {
-    await setPlayerPassword(session.playerId, parsed.data.password);
+  if (body.value.password !== undefined) {
+    await setPlayerPassword(session.playerId, body.value.password);
   }
 
   // 쿠키를 **반드시** 다시 발급합니다 — 위에서 비밀번호를 정했다면 그 순간
@@ -87,3 +70,6 @@ export async function POST(request: Request) {
   // (lib/auth.ts setPlayerPassword). 이름을 정하자마자 로그아웃되면 안 됩니다.
   return setSessionCookie(NextResponse.json({ user: result.user }), result.user.playerId);
 }
+
+export const GET = handle(onGet);
+export const POST = handle(onPost);

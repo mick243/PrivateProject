@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { badId, handle, notFound, parseId } from '@/lib/api-errors';
 import { getAttachment } from '@/lib/board';
 import { readRange, size } from '@/lib/uploads';
 
@@ -17,22 +18,18 @@ export const runtime = 'nodejs';
  * 요청하는데, 서버가 언제나 200 으로 전체를 돌려주면 브라우저는 탐색을 포기하거나
  * 매번 처음부터 다시 받습니다. 그래서 206 을 지원합니다.
  */
-export async function GET(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const id = Number((await ctx.params).id);
-  if (!Number.isInteger(id) || id <= 0) {
-    return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
-  }
+async function onGet(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const id = parseId((await ctx.params).id);
+  if (id === null) return badId();
 
   const attachment = await getAttachment(id);
-  if (!attachment) {
-    return NextResponse.json({ error: '첨부를 찾을 수 없습니다' }, { status: 404 });
-  }
+  if (!attachment) return notFound('첨부를 찾을 수 없습니다');
 
   // 크기만 읽는다 — 내용을 메모리에 올리지 않는다 (lib/uploads.ts readRange 주석).
   const total = await size(attachment.storageKey);
   if (total === null) {
     // DB 행은 있는데 파일이 없는 경우 (수동 삭제 등). 500 이 아니라 404 가 맞다.
-    return NextResponse.json({ error: '첨부 파일이 없습니다' }, { status: 404 });
+    return notFound('첨부 파일이 없습니다');
   }
 
   const base = {
@@ -66,6 +63,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
     headers: { ...base, 'Content-Length': String(total) },
   });
 }
+
+export const GET = handle(onGet);
 
 /**
  * `Range: bytes=시작-끝` 한 구간만 해석합니다.

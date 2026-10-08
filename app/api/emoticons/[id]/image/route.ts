@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { badId, handle, notFound, parseId } from '@/lib/api-errors';
 import { getEmoticonFile } from '@/lib/emoticons';
 import { readRange, size } from '@/lib/uploads';
 
@@ -16,22 +17,16 @@ export const runtime = 'nodejs';
  *
  * 파일명이 내용 해시이고 id 는 재사용되지 않으므로(SERIAL) 영구 캐시입니다.
  */
-export async function GET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const id = Number((await ctx.params).id);
-  if (!Number.isInteger(id) || id <= 0) {
-    return NextResponse.json({ error: '잘못된 id 입니다' }, { status: 400 });
-  }
+async function onGet(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const id = parseId((await ctx.params).id);
+  if (id === null) return badId();
 
   const file = await getEmoticonFile(id);
-  if (!file) {
-    return NextResponse.json({ error: '이모티콘을 찾을 수 없습니다' }, { status: 404 });
-  }
+  if (!file) return notFound('이모티콘을 찾을 수 없습니다');
 
   // 행은 있는데 파일이 사라진 경우 — 500 이 아니라 404 가 맞습니다.
   const total = await size(file.storageKey);
-  if (total === null) {
-    return NextResponse.json({ error: '이모티콘 파일이 없습니다' }, { status: 404 });
-  }
+  if (total === null) return notFound('이모티콘 파일이 없습니다');
 
   return new NextResponse(readRange(file.storageKey), {
     status: 200,
@@ -42,3 +37,5 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
     },
   });
 }
+
+export const GET = handle(onGet);
