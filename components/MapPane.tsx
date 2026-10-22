@@ -37,6 +37,11 @@ export interface MapPaneProps {
    */
   rankById?: Map<number, number> | null;
   /**
+   * 켜 둔 기종 필터. 이름표가 종 수("13종") 대신 그 기종과 대수("사볼 2대")를 적습니다
+   * (lib/machine-summary.ts) — 필터를 켠 사람의 질문은 "내 게임이 몇 대 있나" 입니다.
+   */
+  focusMachineIds?: number[];
+  /**
    * 지금 **그리고 있는** 범위를 알립니다 (화면 + 마커 여백까지 포함한 값).
    *
    * 사이드바 목록이 "지도에 보이는 곳" 이 되려면 그 판정을 지도와 똑같이 해야

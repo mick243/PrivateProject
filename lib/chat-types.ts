@@ -117,9 +117,24 @@ export interface SearchOutcome {
   radiusKm: number;
   /** 기준점이 없으면 거리 항목이 빠진 채로 매겨졌다는 뜻 */
   hasOrigin: boolean;
-  top: { name: string; score: number; distanceLabel: string | null; reason: string }[];
+  top: {
+    name: string;
+    score: number;
+    distanceLabel: string | null;
+    reason: string;
+    /** 근거 없이 가운데 값으로 들어간 항목 이름 (lib/recommend.ts missingFactors) */
+    missing: string[];
+  }[];
   /** 사용자가 기종 필터를 걸어 둔 경우 그 이름들 */
   machineNames: string[];
+  /**
+   * 그 기종을 보유로 등록한 오락실이 **전국에 한 곳도 없는지**.
+   *
+   * 결과 0곳의 이유가 반경인지 데이터인지에 따라 할 말이 다릅니다 — 반경이면 "넓혀
+   * 보세요" 가 답이지만, 아무도 등록하지 않은 기종이면 넓혀도 0곳입니다. 전체 목록을
+   * 아직 모르면(첫 조회가 걸러진 조회였으면) false 로 두고 일반 문구로 물러섭니다.
+   */
+  machineUnregistered: boolean;
   /**
    * 기준점으로 삼고 결과에서 뺀 오락실 이름 (문장에 언급된 "지금 있는 곳").
    * 없으면 null. 말풍선이 이 사실을 밝혀야 "왜 그곳이 목록에 없지" 가 안 생깁니다.

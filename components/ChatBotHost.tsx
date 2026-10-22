@@ -35,6 +35,12 @@ export interface ChatSearchApi {
   onSearch: (order: PriorityOrder, constraints: ChatConstraints | null) => SearchOutcome;
   extract: (text: string) => ChatConstraints;
   initialOrder: PartialOrder;
+  /**
+   * 기종 목록과 첫 오락실 목록을 받았는지. 이게 false 인 동안 extract 는 빈 사전으로
+   * 대조해 문장의 기종·오락실을 놓칩니다 — 다른 화면에서 넘어온 질문(?ask=)은 이것이
+   * true 가 될 때까지 기다립니다 (ChatBot.tsx).
+   */
+  ready: boolean;
 }
 
 interface ContextValue {

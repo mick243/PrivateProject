@@ -22,8 +22,9 @@ import type { Arcade, ArcadeMachine } from './types';
 export type FactorKey = 'condition' | 'wait' | 'distance';
 
 /**
- * 항목별 무게. **화면에 나가지 않는 내부 값**입니다 — 사용자가 고르는 건
- * 1·2·3순위뿐이고, 그게 몇 점인지는 PRIORITY_POINTS 가 정합니다.
+ * 항목별 무게. **고르는 화면에는 나가지 않는 내부 값**입니다 — 사용자가 고르는 건
+ * 1·2·3순위뿐이고, 그게 몇 점인지는 PRIORITY_POINTS 가 정합니다. 결과 말풍선만
+ * 그 비율을 한 줄로 밝힙니다 (describeScoring).
  */
 export type Weights = Record<FactorKey, number>;
 
@@ -40,7 +41,8 @@ export const DEFAULT_WEIGHTS: Weights = { condition: 3, wait: 3, distance: 3 };
 
 /**
  * 사용자가 고르는 것은 **1·2·3순위** 세 칸뿐입니다. 그 순위가 몇 점짜리
- * 무게인지는 여기서만 정해지고 화면에는 나가지 않습니다.
+ * 무게인지는 여기서만 정해지고 고르는 화면에는 나가지 않습니다 — 결과를 받은
+ * 뒤에 "75점" 이 무슨 뜻인지 묻는 사람에게만 비율로 답합니다 (describeScoring).
  *
  * 슬라이더나 %를 걷어낸 이유: 저울의 눈금을 보여 주면 "컨디션 63%" 가 무슨
  * 뜻인지 설명할 자리가 필요해집니다. 정작 사람이 답할 수 있는 질문은
@@ -317,6 +319,37 @@ export function rankReason(scored: ScoredArcade): string {
     distance: '가까워서',
   };
   return reason[scored.topFactor];
+}
+
+/**
+ * 근거 없이 가운데 값(NEUTRAL)으로 들어간 항목의 이름들 — "대기 인원·기체 컨디션 정보 없음".
+ *
+ * 제보가 비어 있으면 모든 후보가 그 항목에서 같은 점수를 받아, 점수 차이는 거의
+ * 거리 하나에서 나옵니다. 그런데 말풍선에 "75점" 만 찍으면 대기·컨디션까지 따져서
+ * 나온 점수로 읽힙니다 (2026-10-22 첫 사용자 점검). 어느 항목이 비어 있었는지를
+ * 점수 옆에 같이 적어야 그 숫자를 믿을 만큼만 믿습니다.
+ *
+ * 가중치가 0 인 항목은 빼고 셉니다 — 보지 않은 항목은 "정보 없음" 도 아닙니다.
+ */
+export function missingFactors(scored: ScoredArcade, weights: Weights): string[] {
+  return FACTORS.filter((f) => weights[f.key] > 0 && !scored.factors[f.key].known).map(
+    (f) => f.label,
+  );
+}
+
+/**
+ * 점수가 무엇인지 한 줄 — 챗봇 탐색 결과 끝에 붙입니다.
+ *
+ * 비율은 PRIORITY_POINTS 에서, "절반" 은 NEUTRAL 에서 만듭니다. 숫자를 문장에 박아
+ * 두면 가중치를 바꿀 때 말과 계산이 갈립니다.
+ */
+export function describeScoring(): string {
+  const sum = PRIORITY_POINTS.reduce((a, b) => a + b, 0);
+  const shares = PRIORITY_POINTS.map((p, i) => `${i + 1}순위 ${Math.round((p / sum) * 100)}%`).join(
+    ' · ',
+  );
+  const neutral = NEUTRAL === 0.5 ? '절반' : `${Math.round(NEUTRAL * 100)}%`;
+  return `점수는 100점 만점입니다. ${shares}씩 나눠 주고, 정보가 없는 항목은 그 몫의 ${neutral}만 줍니다.`;
 }
 
 // ─── 목록 순서 · 페이지 ──────────────────────────────────────
