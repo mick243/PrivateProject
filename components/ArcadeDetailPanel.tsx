@@ -12,6 +12,7 @@ import {
   type ReportKind,
   REPORT_COMMENT_MAX,
 } from '@/lib/community-types';
+import { placeLinks } from '@/lib/place-links';
 import type { Arcade, ArcadeCabinet, ArcadeMachine, Machine, MachineGuess } from '@/lib/types';
 import { useFavorites } from '@/lib/use-favorites';
 import { usePlayerId } from '@/lib/use-player';
@@ -273,6 +274,7 @@ function ArcadeDetailPanel({
 
   const ownedIds = new Set(arcade.machines.map((m) => m.id));
   const missing = machines.filter((m) => !ownedIds.has(m.id));
+  const links = placeLinks(arcade);
 
   return (
     <div className="detail arcade-detail">
@@ -313,6 +315,41 @@ function ArcadeDetailPanel({
                 </a>
               </span>
             )}
+          </p>
+          {/*
+            영업시간 · 전화 · 길찾기는 지도 앱으로 넘긴다 (lib/place-links.ts). 우리 데이터에는
+            그 칸이 거의 비어 있는데(926곳 중 영업시간 1곳 · 전화 0곳), 상세에 바깥으로 나가는
+            길이 하나도 없어서 "영업시간 정보 없음" 에서 막혔다 (2026-10-22 첫 사용자 점검).
+          */}
+          <p className="place-links">
+            <span className="muted small">영업시간 · 전화</span>
+            <a
+              className="btn btn-sm"
+              href={links.naver}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="네이버 지도에서 이 오락실을 검색합니다 (새 창)"
+            >
+              네이버 지도
+            </a>
+            <a
+              className="btn btn-sm"
+              href={links.kakao}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="카카오맵에서 이 오락실을 검색합니다 (새 창)"
+            >
+              카카오맵
+            </a>
+            <a
+              className="btn btn-sm"
+              href={links.directions}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="카카오맵 길찾기를 이 오락실을 목적지로 엽니다 (새 창)"
+            >
+              길찾기
+            </a>
           </p>
         </div>
         <div className="detail-head-actions">

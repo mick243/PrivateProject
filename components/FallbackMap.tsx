@@ -4,6 +4,7 @@ import { hasNaverKey } from '@/lib/naver-loader';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { inBox, padBox, type Coord, type LatLngBox } from '@/lib/geo';
+import { machineSummary, machineTooltip } from '@/lib/machine-summary';
 import type { MapPaneProps } from './MapPane';
 
 /**
@@ -100,6 +101,7 @@ export default function FallbackMap({
   center,
   myLocation = null,
   rankById = null,
+  focusMachineIds = [],
   onViewportChange,
 }: MapPaneProps) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -325,10 +327,14 @@ export default function FallbackMap({
         {visible.map((a) => {
           const pos = project(a.lat, a.lng);
           const rank = rankById?.get(a.id);
+          // NaverMap 의 markerIcon 과 같은 규칙 — "13종" / "사볼 2대", 전체 목록은 툴팁으로.
+          const machines = machineSummary(a.machines, focusMachineIds);
+          const tooltip = machineTooltip(a.machines, focusMachineIds);
           return (
             <button
               key={a.id}
               type="button"
+              title={tooltip ?? undefined}
               className={`mk mk-static ${a.id === selectedId ? 'mk-on' : ''} ${
                 rank === undefined ? '' : 'mk-ranked'
               }`}
@@ -343,7 +349,7 @@ export default function FallbackMap({
               {rank !== undefined && <span className="mk-rank">{rank}</span>}
               <span className="mk-dot" />
               <span className="mk-label">{a.name}</span>
-              <span className="mk-count">{a.machines.length}</span>
+              {machines && <span className="mk-machines">{machines}</span>}
             </button>
           );
         })}

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { inBox, padBox, type LatLngBox } from '@/lib/geo';
+import { machineSummary, machineTooltip } from '@/lib/machine-summary';
 import { drawTally, reportSync, setPerfMap, useCullingOff } from '@/lib/map-perf';
 import {
   clusterByRegion,
@@ -93,17 +94,26 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 }
 
-function markerIcon(arcade: Arcade, selected: boolean, rank: number | undefined) {
-  const count = arcade.machines.length;
+function markerIcon(
+  arcade: Arcade,
+  selected: boolean,
+  rank: number | undefined,
+  focusIds: readonly number[],
+) {
+  // 필터가 없으면 "13종", 켜 둔 기종이 있으면 "사볼 2대" (lib/machine-summary.ts).
+  // 이름표에 다 드러나지 않은 기종은 마우스를 올리면 전부 뜬다.
+  const machines = machineSummary(arcade.machines, focusIds);
+  const tooltip = machineTooltip(arcade.machines, focusIds);
   // 순위 뱃지는 이름 앞에 온다 — 뒤에 붙이면 이름이 긴 오락실에서 잘린다.
   const rankBadge = rank === undefined ? '' : `<span class="mk-rank">${rank}</span>`;
+  const title = tooltip ? ` title="${escapeHtml(tooltip)}"` : '';
   return {
     content: `
-      <div class="mk mk-pin ${selected ? 'mk-on' : ''} ${rank === undefined ? '' : 'mk-ranked'}">
+      <div class="mk mk-pin ${selected ? 'mk-on' : ''} ${rank === undefined ? '' : 'mk-ranked'}"${title}>
         ${rankBadge}
         <span class="mk-dot"></span>
         <span class="mk-label">${escapeHtml(arcade.name)}</span>
-        <span class="mk-count">${count}</span>
+        ${machines ? `<span class="mk-machines">${escapeHtml(machines)}</span>` : ''}
       </div>`,
     // 앵커는 (0,0) — 래퍼 원점이 곧 좌표이고, 점 중심을 거기 맞추는 일은
     // .mk-pin 이 --mk-dot-cx 만큼 되밀어 CSS 에서 처리한다. 상태(알약·순위
@@ -354,6 +364,7 @@ export default function NaverMap({
   myLocation = null,
   followCenter = false,
   rankById = null,
+  focusMachineIds,
   onViewportChange,
   focusNonce = 0,
   centerNonce = 0,
@@ -395,8 +406,13 @@ export default function NaverMap({
    *      화면에 붙은 마커 전부의 innerHTML 을 헛되게 다시 쓴다 (실측 200ms).
    */
   const markerShapeRef = useRef(
-    new Map<number, { arcade: Arcade; z: number; content: string }>(),
+    new Map<number, { arcade: Arcade; z: number; focusKey: string; content: string }>(),
   );
+  /**
+   * 켜 둔 기종 필터를 값으로 — 이름표의 기종 순서가 이것에 따라 바뀐다. 배열은 렌더마다
+   * 새것이라 effect 의존성과 위 (1) 의 "참조가 같으면 끝" 판정에는 문자열로 쓴다.
+   */
+  const focusKey = (focusMachineIds ?? []).join(',');
   /**
    * 지역 묶음 알약 (열쇠 = 구역 key). 오락실 마커와 **같은 풀**을 쓴다 — 줌을 빼서
    * 점 수백 개가 묶음 수십 개로 바뀔 때, 떼어낸 점들이 그대로 묶음으로 갈아 끼워진다.
@@ -655,6 +671,7 @@ export default function NaverMap({
     });
 
     // 추가 / 갱신
+    const focusIds = focusKey === '' ? [] : focusKey.split(',').map(Number);
     for (const arcade of inView) {
       const selected = arcade.id === selectedId;
       const rank = rankById?.get(arcade.id);
@@ -663,24 +680,25 @@ export default function NaverMap({
       const existing = markers.get(arcade.id);
       if (existing) {
         const shown = markerShapeRef.current.get(arcade.id);
-        // (1) 참조까지 같으면 문자열을 만들 이유조차 없다.
-        if (shown && shown.arcade === arcade && shown.z === z) continue;
+        // (1) 참조까지 같으면 문자열을 만들 이유조차 없다. 기종 필터가 바뀌면 같은 오락실도
+        //     이름표의 기종 순서가 달라지므로 그것까지 같아야 한다.
+        if (shown && shown.arcade === arcade && shown.z === z && shown.focusKey === focusKey) continue;
 
-        const icon = markerIcon(arcade, selected, rank);
+        const icon = markerIcon(arcade, selected, rank, focusIds);
         if (shown) {
           // (2) 값이 같으면 DOM 은 그대로 둔다. 바뀐 것만 골라 쓴다.
           if (shown.content !== icon.content) existing.setContent(icon.content, icon.anchor);
           if (shown.z !== z) existing.setZIndexValue(z);
-          markerShapeRef.current.set(arcade.id, { arcade, z, content: icon.content });
+          markerShapeRef.current.set(arcade.id, { arcade, z, focusKey, content: icon.content });
           continue;
         }
         existing.setContent(icon.content, icon.anchor);
         existing.setZIndexValue(z);
-        markerShapeRef.current.set(arcade.id, { arcade, z, content: icon.content });
+        markerShapeRef.current.set(arcade.id, { arcade, z, focusKey, content: icon.content });
         continue;
       }
 
-      const icon = markerIcon(arcade, selected, rank);
+      const icon = markerIcon(arcade, selected, rank, focusIds);
       const position = new naver.maps.LatLng(arcade.lat, arcade.lng);
       const onClick = () => onSelect(arcade.id);
 
@@ -707,7 +725,7 @@ export default function NaverMap({
       }
 
       markers.set(arcade.id, marker);
-      markerShapeRef.current.set(arcade.id, { arcade, z, content: icon.content });
+      markerShapeRef.current.set(arcade.id, { arcade, z, focusKey, content: icon.content });
     }
 
     /**
@@ -772,6 +790,7 @@ export default function NaverMap({
     ready,
     onSelect,
     rankById,
+    focusKey,
     arcades.length,
     clustersInView,
     labeledClusters,

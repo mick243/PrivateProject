@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_WEIGHTS,
   PRIORITY_POINTS,
+  describeScoring,
   favoritesFirst,
   isCompleteOrder,
+  missingFactors,
   pageOfArcade,
   pageSlice,
   rankArcades,
@@ -195,6 +197,35 @@ describe('정보가 없을 때', () => {
     });
     expect(s.topFactor).toBeNull();
     expect(rankReason(s)).toBe('비교할 정보가 아직 없습니다');
+  });
+
+  it('근거 없이 가운데 값으로 들어간 항목을 이름으로 돌려준다 — 말풍선이 점수 옆에 적는다', () => {
+    // 제보가 하나도 없는 곳 — 거리만 근거가 있다. 어뮤즈타운 "75점" 이 이 모양이었다.
+    const a = arcade('A', { km: 0, machines: [machine(1)] });
+    const weights = weightsFromOrder(['distance', 'wait', 'condition']);
+    const [s] = rankArcades({ arcades: [a], origin: ORIGIN, weights, radiusKm: 5 });
+    expect(s.score).toBe(75); // 거리 50 + (대기 30 + 컨디션 20) 의 절반
+    expect(missingFactors(s, weights)).toEqual(['기체 컨디션', '대기 인원']);
+  });
+
+  it('가중치 0 인 항목은 "정보 없음" 으로 세지 않는다 — 보지 않은 항목이다', () => {
+    const a = arcade('A', { km: 0, machines: [machine(1)] });
+    const weights: Weights = { condition: 0, wait: 0, distance: 5 };
+    const [s] = rankArcades({ arcades: [a], origin: ORIGIN, weights, radiusKm: 5 });
+    expect(missingFactors(s, weights)).toEqual([]);
+  });
+});
+
+describe('점수 설명 (describeScoring)', () => {
+  it('비율은 PRIORITY_POINTS 에서 나온다 — 가중치를 바꾸면 말도 따라 바뀐다', () => {
+    const sum = PRIORITY_POINTS.reduce((a, b) => a + b, 0);
+    for (const [i, p] of PRIORITY_POINTS.entries()) {
+      expect(describeScoring()).toContain(`${i + 1}순위 ${Math.round((p / sum) * 100)}%`);
+    }
+  });
+
+  it('정보 없는 항목이 몫의 절반을 받는다는 사실을 밝힌다', () => {
+    expect(describeScoring()).toContain('그 몫의 절반');
   });
 });
 

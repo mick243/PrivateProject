@@ -11,12 +11,11 @@ import {
   type ChatMessage,
   type ChatResponse,
   type ChatTurn,
-  type SearchOutcome,
 } from '@/lib/chat-types';
+import { formatOutcome } from '@/lib/chat-outcome';
 import type { ChatConstraints } from '@/lib/query-constraints';
 import {
   FACTORS,
-  describeOrder,
   isCompleteOrder,
   type FactorKey,
   type PartialOrder,
@@ -31,50 +30,6 @@ const GREETING = `무엇을 도와드릴까요?`;
 
 let seq = 0;
 const nextId = (): string => `m${++seq}`;
-
-/** 탐색 결과를 사람이 읽을 한 덩어리로 */
-function formatOutcome(outcome: SearchOutcome, order: PriorityOrder): string {
-  const { total, radiusKm, hasOrigin, top, machineNames } = outcome;
-
-  if (total === 0) {
-    // radiusKm 0 = 반경 전체 — "반경을 넓혀라" 는 답이 될 수 없다.
-    return hasOrigin && radiusKm > 0
-      ? `반경 ${radiusKm}km 안에 조건에 맞는 오락실이 없습니다. 반경을 넓히거나 기종 필터를 풀어 보세요.`
-      : '조건에 맞는 오락실이 없습니다. 검색어나 기종 필터를 풀어 보세요.';
-  }
-
-  const scope = hasOrigin
-    ? radiusKm > 0
-      ? `반경 ${radiusKm}km 안 ${total}곳`
-      : `기준점에서 가까운 순으로 ${total}곳`
-    : `등록된 ${total}곳`;
-  const filter = machineNames.length ? ` (${machineNames.join('·')} 보유)` : '';
-
-  const lines = [
-    `탐색이 완료되었습니다. ${describeOrder(order)} 기준으로 ${scope}${filter}을 비교해 지도와 목록에 표시했습니다.`,
-    // 그곳이 목록에 왜 없는지를 여기서 밝히지 않으면 빠진 것이 버그로 보입니다.
-    ...(outcome.excluded
-      ? [`${outcome.excluded}을(를) 기준점으로 잡았고, 그곳은 결과에서 뺐습니다.`]
-      : []),
-    '',
-    ...top.map(
-      (t, i) =>
-        `${i + 1}위 ${t.name} — ${t.score}점${t.distanceLabel ? ` · ${t.distanceLabel}` : ''} (${t.reason})`,
-    ),
-  ];
-
-  if (!hasOrigin) {
-    lines.push('', '기준점이 없어 거리는 빼고 매겼습니다. 지도 왼쪽 아래 내 위치 단추를 켜면 다시 매깁니다.');
-  }
-
-  if (outcome.stale) {
-    // 이 말풍선은 그 순간의 스냅샷이고 목록은 계속 갱신된다. 조회가 아직
-    // 끝나지 않았으면 둘의 개수가 곧 어긋나므로 미리 적어 둔다.
-    lines.push('', '목록을 아직 불러오는 중이라 결과가 더 늘 수 있습니다.');
-  }
-
-  return lines.join('\n');
-}
 
 export default function ChatBot() {
   /*
@@ -267,10 +222,15 @@ export default function ChatBot() {
    * 한 번만 돕니다. submitText 는 대화가 바뀔 때마다 정체가 달라지므로 그대로 두면
    * 같은 질문이 반복해서 들어갑니다. 주소에서도 지웁니다 — 새로고침이 곧 재질문이
    * 되면 안 됩니다 (커뮤니티의 ?post= 와 같은 규칙).
+   *
+   * 파인더가 **기종 목록과 첫 오락실 목록을 받은 뒤**에 넣습니다(search.ready). 파인더는
+   * 마운트하자마자 등록되는데, 그 순간 넣으면 기종 사전이 비어 있어 "노량진 근처에 사볼
+   * 있는 오락실" 의 '사볼' 을 못 알아보고 기종 조건 없는 탐색이 됩니다 — 그러고도 아무
+   * 말이 없어 사볼과 상관없는 곳이 1~3위로 나왔습니다 (2026-10-22 첫 사용자 점검).
    */
   const askedRef = useRef(false);
   useEffect(() => {
-    if (askedRef.current || !search) return;
+    if (askedRef.current || !search?.ready) return;
     const asked = new URLSearchParams(window.location.search).get('ask');
     if (!asked) return;
     askedRef.current = true;

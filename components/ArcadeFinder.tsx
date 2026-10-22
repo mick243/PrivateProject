@@ -11,6 +11,7 @@ import {
   SIDEBAR_PAGE_SIZE,
   favoritesFirst,
   isCompleteOrder,
+  missingFactors,
   pageOfArcade,
   pageSlice,
   rankArcades,
@@ -413,11 +414,15 @@ export default function ArcadeFinder() {
   const [pickedCoord, setPickedCoord] = useState<Coord | null>(null);
 
   // ── 기종 마스터 (1회) ──────────────────────────────────────
+  // 받았는지는 따로 든다 — 실패해도 빈 배열이라 machines.length 로는 "아직" 과 "없음" 을
+  // 가를 수 없고, 챗봇은 받은 뒤에야 문장의 기종을 알아볼 수 있다 (chatSearch.ready).
+  const [machinesLoaded, setMachinesLoaded] = useState(false);
   useEffect(() => {
     fetch('/api/machines')
       .then((r) => r.json())
       .then((d) => setMachines(d.machines as Machine[]))
-      .catch(() => setMachines([]));
+      .catch(() => setMachines([]))
+      .finally(() => setMachinesLoaded(true));
   }, []);
 
   // ── 검색어 디바운스 ────────────────────────────────────────
@@ -712,19 +717,40 @@ export default function ArcadeFinder() {
 
       // 재조회는 다음 렌더에나 나가므로 이 스냅샷은 손에 있는 목록으로 만든다.
       // 기종 필터는 여기서 직접 건다 — arcades 는 아직 옛 필터의 결과다.
-      const pool = arcades.filter(
+      //
+      // 그런데 arcades 는 **옛 기종 필터로 이미 걸러진** 목록이라, 사볼로 좁혀 둔 뒤
+      // "펌프 있는 곳" 을 물으면 펌프 오락실이 하나도 없는 목록에서 고르게 된다(0곳).
+      // 전체 목록(fullListRef)이 있으면 그것을 바탕으로 하고, 같은 오락실은 더 최근 조회의
+      // 값(제보 반영)으로 덮는다. 검색어가 걸려 있으면 예전처럼 손에 든 목록 — 목록 화면이
+      // 그 검색 결과라 말과 화면이 같아야 한다.
+      const source =
+        fullListRef.current && !debouncedQ.trim()
+          ? mergeById(fullListRef.current, arcades)
+          : arcades;
+      const hasSearchMachine = (a: Arcade) =>
+        a.machines.some((m) => searchMachineIds.includes(m.id));
+      const pool = source.filter(
         (a) =>
           (pivot === null || a.id !== pivot.id) &&
-          (searchMachineIds.length === 0 ||
-            a.machines.some((m) => searchMachineIds.includes(m.id))),
+          (searchMachineIds.length === 0 || hasSearchMachine(a)),
       );
 
+      // 그 기종을 등록한 곳이 **전국에** 없는지. 전체 목록을 아는 때만 단정한다 —
+      // 반경·검색어·기종으로 좁혀 받은 arcades 로는 "근처에 없음" 과 가를 수 없다.
+      // 반경 없이 좌표만 보낸 조회는 걸러지지 않은 전체라(fetchArcades) 그것도 쓴다.
+      const nationwide =
+        fullListRef.current ??
+        (radiusKm === RADIUS_NONE && !debouncedQ.trim() && machineIds.length === 0 ? arcades : null);
+      const machineUnregistered =
+        searchMachineIds.length > 0 && nationwide !== null && !nationwide.some(hasSearchMachine);
+
+      const weights = weightsFromOrder(next);
       const scored = withinRadius(
         rankArcades({
           arcades: pool,
           origin: searchOrigin,
           machineIds: searchMachineIds,
-          weights: weightsFromOrder(next),
+          weights,
           radiusKm: scoreRadiusKm,
         }),
         searchOrigin,
@@ -747,10 +773,13 @@ export default function ArcadeFinder() {
           score: s.score,
           distanceLabel: s.distanceKm === null ? null : formatDistance(s.distanceKm),
           reason: rankReason(s),
+          // 근거가 하나도 없으면 이유가 이미 "비교할 정보가 아직 없습니다" 라 다시 늘어놓지 않는다.
+          missing: s.topFactor === null ? [] : missingFactors(s, weights),
         })),
         machineNames: constraints?.machineIds.length
           ? constraints.machineNames
           : machines.filter((m) => machineIds.includes(m.id)).map((m) => m.shortName),
+        machineUnregistered,
         excluded: pivot?.name ?? null,
         // 기준점이 뛰면(다른 동네의 오락실을 언급) 손에 든 목록은 옛 기준점
         // 주변뿐이다 — 재조회가 돌아오면 결과가 늘 수 있다고 미리 말한다.
@@ -1113,17 +1142,23 @@ export default function ArcadeFinder() {
   /**
    * 목록 머리글의 한 줄. 개수만 쓰지 않고 **무슨 순서인지**까지 적는다 —
    * 같은 "30곳" 이 가까운 순일 때와 평점 순일 때 전혀 다른 목록이다.
-   * 30곳으로 잘렸으면 분모를 함께 적는다 ("화면 안 248곳 중 30곳").
+   * 30곳으로 잘렸으면 분모를 함께 적는다 ("지도에 보이는 248곳 중 30곳").
+   *
+   * "화면 안" 이라고 쓰지 않는다. 세는 범위는 **지도 영역**인데(inViewport), 폰에서
+   * 목록을 펼치면 목록이 화면 위쪽을 차지하고 지도가 아래로 줄어든다. 그때 "화면 안
+   * 94곳" 이 "65곳" 으로 바뀌면 화면은 그대로인데 숫자만 줄어든 것으로 읽혔다
+   * (2026-10-22 첫 사용자 점검). 세는 대상의 이름을 그대로 쓰면 지도가 줄어든 만큼
+   * 줄었다는 것이 눈앞에서 보인다.
    */
-  // 검색 중에는 "화면 안" 이 아니다 — 전국에서 찾은 결과다. 같은 말을 쓰면
-  // 화면 밖의 결과가 어디서 왔는지 설명이 안 된다.
+  // 검색 중에는 지도 범위가 아니다 — 전국에서 찾은 결과다. 같은 말을 쓰면
+  // 지도 밖의 결과가 어디서 왔는지 설명이 안 된다.
   const listCountLabel = searching
     ? inViewport.length > ordered.length
       ? `검색 결과 ${inViewport.length}곳 중 ${ordered.length}곳 · ${orderLabel(listSort)}`
       : `검색 결과 ${inViewport.length}곳 · ${orderLabel(listSort)}`
     : inViewport.length > ordered.length
-      ? `화면 안 ${inViewport.length}곳 중 ${ordered.length}곳 · ${orderLabel(listSort)}`
-      : `화면 안 ${ordered.length}곳 · ${orderLabel(listSort)}`;
+      ? `지도에 보이는 ${inViewport.length}곳 중 ${ordered.length}곳 · ${orderLabel(listSort)}`
+      : `지도에 보이는 ${ordered.length}곳 · ${orderLabel(listSort)}`;
 
   const hint = listHint({
     canFavorite: favorites.canFavorite,
@@ -1196,8 +1231,8 @@ export default function ArcadeFinder() {
     useMemo 로 묶지 않으면 렌더마다 새 객체가 되어 등록이 무한히 반복됩니다.
   */
   const chatSearch = useMemo<ChatSearchApi>(
-    () => ({ onSearch: runSearch, extract, initialOrder: order }),
-    [runSearch, extract, order],
+    () => ({ onSearch: runSearch, extract, initialOrder: order, ready: machinesLoaded && !loading }),
+    [runSearch, extract, order, machinesLoaded, loading],
   );
   useRegisterChatSearch(chatSearch);
 
@@ -1352,6 +1387,7 @@ export default function ArcadeFinder() {
           myLocation={follow ? live.coord : null}
           followCenter={follow}
           rankById={mode.kind === 'list' ? rankById : null}
+          focusMachineIds={machineIds}
           onViewportChange={setMapViewport}
           initialView={initialMapView}
           onViewChange={saveMapView}
@@ -1496,12 +1532,23 @@ function listHint({
     // 검색 중에는 화면 컷이 없으므로 "지도를 확대하라" 는 답이 아니다.
     return searching
       ? `검색 결과가 많아 ${SIDEBAR_MAX_ITEMS}곳까지만 보여 줍니다. 검색어를 더 좁혀 보세요.`
-      : `화면 안에서 ${SIDEBAR_MAX_ITEMS}곳까지만 보여 줍니다. 지도를 확대하거나 검색·기종으로 걸러 보세요.`;
+      : `지도에 보이는 곳 중 ${SIDEBAR_MAX_ITEMS}곳까지만 보여 줍니다. 지도를 확대하거나 검색·기종으로 걸러 보세요.`;
   }
-  if (offscreen > 0) return `${offscreen}곳은 화면 밖에 있습니다.`;
+  if (offscreen > 0) return `${offscreen}곳은 지도 밖에 있습니다.`;
   if (!hasOrigin) return '지도 왼쪽 아래 내 위치 단추를 켜면 가까운 순으로 정리됩니다.';
   if (!canFavorite) return '로그인하면 즐겨찾기한 곳이 목록 맨 위에 옵니다.';
   return null;
+}
+
+/**
+ * 전체 목록에 더 최근 조회의 값을 덮는다 — 같은 id 는 `fresh` 쪽, 전체 목록에 없던 곳은
+ * 뒤에 붙인다 (페이지를 연 뒤 새로 생긴 오락실). 챗봇 탐색의 후보 풀용 (runSearch).
+ */
+function mergeById(all: readonly Arcade[], fresh: readonly Arcade[]): Arcade[] {
+  const byId = new Map(fresh.map((a) => [a.id, a]));
+  const merged = all.map((a) => byId.get(a.id) ?? a);
+  const known = new Set(all.map((a) => a.id));
+  return merged.concat(fresh.filter((a) => !known.has(a.id)));
 }
 
 /**
@@ -1568,13 +1615,13 @@ function listEmptyState({
   if (offscreen > 0) {
     return (
       <p className="muted">
-        조건에 맞는 {offscreen}곳이 지금 화면 밖에 있습니다. 지도를 옮기거나 축소해 보세요.
+        조건에 맞는 {offscreen}곳이 지금 지도 밖에 있습니다. 지도를 옮기거나 축소해 보세요.
       </p>
     );
   }
 
-  // 필터도 검색도 없이 이 화면에 아무것도 없는 경우 (바다 한가운데 등).
-  return <p className="muted">이 화면에는 등록된 오락실이 없습니다. 지도를 옮기거나 축소해 보세요.</p>;
+  // 필터도 검색도 없이 지도에 아무것도 없는 경우 (바다 한가운데 등).
+  return <p className="muted">지금 지도에 보이는 곳에는 등록된 오락실이 없습니다. 지도를 옮기거나 축소해 보세요.</p>;
 }
 
 /**

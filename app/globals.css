@@ -1276,9 +1276,9 @@ a.btn {
   transform: translate3d(calc(var(--x, 0cqw) - var(--mk-dot-cx)), calc(var(--y, 0cqh) - 50%), 0);
 }
 
-/* 이름·기종 수는 기본적으로 없습니다 (위 주석 참고) */
+/* 이름·보유 기종은 기본적으로 없습니다 (위 주석 참고) */
 .mk .mk-label,
-.mk .mk-count {
+.mk .mk-machines {
   display: none;
 }
 
@@ -1298,9 +1298,9 @@ a.btn {
 .mk:hover .mk-label,
 .mk:focus-visible .mk-label,
 .mk-on .mk-label,
-.mk:hover .mk-count,
-.mk:focus-visible .mk-count,
-.mk-on .mk-count {
+.mk:hover .mk-machines,
+.mk:focus-visible .mk-machines,
+.mk-on .mk-machines {
   display: inline;
 }
 
@@ -1359,11 +1359,12 @@ a.btn {
 .mk-pick .mk-dot {
   background: #fff;
 }
-.mk-count {
-  padding: 0 5px;
+/* 보유 기종 ("13종" · 필터를 켜면 "사볼 2대" — lib/machine-summary.ts). 등록된 기종이 없으면 칸이 없다 */
+.mk-machines {
+  padding: 0 6px;
   border-radius: 999px;
   background: var(--overlay);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 /*
@@ -3176,6 +3177,10 @@ a.btn {
   overflow-y: auto;
   background: var(--panel);
   border-left: 1px solid var(--line);
+  /* 오른쪽 아래 도우미 단추(.chat-fab)와 아래 가운데 이동 막대(.histbar)가 이 칸 위에 떠
+     있습니다. 맨 아래가 리뷰 목록이라 여백이 없으면 끝까지 내려도 마지막 리뷰가 단추 밑에
+     깔립니다 (2026-10-22). 서열표 오른쪽 칸(.tier-side)과 같은 값 — 막대 자리보다 커서 둘 다 덮습니다. */
+  padding-bottom: var(--fab-space);
 }
 /* 섹션 사이는 가는 선이 아니라 굵은 회색 띠 — 한 패널 안에 '다른 일' 이 시작된다는 표시 */
 .arcade-detail .section + .section {
@@ -4699,9 +4704,14 @@ a.btn {
 /* ── 챗봇 버튼이 상세 패널을 가리지 않게 ────────────────────────────────
    모바일(세로 스택)에서는 상세가 화면 아래 절반을 차지하는데, 고정된 챗봇 버튼이
    그 위에 겹쳐 제보·리뷰 영역을 덮고 있었다. 상세가 열려 있는 동안에는 버튼을
-   숨긴다 — 그 화면에서 할 일은 제보이지 챗봇이 아니고, 닫으면 바로 돌아온다. */
+   숨긴다 — 그 화면에서 할 일은 제보이지 챗봇이 아니고, 닫으면 바로 돌아온다.
+
+   ⚠ 선택자가 body:has() 인 이유: 챗봇이 레이아웃(ChatBotHost)으로 올라간 뒤로 단추는
+   .layout **바깥**에 그려진다. 예전 선택자(.layout.has-detail .chat-fab)는 아무것도
+   가리키지 않아 이 규칙이 조용히 죽어 있었고, 단추가 다시 리뷰를 덮었다 (2026-10-22).
+   운영 알림 단추(.ops-fab)와 같은 꼴로 맞춘다. */
 @media (max-width: 860px) {
-  .layout.has-detail .chat-fab {
+  body:has(.layout.has-detail) .chat-fab {
     display: none;
   }
 }
@@ -5036,6 +5046,19 @@ body:has(.ops-panel) .chat-panel {
 }
 .detail-facts a {
   color: var(--info);
+}
+
+/* 네이버 지도 · 카카오맵 · 길찾기 (components/ArcadeDetailPanel.tsx · lib/place-links.ts).
+   폰 폭(375)에서 머리말과 단추 셋이 한 줄에 다 안 들어가므로 접힌다. */
+.place-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+.place-links > .muted {
+  margin-right: 2px;
 }
 
 
