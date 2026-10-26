@@ -8,13 +8,17 @@ import { useVisualViewportBox } from '@/lib/use-visual-viewport';
 import {
   RANK_LABELS,
   isArcadeSearchIntent,
+  isReorderRequest,
+  looksLikePlaceSearch,
+  mentionsArcadeTopic,
   type ChatMessage,
   type ChatResponse,
   type ChatTurn,
 } from '@/lib/chat-types';
-import { formatOutcome } from '@/lib/chat-outcome';
+import { canRetryWithoutConditions, formatOutcome } from '@/lib/chat-outcome';
 import type { ChatConstraints } from '@/lib/query-constraints';
 import {
+  DEFAULT_ORDER,
   FACTORS,
   isCompleteOrder,
   type FactorKey,
@@ -26,7 +30,9 @@ import {
 /** 서버로 보낼 대화 기록의 최대 길이 (한 번 요청에 실리는 분량) */
 const HISTORY_LIMIT = 12;
 
-const GREETING = `무엇을 도와드릴까요?`;
+// 무엇을 적으면 되는지 첫 줄에서 보여 준다 — 예전에는 "오락실 찾아줘" 라는 정해진 말을
+// 적어야만 찾아 줬고, 그 사실은 거절당한 뒤에야 알 수 있었다 (2026-10-26 베타 QA).
+const GREETING = `무엇을 도와드릴까요? "홍대 사볼" 처럼 지역과 기종을 적으시면 바로 찾아 드려요.`;
 
 let seq = 0;
 const nextId = (): string => `m${++seq}`;
@@ -38,6 +44,14 @@ export default function ChatBot() {
     파인더만 할 수 있기 때문입니다. 파인더가 아닌 화면에서는 null 입니다.
   */
   const search = useChatSearch();
+  /**
+   * 기다린 뒤(지역 찾기)에는 **그때의** 탐색 기능을 쓴다. 파인더는 목록이 바뀔 때마다
+   * 새 함수를 등록하는데, 기다리기 전에 잡아 둔 함수는 옛 목록으로 순위를 매긴다.
+   */
+  const searchRef = useRef(search);
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
     { id: nextId(), role: 'assistant', text: GREETING },
@@ -129,22 +143,123 @@ export default function ChatBot() {
    * 한 줄을 실제로 처리합니다. 입력창과 **주소로 넘어온 질문**(?ask=)이 같은 경로를
    * 타야 답이 갈리지 않으므로 send 에서 떼어 두었습니다.
    */
+  // ── 탐색 → 결과 말풍선 ─────────────────────────────────────
+  /**
+   * 탐색을 돌리고 결과 말풍선을 붙입니다. 바로 찾기 · 순서 폼 · '조건 풀고 다시 찾기' 가
+   * 모두 이 길을 탑니다 — 그래야 어느 쪽으로 찾아도 결과 아래 같은 단추가 붙습니다.
+   */
+  const reportSearch = useCallback(
+    (
+      order: PriorityOrder,
+      constraints: ChatConstraints | null,
+      options?: { clearConditions?: boolean; note?: string },
+    ) => {
+      const api = searchRef.current;
+      if (!api) return;
+      const outcome = api.onSearch(order, constraints, {
+        clearConditions: options?.clearConditions,
+      });
+      const canClear = canRetryWithoutConditions(outcome, (constraints?.machineIds.length ?? 0) > 0);
+      const text = formatOutcome(outcome, order, { canClear });
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: 'assistant',
+          text: options?.note ? `${options.note}\n\n${text}` : text,
+          followUp: { order, constraints, canClear },
+        },
+      ]);
+    },
+    [],
+  );
+
+  /**
+   * 문장 하나로 바로 찾습니다 — 1·2·3순위를 먼저 묻지 않습니다 (2026-10-26 베타 QA).
+   *
+   * 순서는 마지막으로 고른 것, 없으면 DEFAULT_ORDER(거리 먼저)입니다. 결과를 보기 전에 세 칸을
+   * 다 고르게 하던 때는, 그중 둘(대기·컨디션)이 아직 제보가 거의 없어 고르는 의미가 없는데도
+   * 세 칸을 채우기 전엔 단추가 켜지지 않았습니다. 바꾸고 싶으면 결과 아래 '순서 바꾸기'.
+   *
+   * 문장에 지역("홍대")이 있으면 먼저 좌표를 찾아 기준점으로 씁니다. 못 찾으면 그렇다고 적고
+   * 지금 기준점으로 찾습니다 — 틀린 동네로 옮기느니 옮기지 않습니다.
+   */
+  const startSearch = useCallback(
+    async (constraints: ChatConstraints) => {
+      let place = constraints.place;
+      let note: string | undefined;
+      if (constraints.placeQuery && !place) {
+        const pendingId = nextId();
+        setMessages((prev) => [...prev, { id: pendingId, role: 'assistant', text: '', pending: true }]);
+        setBusy(true);
+        const query = constraints.placeQuery;
+        const found = (await searchRef.current?.locate(query)) ?? null;
+        setMessages((prev) => prev.filter((m) => m.id !== pendingId));
+        setBusy(false);
+        // 지역 검색은 넓은 지명에 가게 하나를 돌려주기도 한다('강남' → '치보 신사점'). 좌표는 그
+        // 동네 안이라 쓸 만하지만 이름만 적으면 엉뚱해 보이므로, 적은 말과 찾은 곳을 같이 적는다.
+        place = found && {
+          ...found,
+          name: found.name.replace(/\s+/g, '') === query.replace(/\s+/g, '') ? found.name : `${query}(${found.name})`,
+        };
+        if (!place) note = `'${query}' 를 지역으로 찾지 못해 지금 기준점으로 찾았습니다.`;
+      }
+      const saved = searchRef.current?.initialOrder ?? [];
+      const order = isCompleteOrder(saved) ? saved : DEFAULT_ORDER;
+      reportSearch(order, { ...constraints, place }, { note });
+    },
+    [reportSearch],
+  );
+
+  /**
+   * 1·2·3순위 폼을 띄웁니다 — "우선순위" 라고 적었거나 결과 아래 '순서 바꾸기' 를 눌렀을 때.
+   * 오락실 언급은 "지금 있는 곳" 으로 보고 기준점+제외에 쓰는데, 오인식일 수 있으므로
+   * 폼에 보여 주고 끌 수 있게 합니다.
+   */
+  const openPriorityForm = useCallback((constraints: ChatConstraints | null) => {
+    const hasConstraints =
+      constraints !== null &&
+      (constraints.arcade !== null || constraints.machineIds.length > 0 || constraints.place !== null);
+    const machineNote = constraints?.machineIds.length
+      ? `기종은 ${constraints.machineNames.join('·')}(으)로 좁힐게요. `
+      : '';
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: nextId(),
+        role: 'assistant',
+        text: `${machineNote}어떤 순서로 볼까요? 1·2·3순위를 골라 주세요.`,
+        form: 'priority',
+        constraints: hasConstraints ? constraints : undefined,
+      },
+    ]);
+  }, []);
+
   const submitText = useCallback((raw: string) => {
     const text = raw.trim();
     if (text === '' || busy) return;
 
     const userMsg: ChatMessage = { id: nextId(), role: 'user', text };
+    const constraints = search ? search.extract(text) : null;
 
     // 탐색 요청인지는 **모델이 아니라 여기서** 가른다 (lib/chat-types.ts).
     // 이 갈림길로 다음 화면이 정해지므로 매번 같은 판단이어야 하고, API 키가
     // 없어도 이 경로는 끝까지 굴러가야 한다.
-    if (isArcadeSearchIntent(text)) {
+    //
+    // "홍대 사볼" 처럼 지역 + 기종만 적어도 찾아 달라는 말이다 (looksLikePlaceSearch).
+    // 로그인하지 않은 사람은 자유 질문을 할 수 없으므로 그물을 더 넓힌다 — 오락실·기종
+    // 이야기면 거절하지 않고 찾아 준다 (mentionsArcadeTopic).
+    if (
+      isArcadeSearchIntent(text) ||
+      looksLikePlaceSearch(text, constraints) ||
+      (!user && mentionsArcadeTopic(text, constraints))
+    ) {
       /*
         파인더가 떠 있지 않으면 여기서 탐색할 수 없습니다 — 순위를 매겨도 보여 줄
         목록과 지도가 없습니다. 폼을 띄웠다가 "못 한다" 고 하는 대신, 할 수 있는
         곳으로 데려갑니다. 적은 문장은 버리지 않고 파인더 주소에 실어 보냅니다.
       */
-      if (!search) {
+      if (!search || !constraints) {
         setMessages((prev) => [
           ...prev,
           userMsg,
@@ -158,31 +273,25 @@ export default function ChatBot() {
         return;
       }
 
-      // 문장을 폼으로 갈아타며 버리지 않는다 — 언급된 기종·오락실을 뽑아
-      // 탐색에 넘긴다. 오락실 언급은 "지금 있는 곳"으로 보고 기준점+제외에
-      // 쓰는데, 오인식일 수 있으므로 폼에 보여 주고 끌 수 있게 한다.
-      const constraints = search.extract(text);
-      const hasConstraints = constraints.arcade !== null || constraints.machineIds.length > 0;
-      const machineNote = constraints.machineIds.length
-        ? `기종은 ${constraints.machineNames.join('·')}(으)로 좁힐게요. `
-        : '';
-      setMessages((prev) => [
-        ...prev,
-        userMsg,
-        {
-          id: nextId(),
-          role: 'assistant',
-          text: `${machineNote}어떤 순서로 볼까요? 1·2·3순위를 골라 주세요.`,
-          form: 'priority',
-          constraints: hasConstraints ? constraints : undefined,
-        },
-      ]);
+      // "우선순위 바꿀래" 처럼 순서를 직접 고르겠다고 한 때만 폼을 띄운다.
+      if (isReorderRequest(text)) {
+        setMessages((prev) => [...prev, userMsg]);
+        openPriorityForm(constraints);
+        return;
+      }
+
+      // 문장을 버리지 않는다 — 언급된 기종·오락실·지역을 뽑아 탐색에 넘긴다.
+      setMessages((prev) => [...prev, userMsg]);
+      void startSearch(constraints);
       return;
     }
 
     // 자유 질문은 로그인이 필요하다. 서버까지 갔다가 401 을 받아 오는 대신 여기서
     // 답한다 — 결과가 같고, 기다림이 없고, 무엇보다 **입력창 위에 이미 적혀 있던
     // 말과 같은 말**이라 사용자가 두 번 놀라지 않는다.
+    //
+    // 파인더가 아닌 화면에서는 기종 사전이 없어 "홍대 사볼" 을 알아볼 수 없다. 거절로 끝내지
+    // 않고 파인더로 가는 단추를 붙인다 — 그쪽에서 같은 문장으로 다시 찾는다.
     if (!user) {
       setMessages((prev) => [
         ...prev,
@@ -190,8 +299,11 @@ export default function ChatBot() {
         {
           id: nextId(),
           role: 'assistant',
-          text: '자유 질문은 로그인한 뒤에 답해 드릴 수 있어요. 오락실을 찾는 것이라면 "오락실 찾아줘" 라고 적어 주시면 로그인 없이 바로 찾아 드립니다.',
+          text: search
+            ? '자유 질문은 로그인한 뒤에 답해 드릴 수 있어요. 오락실은 로그인 없이 찾아 드려요 — "홍대 사볼" 처럼 지역과 기종을 적어 주세요.'
+            : '자유 질문은 로그인한 뒤에 답해 드릴 수 있어요. 오락실을 찾으려던 거라면 아래 단추로 파인더에서 이어서 찾아 드릴게요.',
           failed: true,
+          goFinder: search ? undefined : text,
         },
       ]);
       return;
@@ -203,7 +315,7 @@ export default function ChatBot() {
     const next = [...messages, userMsg];
     setMessages(next);
     void ask(next);
-  }, [busy, ask, messages, user, search]);
+  }, [busy, ask, messages, user, search, startSearch, openPriorityForm]);
 
   const send = useCallback(() => {
     const text = input.trim();
@@ -216,7 +328,7 @@ export default function ChatBot() {
    * 다른 화면에서 "오락실 찾아줘" 라고 한 사람을 이어받습니다.
    *
    * 그쪽 챗봇은 탐색을 못 해서 `/finder?ask=…` 링크로 보냅니다(위 goFinder). 여기서
-   * 그 문장을 집어 **그대로 다시 넣어** 폼까지 띄웁니다 — 안 그러면 "이어서 찾아
+   * 그 문장을 집어 **그대로 다시 넣어** 탐색까지 이어 갑니다 — 안 그러면 "이어서 찾아
    * 드립니다" 라고 해 놓고 빈 입력창을 보여 주게 됩니다.
    *
    * 한 번만 돕니다. submitText 는 대화가 바뀔 때마다 정체가 달라지므로 그대로 두면
@@ -246,14 +358,10 @@ export default function ChatBot() {
   // ── 우선순위 제출 → 탐색 ───────────────────────────────────
   const submitPriority = useCallback(
     (formId: string, order: PriorityOrder, constraints: ChatConstraints | null) => {
-      if (!search) return;
-      const outcome = search.onSearch(order, constraints);
-      setMessages((prev) => [
-        ...prev.map((m) => (m.id === formId ? { ...m, formDone: true } : m)),
-        { id: nextId(), role: 'assistant', text: formatOutcome(outcome, order) },
-      ]);
+      setMessages((prev) => prev.map((m) => (m.id === formId ? { ...m, formDone: true } : m)));
+      reportSearch(order, constraints);
     },
-    [search],
+    [reportSearch],
   );
 
   /** "○○ 기준 · 제외" 를 켜고 끈다 — 추출이 오인식일 때의 탈출구 */
@@ -324,6 +432,33 @@ export default function ChatBot() {
                   </ul>
                 )}
 
+                {m.followUp && search && (
+                  <div className="chat-follow-up">
+                    {m.followUp.canClear && (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        disabled={busy}
+                        onClick={() =>
+                          reportSearch(m.followUp!.order, m.followUp!.constraints, {
+                            clearConditions: true,
+                          })
+                        }
+                      >
+                        조건 풀고 다시 찾기
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={busy}
+                      onClick={() => openPriorityForm(m.followUp!.constraints)}
+                    >
+                      순서 바꾸기
+                    </button>
+                  </div>
+                )}
+
                 {m.goFinder && (
                   <Link
                     className="btn btn-primary btn-sm chat-go-finder"
@@ -391,7 +526,7 @@ export default function ChatBot() {
               ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={user ? '오락실 찾아줘 / 펌프 신곡 뭐 나왔어?' : '오락실 찾아줘'}
+              placeholder={user ? '홍대 사볼 / 펌프 신곡 뭐 나왔어?' : '예: 홍대 근처 사볼'}
               maxLength={2000}
               disabled={busy}
             />

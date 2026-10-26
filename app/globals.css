@@ -3981,6 +3981,13 @@ a.btn {
   accent-color: var(--accent);
 }
 
+/* 탐색 결과 아래의 다음 행동 — 순서 바꾸기 · 조건 풀고 다시 찾기 */
+.chat-follow-up {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* ── 우선순위 폼 ────────────────────────────────────────── */
 .chat-form {
   display: flex;

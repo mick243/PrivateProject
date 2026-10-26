@@ -25,12 +25,26 @@ export interface MentionedArcade {
   lng: number;
 }
 
+/** 문장에 적힌 지역을 지역 검색으로 찾은 곳 — 탐색의 기준점 (빼지는 않습니다) */
+export interface MentionedPlace {
+  name: string;
+  lat: number;
+  lng: number;
+}
+
 export interface ChatConstraints {
   arcade: MentionedArcade | null;
   /** 문장에 언급된 기종. 비어 있으면 기종 제약 없음 */
   machineIds: number[];
   /** 위 기종들의 축약명 — 말풍선에 그대로 적습니다 */
   machineNames: string[];
+  /** 문장에서 지역 이름으로 보이는 부분 ("홍대 사볼" 의 '홍대'). 없으면 null */
+  placeQuery: string | null;
+  /**
+   * placeQuery 를 지역 검색으로 찾은 곳. 추출은 순수 함수라 여기서는 늘 null 이고,
+   * 화면(ChatBot)이 /api/places 로 찾아 채웁니다.
+   */
+  place: MentionedPlace | null;
 }
 
 /** 이름·문장을 같은 꼴로 — 대소문자와 띄어쓰기는 사람마다 다릅니다 */
@@ -134,15 +148,87 @@ export function findMentionedMachines(text: string, machines: Machine[]): Machin
   });
 }
 
+// ─── 지역 이름 ───────────────────────────────────────────────
+
+/**
+ * 낱말 끝에 붙어 오는 위치 말 — 떼고 남는 쪽이 지역 이름입니다 ("홍대근처에" → "홍대").
+ * 긴 것부터 뗍니다. '로'·'의' 처럼 지명의 끝 글자와 겹치는 조사는 넣지 않습니다
+ * — '종로'·'구로' 가 '종'·'구' 가 됩니다.
+ */
+const PLACE_SUFFIXES = [
+  '근처에서', '근처에', '근처', '주변에서', '주변에', '주변', '부근에', '부근', '인근에', '인근',
+  '쪽에서', '쪽에', '쪽', '에서', '에',
+];
+
+/** 지역이 아닌 낱말 — 이것만 남으면 지역을 말하지 않은 문장입니다 */
+const NON_PLACE_WORDS = new Set([
+  '내', '나', '저', '우리', '여기', '거기', '어디', '지금', '오늘', '내일', '주말', '좀', '그냥',
+  '가장', '제일', '곳', '데', '거', '것', '수', '혼자', '친구', '동네', '집',
+  '대기', '줄', '사람', '컨디션', '상태', '기체', '발판', '버튼', '플레이', '게임', '리듬게임',
+  '영업시간', '시간', '가격', '요금', '신곡', '채보', '곡', '대회',
+]);
+
+/** 이렇게 시작하는 낱말은 행동·상태 말입니다 ("찾아줘", "있는", "가까운", "할만한", "어때") */
+const NON_PLACE_STEMS = [
+  '찾', '추천', '알려', '골라', '탐색', '있', '없', '갈', '가볼', '가고', '가까', '할', '하고', '해',
+  '보여', '말해', '부탁', '어때', '어떤', '어떻', '몇',
+];
+
+/**
+ * 이렇게 끝나는 낱말은 꾸미는 말·서술어입니다 ("적은", "좋은", "할만한", "나가서").
+ * '서' 하나로 끝나는 것은 넣지 않습니다 — '강서' 가 걸립니다.
+ */
+const NON_PLACE_ENDINGS = /(은|는|을|를|한|던|고|게|다|요|까|야|아서|어서|해서|가서|와서|면서)$/;
+
+/**
+ * 탐색 문장에서 **지역 이름**으로 보이는 부분 — "홍대 근처에 사볼 있는 오락실" 의 '홍대'.
+ *
+ * 2026-10-26 베타 QA 에서 "홍대 근처에 사볼 있는 오락실" 이 홍대를 버리고 지금 지도
+ * 기준으로 찾았습니다. 지역은 이 앱에 사전이 없으므로(오락실·기종과 달리) **지역이 아닌
+ * 말을 지우고 남는 것**을 지역으로 봅니다 — 장소 말(오락실), 기종 이름, 위치 말(근처),
+ * 행동·꾸밈 말(찾아줘·있는·적은). 남은 것은 지역 검색(/api/places)에 물어보고, 못 찾으면
+ * 지역 없이 찾습니다. 그래서 여기서 틀려도 "엉뚱한 동네" 보다 "지역 없이" 쪽으로 물러섭니다.
+ *
+ * 한글이 없는 낱말(PIU 같은 영문 약칭)은 지역으로 보지 않습니다 — 지명은 한글로 씁니다.
+ */
+export function findPlaceQuery(text: string, machines: Machine[]): string | null {
+  const machineTerms = machines
+    .flatMap((m) => [norm(m.shortName), norm(m.name)])
+    .filter((t) => t.length >= 2);
+
+  const kept: string[] = [];
+  for (const raw of text.split(/[\s,.!?~·]+/)) {
+    let token = raw.toLowerCase();
+    if (token === '') continue;
+    if (GENERIC_STARTS.some((g) => g.length >= 2 && token.includes(g))) continue;
+    if (machineTerms.some((t) => token.includes(t))) continue;
+    const suffix = PLACE_SUFFIXES.find((s) => token.endsWith(s) && token.length > s.length);
+    if (suffix) token = token.slice(0, -suffix.length);
+    if (PLACE_SUFFIXES.includes(token)) continue;
+    if (!/[가-힣]/.test(token) || token.length < 2) continue;
+    if (NON_PLACE_WORDS.has(token)) continue;
+    if (NON_PLACE_STEMS.some((s) => token.startsWith(s))) continue;
+    if (NON_PLACE_ENDINGS.test(token)) continue;
+    kept.push(token);
+  }
+
+  const query = kept.join(' ');
+  return query.length >= 2 ? query : null;
+}
+
 export function extractConstraints(
   text: string,
   arcades: Arcade[],
   machines: Machine[],
 ): ChatConstraints {
   const mentioned = findMentionedMachines(text, machines);
+  const arcade = findMentionedArcade(text, arcades);
   return {
-    arcade: findMentionedArcade(text, arcades),
+    arcade,
     machineIds: mentioned.map((m) => m.id),
     machineNames: mentioned.map((m) => m.shortName),
+    // 오락실을 짚었으면 그곳이 기준점이다 — 상호의 나머지("서울대입구점")를 지역으로 또 찾지 않는다.
+    placeQuery: arcade ? null : findPlaceQuery(text, machines),
+    place: null,
   };
 }
