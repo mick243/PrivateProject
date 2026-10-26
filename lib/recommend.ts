@@ -58,6 +58,16 @@ export const PRIORITY_POINTS = [5, 3, 2] as const;
 /** 1순위 → 2순위 → 3순위. 세 항목이 겹치지 않게 한 번씩 들어갑니다 */
 export type PriorityOrder = [FactorKey, FactorKey, FactorKey];
 
+/**
+ * 아무도 순서를 고르지 않았을 때 도우미가 쓰는 순서 — 거리 → 대기 인원 → 기체 컨디션.
+ *
+ * 거리가 1순위인 이유: 셋 중 **늘 값이 있는 것은 거리뿐**입니다. 대기·컨디션은 제보로
+ * 채워지는데 아직 대부분 비어 있어(근거 없으면 가운데 값), 그쪽을 1순위로 두면 순위가
+ * 사실상 이름순이 됩니다. 대기가 컨디션보다 앞인 건 "지금 바로 할 수 있나" 가 더 급해서입니다.
+ * 고른 순서가 있으면 그쪽이 이깁니다 (lib/use-priority.ts).
+ */
+export const DEFAULT_ORDER: PriorityOrder = ['distance', 'wait', 'condition'];
+
 /** 순위가 아직 다 안 정해졌을 때의 한 칸 */
 export type PartialOrder = (FactorKey | null)[];
 

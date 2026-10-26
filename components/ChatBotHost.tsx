@@ -11,7 +11,7 @@ import {
 } from 'react';
 import ChatBot from './ChatBot';
 import type { SearchOutcome } from '@/lib/chat-types';
-import type { ChatConstraints } from '@/lib/query-constraints';
+import type { ChatConstraints, MentionedPlace } from '@/lib/query-constraints';
 import type { PartialOrder, PriorityOrder } from '@/lib/recommend';
 
 /**
@@ -32,8 +32,18 @@ import type { PartialOrder, PriorityOrder } from '@/lib/recommend';
  */
 
 export interface ChatSearchApi {
-  onSearch: (order: PriorityOrder, constraints: ChatConstraints | null) => SearchOutcome;
+  /**
+   * `clearConditions` 면 목록에 걸려 있던 반경과 기종 필터를 풀고 찾습니다 — 결과 0곳 말풍선의
+   * '조건 풀고 다시 찾기'. 문장에 적힌 기종(constraints)은 그대로 씁니다.
+   */
+  onSearch: (
+    order: PriorityOrder,
+    constraints: ChatConstraints | null,
+    options?: { clearConditions?: boolean },
+  ) => SearchOutcome;
   extract: (text: string) => ChatConstraints;
+  /** 문장의 지역 이름을 좌표로 (/api/places). 못 찾거나 실패하면 null */
+  locate: (query: string) => Promise<MentionedPlace | null>;
   initialOrder: PartialOrder;
   /**
    * 기종 목록과 첫 오락실 목록을 받았는지. 이게 false 인 동안 extract 는 빈 사전으로

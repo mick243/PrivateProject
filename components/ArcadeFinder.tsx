@@ -23,7 +23,11 @@ import {
   type PriorityOrder,
   type ScoredArcade,
 } from '@/lib/recommend';
-import { extractConstraints, type ChatConstraints } from '@/lib/query-constraints';
+import {
+  extractConstraints,
+  type ChatConstraints,
+  type MentionedPlace,
+} from '@/lib/query-constraints';
 import { isCityQuery, isPlaceQuery, type Place } from '@/lib/place-search';
 import type { Arcade, Machine } from '@/lib/types';
 import { useFavorites } from '@/lib/use-favorites';
@@ -688,32 +692,53 @@ export default function ArcadeFinder() {
    * 고른 순서로 답하려면 지금 계산한 값이어야 한다.
    */
   const runSearch = useCallback(
-    (next: PriorityOrder, constraints: ChatConstraints | null): SearchOutcome => {
+    (
+      next: PriorityOrder,
+      constraints: ChatConstraints | null,
+      options: { clearConditions?: boolean } = {},
+    ): SearchOutcome => {
       setOrder(next);
       setSort('score');
+      const clear = options.clearConditions === true;
 
       // 문장에 언급된 오락실 = 사용자가 지금 있는 곳. 기준점으로 삼고
       // 결과에서는 뺀다 — "여기 대기가 많은데 가까운 데" 의 답에 여기가
       // 나오면(거리 0으로 1위가 된다) 질문을 안 읽은 답이 된다.
       const pivot = constraints?.arcade ?? null;
-      const searchOrigin: Coord | null = pivot ? { lat: pivot.lat, lng: pivot.lng } : origin;
-      if (pivot) {
+      // 문장에 적힌 지역("홍대 사볼" 의 홍대)도 기준점이다 — 다만 빼지는 않는다.
+      // 오락실을 짚었으면 그쪽이 더 구체적이라 이긴다.
+      const place = pivot ? null : (constraints?.place ?? null);
+      const jump = pivot ?? place;
+      const searchOrigin: Coord | null = jump ? { lat: jump.lat, lng: jump.lng } : origin;
+      if (jump) {
         // 기존 기준점 기계를 그대로 탄다 — GPS 추적을 끄고 그 좌표에 서
         // 있는 셈으로 만들면, 재조회·거리 계산·지도 이동이 전부 따라온다.
         setFollow(false);
-        setFixedCenter({ lat: pivot.lat, lng: pivot.lng });
+        setFixedCenter({ lat: jump.lat, lng: jump.lng });
         // 이전 검색어는 이전 장소의 것이다. 남겨 두면 새 기준점 주변을
         // 옛 검색어로 거른 목록이 된다.
         setQ('');
       }
+      if (place) {
+        setPlaceNotice(`'${place.name}' 주변을 보는 중 — 필요하면 지도 왼쪽 아래 반경 칩에서 반경을 걸 수 있습니다.`);
+      }
       setExcludedId(pivot ? pivot.id : null);
+
+      // 지역을 말했으면 반경 전체 — 검색창의 지역 이동(jumpToPlace)과 같은 규칙이다.
+      // 다른 동네를 물었는데 예전 기준점의 반경 5km 를 그대로 걸면 엉뚱하게 0곳이 된다.
+      // '조건 풀고 다시 찾기' 도 반경을 푼다.
+      const searchRadiusKm = place || clear ? RADIUS_NONE : radiusKm;
+      if (searchRadiusKm !== radiusKm) setRadiusKm(searchRadiusKm);
 
       // 문장에 기종이 있으면 그쪽이 이번 탐색의 필터다. 사이드바 칩도 맞춰
       // 바꾼다 — 목록·지도가 곧 그 필터로 다시 조회되므로 화면과 말이 같아진다.
+      // 조건을 풀어 달라고 했으면 문장에 없는 기종(목록에서 켜 둔 칩)은 끈다.
       const searchMachineIds = constraints?.machineIds.length
         ? constraints.machineIds
-        : machineIds;
-      if (constraints?.machineIds.length) setMachineIds(constraints.machineIds);
+        : clear
+          ? []
+          : machineIds;
+      if (constraints?.machineIds.length || clear) setMachineIds(searchMachineIds);
 
       // 재조회는 다음 렌더에나 나가므로 이 스냅샷은 손에 있는 목록으로 만든다.
       // 기종 필터는 여기서 직접 건다 — arcades 는 아직 옛 필터의 결과다.
@@ -722,9 +747,10 @@ export default function ArcadeFinder() {
       // "펌프 있는 곳" 을 물으면 펌프 오락실이 하나도 없는 목록에서 고르게 된다(0곳).
       // 전체 목록(fullListRef)이 있으면 그것을 바탕으로 하고, 같은 오락실은 더 최근 조회의
       // 값(제보 반영)으로 덮는다. 검색어가 걸려 있으면 예전처럼 손에 든 목록 — 목록 화면이
-      // 그 검색 결과라 말과 화면이 같아야 한다.
+      // 그 검색 결과라 말과 화면이 같아야 한다. 단, 기준점을 옮기면 검색어를 지우므로
+      // (위 setQ) 그때는 전체 목록을 쓴다 — 옮겨 간 동네는 손에 든 목록 밖일 수 있다.
       const source =
-        fullListRef.current && !debouncedQ.trim()
+        fullListRef.current && (!debouncedQ.trim() || jump !== null)
           ? mergeById(fullListRef.current, arcades)
           : arcades;
       const hasSearchMachine = (a: Arcade) =>
@@ -751,10 +777,10 @@ export default function ArcadeFinder() {
           origin: searchOrigin,
           machineIds: searchMachineIds,
           weights,
-          radiusKm: scoreRadiusKm,
+          radiusKm: searchRadiusKm > 0 ? searchRadiusKm : SCORE_RADIUS_FALLBACK_KM,
         }),
         searchOrigin,
-        radiusKm,
+        searchRadiusKm,
       );
 
       // 1위를 선택만 한다 — 지도는 그 자리로 움직이고 목록에도 표시되지만,
@@ -766,7 +792,7 @@ export default function ArcadeFinder() {
 
       return {
         total: scored.length,
-        radiusKm,
+        radiusKm: searchRadiusKm,
         hasOrigin: searchOrigin !== null,
         top: scored.slice(0, 3).map((s) => ({
           name: s.arcade.name,
@@ -778,21 +804,41 @@ export default function ArcadeFinder() {
         })),
         machineNames: constraints?.machineIds.length
           ? constraints.machineNames
-          : machines.filter((m) => machineIds.includes(m.id)).map((m) => m.shortName),
+          : machines.filter((m) => searchMachineIds.includes(m.id)).map((m) => m.shortName),
         machineUnregistered,
         excluded: pivot?.name ?? null,
-        // 기준점이 뛰면(다른 동네의 오락실을 언급) 손에 든 목록은 옛 기준점
-        // 주변뿐이다 — 재조회가 돌아오면 결과가 늘 수 있다고 미리 말한다.
+        placeName: place?.name ?? null,
+        // 기준점이 뛰면(다른 동네의 오락실·지역을 언급) 손에 든 목록은 옛 기준점
+        // 주변뿐이다 — 재조회가 돌아오면 결과가 늘 수 있다고 미리 말한다. 조건을 풀었는데
+        // 전체 목록이 없을 때도 같다 (손에 든 목록은 풀기 전 조건으로 받은 것이다).
         stale:
           loading ||
-          (pivot !== null &&
+          (clear && fullListRef.current === null) ||
+          (jump !== null &&
+            fullListRef.current === null &&
             (debouncedQ.trim() !== '' ||
               (anchor !== null &&
-                distanceKm(anchor, { lat: pivot.lat, lng: pivot.lng }) > REFETCH_MOVE_KM))),
+                distanceKm(anchor, { lat: jump.lat, lng: jump.lng }) > REFETCH_MOVE_KM))),
       };
     },
-    [arcades, origin, machineIds, radiusKm, scoreRadiusKm, machines, setOrder, loading, anchor, debouncedQ],
+    [arcades, origin, machineIds, radiusKm, machines, setOrder, loading, anchor, debouncedQ],
   );
+
+  /**
+   * 도우미 문장의 지역 이름을 좌표로 — 검색창의 지역 이동(jumpToPlace)과 같은 API 다.
+   * 실패는 null 로 접는다: 지역을 못 찾으면 지역 없이 찾을 뿐, 탐색 자체를 막지 않는다.
+   */
+  const locatePlace = useCallback(async (query: string): Promise<MentionedPlace | null> => {
+    if (!isPlaceQuery(query)) return null;
+    try {
+      const res = await fetch(`/api/places?q=${encodeURIComponent(query)}`);
+      if (!res.ok) return null;
+      const data = (await res.json()) as { place?: Place | null };
+      return data.place ? { name: data.place.name, lat: data.place.lat, lng: data.place.lng } : null;
+    } catch {
+      return null;
+    }
+  }, []);
 
   /**
    * 챗봇 트리거 문장에서 제약 추출. 전체 목록(fullListRef)으로 대조한다 —
@@ -947,6 +993,16 @@ export default function ArcadeFinder() {
     setMachineIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+
+  /**
+   * 목록을 좁히는 조건(기종 필터 · 반경)을 한꺼번에 푼다 — 빈 목록의 '조건 모두 풀기'.
+   * 기준점과 위치 추적은 그대로 둔다. 그건 "어디서 보는가" 지 걸러 내는 조건이 아니라,
+   * 지도 아래 반경 칩의 '반경 탐색 해제' 와 같은 규칙이다.
+   */
+  const clearConditions = useCallback(() => {
+    setMachineIds([]);
+    setRadiusKm(RADIUS_NONE);
+  }, []);
 
   // ── 새로고침해도 그 자리로 ─────────────────────────────────
   // 적어 두는 것과 되살리는 것은 VIEW_STORE_KEY 주석. 위치 추적이 켜져 있었으면 다시 켠다 —
@@ -1184,10 +1240,13 @@ export default function ArcadeFinder() {
         machineNames: machines
           .filter((m) => machineIds.includes(m.id))
           .map((m) => m.shortName || m.name),
+        // 반경은 기준점이 있고 검색 중이 아닐 때만 목록을 자른다 (inRadius)
+        radiusKm: origin !== null && !searching ? radiusKm : 0,
         matchedTotal: arcades.length,
         onClearMachines: () => setMachineIds([]),
+        onClearConditions: clearConditions,
       }),
-    [loading, searching, offscreen, machines, machineIds, arcades.length],
+    [loading, searching, offscreen, machines, machineIds, origin, radiusKm, arcades.length, clearConditions],
   );
 
   /**
@@ -1231,8 +1290,14 @@ export default function ArcadeFinder() {
     useMemo 로 묶지 않으면 렌더마다 새 객체가 되어 등록이 무한히 반복됩니다.
   */
   const chatSearch = useMemo<ChatSearchApi>(
-    () => ({ onSearch: runSearch, extract, initialOrder: order, ready: machinesLoaded && !loading }),
-    [runSearch, extract, order, machinesLoaded, loading],
+    () => ({
+      onSearch: runSearch,
+      extract,
+      locate: locatePlace,
+      initialOrder: order,
+      ready: machinesLoaded && !loading,
+    }),
+    [runSearch, extract, locatePlace, order, machinesLoaded, loading],
   );
   useRegisterChatSearch(chatSearch);
 
@@ -1558,14 +1623,21 @@ function mergeById(all: readonly Arcade[], fresh: readonly Arcade[]): Arcade[] {
  * 통째로 사라지는데 화면에 뜨는 것은 "화면 안 0곳" 한 줄뿐이라, 크라우드소싱으로
  * 채워지는 중이라는 사실을 알 길이 없었다 (= 고장으로 읽힌다). 이유별로 다른 말을
  * 하고, 한 번에 할 수 있는 행동이 있으면 버튼으로 같이 준다.
+ *
+ * **걸린 조건을 이름으로 보여 주고 한 번에 푸는 버튼을 단다** (2026-10-26 베타 QA). 사볼을
+ * 켜 둔 채 내 위치를 눌러 반경 5km 가 조용히 걸리자, 목록은 "등록된 오락실이 없습니다"
+ * 라고만 했다 — 실제로는 조건 둘이 겹쳐 비었는데 무엇이 걸렸는지 어디에도 없었고, 기종은
+ * 칩을, 반경은 지도 아래 칩을 따로 찾아 꺼야 했다.
  */
 function listEmptyState({
   loading,
   searching,
   offscreen,
   machineNames,
+  radiusKm,
   matchedTotal,
   onClearMachines,
+  onClearConditions,
 }: {
   loading: boolean;
   searching: boolean;
@@ -1573,24 +1645,47 @@ function listEmptyState({
   offscreen: number;
   /** 켜 둔 기종 필터 이름 (없으면 빈 배열) */
   machineNames: string[];
+  /** 목록을 실제로 자르고 있는 반경. 기준점이 없거나 검색 중이면 0 (걸려 있어도 안 자른다) */
+  radiusKm: number;
   /** 지금 조건으로 서버가 준 전체 수 — 화면 밖까지 포함 */
   matchedTotal: number;
   onClearMachines: () => void;
+  /** 기종 필터와 반경을 한꺼번에 푼다 */
+  onClearConditions: () => void;
 }): ReactNode {
   // 조회가 도는 동안에는 말하지 않는다 — 결과가 오기 전의 0은 0이 아니다.
   if (loading) return null;
 
+  const conditions = [...machineNames, ...(radiusKm > 0 ? [`반경 ${radiusKm}km`] : [])];
+  const conditionLine = conditions.length > 0 && (
+    <>
+      <p className="muted small">
+        걸린 조건 · <strong>{conditions.join(' · ')}</strong>
+      </p>
+      <button type="button" className="btn btn-sm" onClick={onClearConditions}>
+        조건 모두 풀기
+      </button>
+    </>
+  );
+
   // 이름·주소 검색이 전국에서 0곳. 다음 행동은 지도 조작이 아니라 지역 이동이다.
+  // 기종 필터는 검색에도 걸리므로(fetchArcades) 그게 이유일 수 있다 — 같이 보여 준다.
   if (searching) {
     return (
-      <p className="muted">
-        이름·주소가 맞는 오락실이 없습니다. 지역 이름이라면 위 버튼이 그 주변을 보여 줍니다.
-      </p>
+      <>
+        <p className="muted">
+          이름·주소가 맞는 오락실이 없습니다. 지역 이름이라면 위 버튼이 그 주변을 보여 줍니다.
+        </p>
+        {conditionLine}
+      </>
     );
   }
 
   // 기종 필터가 전국에서 0곳 — 가장 자주 만나는 빈 화면이다.
-  if (machineNames.length > 0 && matchedTotal === 0) {
+  // 반경이 걸려 있으면 서버도 반경 안만 주므로(fetchArcades) matchedTotal 0 은 "근처에 0곳" 이지
+  // "전국에 0곳" 이 아니다. 그때 "보유 오락실이 아직 없습니다" 라고 하면 거짓말이 된다
+  // (2026-10-26 베타 QA — 강남역 · 사볼 · 반경 1km 에서 실제로 그렇게 떴다).
+  if (machineNames.length > 0 && matchedTotal === 0 && radiusKm === 0) {
     // 이름 뒤에 곧바로 조사를 붙이지 않는다 — '펌프가' / '츄니즘이' 처럼 받침에 따라
     // 달라지고, IIDX·DDR 같은 영문 표기는 규칙이 아예 서지 않는다. 뒤에 명사(오락실)를
     // 두면 조사가 그쪽에 붙어 어떤 이름이 와도 문장이 맞는다.
@@ -1614,9 +1709,23 @@ function listEmptyState({
   // 조건에 맞는 곳은 있는데 지금 화면에 없다 — 가장 헷갈리는 상태다.
   if (offscreen > 0) {
     return (
-      <p className="muted">
-        조건에 맞는 {offscreen}곳이 지금 지도 밖에 있습니다. 지도를 옮기거나 축소해 보세요.
-      </p>
+      <>
+        <p className="muted">
+          조건에 맞는 {offscreen}곳이 지금 지도 밖에 있습니다. 지도를 옮기거나 축소해 보세요.
+        </p>
+        {conditionLine}
+      </>
+    );
+  }
+
+  // 조건 안에는 한 곳도 없다 — 대개 반경이 이유다. "등록된 오락실이 없다" 고 하면
+  // 이 동네에 오락실이 없는 것으로 읽힌다.
+  if (conditions.length > 0) {
+    return (
+      <>
+        <p className="muted">걸린 조건에 맞는 오락실이 이 근처에 없습니다.</p>
+        {conditionLine}
+      </>
     );
   }
 

@@ -3,6 +3,7 @@ import {
   extractConstraints,
   findMentionedArcade,
   findMentionedMachines,
+  findPlaceQuery,
 } from '@/lib/query-constraints';
 import type { Arcade, Machine } from '@/lib/types';
 
@@ -115,5 +116,52 @@ describe('extractConstraints', () => {
     expect(c.arcade?.id).toBe(1);
     expect(c.machineIds).toEqual([1]);
     expect(c.machineNames).toEqual(['펌프']);
+    // 오락실을 짚었으면 그곳이 기준점 — 지점명 "서울대점" 을 지역으로 또 찾지 않는다
+    expect(c.placeQuery).toBeNull();
+  });
+
+  it('지역 이름은 뽑기만 하고 좌표는 비워 둔다 — 찾는 건 화면 몫이다', () => {
+    const c = extractConstraints('홍대 근처에 사볼 있는 오락실', ARCADES, MACHINES);
+    expect(c.placeQuery).toBe('홍대');
+    expect(c.place).toBeNull();
+    expect(c.machineIds).toEqual([2]);
+  });
+});
+
+/**
+ * 지역은 사전이 없어 "지역이 아닌 말을 지우고 남는 것" 으로 봅니다. 틀리면 엉뚱한 동네로
+ * 옮겨 가므로, 여기 못 박는 것: 지역을 적은 문장에서는 지역만 남고, 지역이 없는 문장에서는
+ * 아무것도 남지 않는다.
+ */
+describe('findPlaceQuery', () => {
+  it('지역 + 기종 문장에서 지역만 남긴다 — 2026-10-26 베타 QA 의 문장들', () => {
+    expect(findPlaceQuery('홍대 근처에 사볼 있는 오락실', MACHINES)).toBe('홍대');
+    expect(findPlaceQuery('홍대 사볼', MACHINES)).toBe('홍대');
+    expect(findPlaceQuery('강남역 주변 오락실 찾아줘', MACHINES)).toBe('강남역');
+  });
+
+  it('붙여 쓴 위치 말과 조사를 뗀다', () => {
+    expect(findPlaceQuery('노량진근처 사볼', MACHINES)).toBe('노량진');
+    expect(findPlaceQuery('신림역에서 가까운 펌프', MACHINES)).toBe('신림역');
+  });
+
+  it("지명 끝 글자와 겹치는 조사는 떼지 않는다 — '종로' 가 '종' 이 되면 안 된다", () => {
+    expect(findPlaceQuery('종로 펌프', MACHINES)).toBe('종로');
+    expect(findPlaceQuery('강서 유비트', MACHINES)).toBe('강서');
+  });
+
+  it('지역을 말하지 않은 문장에서는 아무것도 남지 않는다', () => {
+    for (const text of [
+      '내 주변 오락실 찾아줘',
+      '가까운 오락실 찾아줘',
+      '대기 적은 사볼 오락실',
+      '사볼 할 수 있는 곳 알려줘',
+      '오락실 나가서 갈 만한 데 찾아줘',
+      '펌프랑 사볼 둘 다 있는 데 찾아줘',
+      '게임랜드 근처 오락실 찾아줘',
+      'PIU 있는 곳',
+    ]) {
+      expect(findPlaceQuery(text, MACHINES), text).toBeNull();
+    }
   });
 });

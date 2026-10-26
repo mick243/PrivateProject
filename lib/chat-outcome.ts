@@ -11,7 +11,38 @@
 import type { SearchOutcome } from './chat-types';
 import { describeOrder, describeScoring, type PriorityOrder } from './recommend';
 
-export function formatOutcome(outcome: SearchOutcome, order: PriorityOrder): string {
+/**
+ * 결과를 좁힌 조건의 이름 — '사볼', '반경 5km'. 반경은 기준점이 있을 때만 실제로 자릅니다.
+ */
+export function conditionLabels(outcome: SearchOutcome): string[] {
+  return [
+    ...outcome.machineNames,
+    ...(outcome.hasOrigin && outcome.radiusKm > 0 ? [`반경 ${outcome.radiusKm}km`] : []),
+  ];
+}
+
+/**
+ * 결과 0곳이 **걸어 둔 조건 탓**이라 풀면 달라질 수 있는지 — '조건 풀고 다시 찾기' 단추.
+ *
+ * 다시 찾을 때도 문장에 적힌 기종은 남깁니다(그건 물어본 내용입니다). 그래서 반경이 없고
+ * 기종이 전부 문장에서 왔으면 풀어도 같은 0곳이라 단추를 달지 않습니다. 그 기종을 등록한
+ * 곳이 전국에 없을 때도 마찬가지입니다 — 그때는 따로 그렇게 말합니다.
+ */
+export function canRetryWithoutConditions(
+  outcome: SearchOutcome,
+  machinesFromSentence: boolean,
+): boolean {
+  if (outcome.total > 0 || outcome.machineUnregistered) return false;
+  const radiusCuts = outcome.hasOrigin && outcome.radiusKm > 0;
+  const sidebarMachines = !machinesFromSentence && outcome.machineNames.length > 0;
+  return radiusCuts || sidebarMachines;
+}
+
+export function formatOutcome(
+  outcome: SearchOutcome,
+  order: PriorityOrder,
+  { canClear = false }: { canClear?: boolean } = {},
+): string {
   const { total, radiusKm, hasOrigin, top, machineNames } = outcome;
 
   if (total === 0) {
@@ -25,15 +56,30 @@ export function formatOutcome(outcome: SearchOutcome, order: PriorityOrder): str
       ].join('\n');
     }
     // radiusKm 0 = 반경 전체 — "반경을 넓혀라" 는 답이 될 수 없다.
-    return hasOrigin && radiusKm > 0
-      ? `반경 ${radiusKm}km 안에 조건에 맞는 오락실이 없습니다. 반경을 넓히거나 기종 필터를 풀어 보세요.`
-      : '조건에 맞는 오락실이 없습니다. 검색어나 기종 필터를 풀어 보세요.';
+    const head =
+      hasOrigin && radiusKm > 0
+        ? `반경 ${radiusKm}km 안에 조건에 맞는 오락실이 없습니다.`
+        : '조건에 맞는 오락실이 없습니다.';
+    // 무엇이 걸려 있었는지 이름으로 적는다 (2026-10-26 베타 QA) — 앞서 목록에서 켜 둔
+    // 사볼 칩과 반경 5km 가 그대로 남아 0곳이 됐는데, 말풍선만 봐서는 알 길이 없었다.
+    const conditions = conditionLabels(outcome);
+    return [
+      head,
+      ...(conditions.length ? [`걸린 조건 · ${conditions.join(' · ')}`] : []),
+      canClear
+        ? "아래 '조건 풀고 다시 찾기' 를 누르면 반경과 기종 필터를 풀고 다시 찾습니다."
+        : hasOrigin && radiusKm > 0
+          ? '반경을 넓히거나 기종 필터를 풀어 보세요.'
+          : '검색어나 기종 필터를 풀어 보세요.',
+    ].join('\n');
   }
 
   const scope = hasOrigin
     ? radiusKm > 0
       ? `반경 ${radiusKm}km 안 ${total}곳`
-      : `기준점에서 가까운 순으로 ${total}곳`
+      : outcome.placeName
+        ? `'${outcome.placeName}'에서 가까운 순으로 ${total}곳`
+        : `기준점에서 가까운 순으로 ${total}곳`
     : `등록된 ${total}곳`;
   const filter = machineNames.length ? ` (${machineNames.join('·')} 보유)` : '';
 
