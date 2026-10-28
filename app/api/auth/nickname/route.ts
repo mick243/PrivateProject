@@ -5,6 +5,7 @@ import {
   clearSessionCookie,
   getSession,
   nicknameStatus,
+  RESERVED_NICKNAME_MESSAGE,
   setPlayerPassword,
   setSessionCookie,
 } from '@/lib/auth';
@@ -53,7 +54,7 @@ async function onPost(request: Request) {
       // 사용자가 고칠 것이 없으므로 무엇이 끝났는지만 알려 줍니다.
       return conflict('닉네임은 이미 정해졌습니다');
     }
-    if (result.reason === 'reserved') return conflict('사용할 수 없는 닉네임입니다');
+    if (result.reason === 'reserved') return conflict(RESERVED_NICKNAME_MESSAGE);
     // 가입과 같은 이유로 "이미 있다"를 숨기지 않습니다 — 숨기면 무엇을 고쳐야
     // 하는지 알려 줄 방법이 없고, 어차피 플레이어 목록에 이름이 그대로 보입니다.
     return conflict('이미 사용 중인 닉네임입니다');

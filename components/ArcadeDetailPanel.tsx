@@ -17,6 +17,7 @@ import type { Arcade, ArcadeCabinet, ArcadeMachine, Machine, MachineGuess } from
 import { useFavorites } from '@/lib/use-favorites';
 import { usePlayerId } from '@/lib/use-player';
 import { useIsAdmin } from '@/lib/use-session';
+import { CC_BY_NC_SA_KR_URL, NAMU_ARCADE_URL } from '@/lib/attribution';
 import ArcadeReviews from './ArcadeReviews';
 import { ConditionBadge, WaitBadge } from './LiveBadge';
 
@@ -456,6 +457,21 @@ function ArcadeDetailPanel({
               </li>
             ))}
           </ul>
+        )}
+
+        {/* 나무위키 자료의 출처 · 라이선스 · 고쳤다는 사실을 자료가 보이는 자리에 밝힙니다 (lib/attribution.ts) */}
+        {arcade.machines.length > 0 && (
+          <p className="hint">
+            보유 기종은 이용자 제보와, 일부는{' '}
+            <a href={NAMU_ARCADE_URL} target="_blank" rel="noopener noreferrer">
+              나무위키 「오락실」 문서
+            </a>
+            (
+            <a href={CC_BY_NC_SA_KR_URL} target="_blank" rel="noopener noreferrer">
+              CC BY-NC-SA 2.0 KR
+            </a>
+            )를 정리한 것입니다.
+          </p>
         )}
       </div>
 

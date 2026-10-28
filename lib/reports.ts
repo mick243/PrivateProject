@@ -1,3 +1,4 @@
+import { MIN_ACCOUNT_AGE_HOURS } from './account-age';
 import type { MachineReport, PresenceOutcome, ReportKind } from './community-types';
 import type { Prisma } from './generated/prisma/client.ts';
 import { purgeExpiredQueueReports as purgeExpiredQueueReportsSql } from './typed-sql';
@@ -270,8 +271,8 @@ export async function deleteReport(id: number): Promise<boolean> {
  * 한다. 제보 자체는 즉시 남고 피드에도 보인다.
  */
 
-/** 가입 후 이 시간이 지난 계정만 있어요/없어졌어요 임계값에 센다 */
-export const MIN_ACCOUNT_AGE_HOURS = 24;
+/** 가입 후 이 시간이 지난 계정만 있어요/없어졌어요 임계값에 센다 (투표·리뷰와 같은 기준 — lib/account-age.ts) */
+export { MIN_ACCOUNT_AGE_HOURS };
 
 async function applyPresence(
   tx: PrismaTx,

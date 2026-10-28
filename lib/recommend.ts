@@ -373,15 +373,34 @@ export function byDistanceThenName(a: ScoredArcade, b: ScoredArcade): number {
 }
 
 /**
+ * 리뷰가 적은 평균을 믿기 전에 미리 깔아 두는 리뷰 — '보통'(3점) 5개 분량입니다.
+ * 5.0(1건)은 3.33, 4.8(40건)은 4.60 이 되어 후자가 앞섭니다. 리뷰가 쌓일수록
+ * 깔아 둔 값의 무게가 줄어 실제 평균에 가까워집니다.
+ */
+const RATING_PRIOR_MEAN = 3;
+const RATING_PRIOR_WEIGHT = 5;
+
+/** 정렬에 쓰는 평점 — 평균을 리뷰 수만큼만 믿습니다. 리뷰가 없으면 null */
+export function rankingRating(ratingAvg: number | null, reviewCount: number): number | null {
+  if (reviewCount <= 0 || ratingAvg === null) return null;
+  return (
+    (RATING_PRIOR_MEAN * RATING_PRIOR_WEIGHT + ratingAvg * reviewCount) /
+    (RATING_PRIOR_WEIGHT + reviewCount)
+  );
+}
+
+/**
  * 평점 높은 순. 평점이 없는 곳은 **뒤로** 갑니다 (0점이 아니라 '모름' 입니다).
  *
- * 같은 평점이면 리뷰가 많은 쪽이 먼저입니다 — 5.0(1건)과 4.8(40건) 중 앞에
- * 둘 것은 후자에 가깝지만, 그 판단까지 여기서 하지는 않습니다. 리뷰 수는
- * 같은 점수 안에서만 씁니다. 마지막은 이름으로 닫아 순서가 흔들리지 않게 합니다.
+ * 평균을 그대로 줄 세우면 리뷰 1건짜리 5.0 이 40건짜리 4.8 을 앞섭니다. 평점이 있는
+ * 곳이 거의 없던 2026-10-28 QA 에서는 방금 만든 계정의 별 하나로 서울 목록 1위가
+ * 됐습니다. 그래서 리뷰 수를 함께 보는 rankingRating 으로 줄 세웁니다(화면에 보이는
+ * 평균은 그대로입니다). 같으면 리뷰가 많은 쪽, 마지막은 이름으로 닫아 순서가
+ * 흔들리지 않게 합니다.
  */
 export function byRatingThenName(a: ScoredArcade, b: ScoredArcade): number {
-  const ra = a.arcade.reviewCount > 0 ? (a.arcade.ratingAvg ?? -1) : -1;
-  const rb = b.arcade.reviewCount > 0 ? (b.arcade.ratingAvg ?? -1) : -1;
+  const ra = rankingRating(a.arcade.ratingAvg, a.arcade.reviewCount) ?? -1;
+  const rb = rankingRating(b.arcade.ratingAvg, b.arcade.reviewCount) ?? -1;
   if (ra !== rb) return rb - ra;
   if (a.arcade.reviewCount !== b.arcade.reviewCount) {
     return b.arcade.reviewCount - a.arcade.reviewCount;

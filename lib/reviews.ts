@@ -92,6 +92,21 @@ export async function deleteReview(arcadeId: number, playerId: number): Promise<
 }
 
 /**
+ * 관리자가 남의 리뷰를 지웁니다. 그 오락실의 리뷰가 아니면 지우지 않습니다 —
+ * 번호만 맞으면 다른 오락실의 평점 캐시를 건드리게 됩니다.
+ */
+export async function deleteReviewById(arcadeId: number, reviewId: number): Promise<boolean> {
+  const prisma = await getPrismaClient();
+  const { count } = await prisma.arcade_reviews.deleteMany({
+    where: { id: reviewId, arcade_id: arcadeId },
+  });
+  if (count === 0) return false;
+  await recalc(arcadeId);
+  await dropSummary(arcadeId);
+  return true;
+}
+
+/**
  * 리뷰가 바뀌었으니 AI 요약 캐시를 버립니다 (db/migrate-073-review-summaries.sql).
  *
  * lib/review-summary.ts 를 import 하지 않고 직접 지웁니다 — 그쪽이 이 파일의

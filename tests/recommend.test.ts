@@ -9,6 +9,7 @@ import {
   pageOfArcade,
   pageSlice,
   rankArcades,
+  rankingRating,
   rankReason,
   selectedFirst,
   sortForList,
@@ -582,6 +583,22 @@ describe('sortForList(rating) — 기준점이 없을 때의 순서', () => {
   it('평점·리뷰가 같으면 이름순 — 순서가 흔들리지 않게', () => {
     const list = [withRating(1, '나', 4, 2), withRating(2, '가', 4, 2)];
     expect(sortForList(list, 'rating').map((x) => x.arcade.name)).toEqual(['가', '나']);
+  });
+
+  it('리뷰 1건짜리 5.0 은 리뷰 많은 4.6 을 앞서지 못한다 — 새 계정 별 하나로 1위가 되던 문제', () => {
+    const list = [withRating(1, '5.0점 1건', 5, 1), withRating(2, '4.6점 30건', 4.6, 30)];
+    expect(sortForList(list, 'rating').map((x) => x.arcade.name)).toEqual([
+      '4.6점 30건',
+      '5.0점 1건',
+    ]);
+  });
+
+  it('리뷰가 쌓이면 실제 평균에 가까워진다', () => {
+    expect(rankingRating(5, 1)).toBeCloseTo(3.33, 2);
+    expect(rankingRating(4.8, 40)).toBeCloseTo(4.6, 2);
+    expect(rankingRating(4, 1000)).toBeCloseTo(4, 2);
+    expect(rankingRating(null, 3)).toBeNull();
+    expect(rankingRating(5, 0)).toBeNull();
   });
 
   it('리뷰가 0건이면 평점 값이 남아 있어도 뒤로 — 캐시가 어긋난 경우', () => {

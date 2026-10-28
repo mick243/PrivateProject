@@ -7,6 +7,7 @@ import {
   createAccount,
   loginLockRemainingMs,
   noteLoginFailure,
+  RESERVED_NICKNAME_MESSAGE,
   setSessionCookie,
   signupConflictReason,
 } from '@/lib/auth';
@@ -112,7 +113,9 @@ export const POST = handle(onPost);
  * 바꾸는 것이 정석입니다. 답은 화면이 아니라 메일함에만 있게 됩니다.
  */
 function conflictMessage(reason: 'taken' | 'reserved' | 'email-taken'): string {
-  return reason === 'email-taken'
-    ? '이미 가입에 사용된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용해 주세요'
-    : '이미 사용 중인 아이디입니다';
+  if (reason === 'email-taken') {
+    return '이미 가입에 사용된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용해 주세요';
+  }
+  // 예약어를 "이미 사용 중" 이라고 하면 숫자만 바꿔 다시 시도하게 됩니다 — 그래도 막힙니다.
+  return reason === 'reserved' ? RESERVED_NICKNAME_MESSAGE : '이미 사용 중인 아이디입니다';
 }
