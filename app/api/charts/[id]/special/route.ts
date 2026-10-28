@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { badId, handle, parseId } from '@/lib/api-errors';
-import { requirePlayer } from '@/lib/auth';
+import { badId, forbidden, handle, parseId } from '@/lib/api-errors';
+import { newAccountMessage, playerAccountWaitMs } from '@/lib/account-age';
+import { isAdminRequest, requirePlayer } from '@/lib/auth';
 import { getChartDetail, setSpecial } from '@/lib/tier';
 
 export const runtime = 'nodejs';
@@ -19,6 +20,10 @@ type Ctx = { params: Promise<{ id: string }> };
  * ⚠ 투표·평가와 달리 **한 사람이 켜면 모두에게 그렇게 보입니다.** 이제 최소한
  *   로그인한 사람만 켤 수 있지만, 계정 하나면 여전히 충분합니다. 남용이 문제가
  *   되면 관리자 전용으로 좁히거나 합의 인원(min_votes 처럼)을 올려야 합니다.
+ *
+ * 켜는 쪽은 가입한 지 하루가 지난 계정만 받습니다 (lib/account-age.ts — 투표와 같은
+ * 기준). 일회용 계정 3개면 어느 채보든 '특수패턴' 칸으로 옮길 수 있었습니다.
+ * 끄는 쪽(자기 표시를 빼는 일)은 막지 않습니다.
  */
 async function apply(request: Request, ctx: Ctx, special: boolean): Promise<NextResponse> {
   const chartId = parseId((await ctx.params).id);
@@ -26,6 +31,13 @@ async function apply(request: Request, ctx: Ctx, special: boolean): Promise<Next
 
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
+
+  if (special) {
+    const wait = await playerAccountWaitMs(guard.playerId);
+    if (wait > 0 && !(await isAdminRequest(request))) {
+      return forbidden(newAccountMessage('특수 패턴을 표시할', '서열이', wait));
+    }
+  }
 
   await setSpecial(guard.playerId, chartId, special);
   return NextResponse.json({ chart: await getChartDetail(chartId, guard.playerId) });

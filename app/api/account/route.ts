@@ -18,6 +18,7 @@ import {
   getSession,
   loginLockRemainingMs,
   noteLoginFailure,
+  RESERVED_NICKNAME_MESSAGE,
   setPlayerPassword,
   setSessionCookie,
   verifyPlayerPassword,
@@ -100,7 +101,7 @@ async function onPut(request: Request) {
     const result = await changeNickname(session.playerId, body.value.nickname);
     if (!result.ok) {
       if (result.reason === 'gone') return gone();
-      if (result.reason === 'reserved') return conflict('사용할 수 없는 닉네임입니다');
+      if (result.reason === 'reserved') return conflict(RESERVED_NICKNAME_MESSAGE);
       return conflict('이미 사용 중인 닉네임입니다');
     }
     user = result.user;

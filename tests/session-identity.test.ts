@@ -35,11 +35,18 @@ const POST_ROW = { id: 5, playerId: 42, title: '글', commentCount: 0 };
  * 세션 판정이 이제 players 한 줄을 봅니다 — 서명이 맞아도 `token_epoch` 이
  * 다르거나 계정이 없으면 로그인이 아닙니다 (lib/auth.ts getSession, H12).
  * 이 파일이 보려는 건 신원이지 회수가 아니라서, 세대 0 으로 답하는 대역을 둡니다.
+ * 가입 시각은 넉넉히 지난 날로 둡니다 — 투표·리뷰는 가입 하루가 지나야 받습니다
+ * (lib/account-age.ts · 막는 쪽은 tests/review-vote-guards.test.ts 가 봅니다).
  */
 vi.mock('@/lib/prisma', () => ({
   getPrismaClient: async () => ({
     players: {
-      findUnique: async () => ({ nickname: '테스터', is_admin: false, token_epoch: 0 }),
+      findUnique: async () => ({
+        nickname: '테스터',
+        is_admin: false,
+        token_epoch: 0,
+        created_at: new Date('2026-01-01T00:00:00Z'),
+      }),
     },
   }),
 }));

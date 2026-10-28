@@ -13,6 +13,7 @@ import {
 import { totalPagesOf } from '@/lib/board-types';
 import type { Arcade } from '@/lib/types';
 import { usePlayerId } from '@/lib/use-player';
+import { useIsAdmin } from '@/lib/use-session';
 import EmoticonPicker from './EmoticonPicker';
 import EmoticonText from './EmoticonText';
 import Pagination from './Pagination';
@@ -25,6 +26,7 @@ interface Props {
 
 export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
   const playerId = usePlayerId();
+  const isAdmin = useIsAdmin();
 
   const [reviews, setReviews] = useState<ArcadeReview[]>([]);
   const [rating, setRating] = useState(0);
@@ -156,6 +158,31 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
     }
   };
 
+  /** 관리자가 남의 리뷰를 지웁니다 — 글 삭제와 같이 한 번 묻고, 되돌릴 수 없다고 알립니다 */
+  const removeAsAdmin = async (review: ArcadeReview) => {
+    if (!window.confirm(`${review.nickname} 님의 리뷰를 지울까요? 평점도 다시 계산되고 되돌릴 수 없습니다.`)) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/arcades/${arcade.id}/reviews?reviewId=${review.id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error ?? '리뷰를 지우지 못했습니다');
+        return;
+      }
+      setReviews(data.reviews as ArcadeReview[]);
+      if (data.arcade) onArcadeChanged(data.arcade as Arcade);
+    } catch {
+      setError('네트워크 오류');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="section">
       <h3>
@@ -257,6 +284,17 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
                   <StarRating value={r.rating} />
                   <strong>{r.nickname}</strong>
                   <span className="muted small">{timeAgo(r.updatedAt)}</span>
+                  {isAdmin && r.playerId !== playerId && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      disabled={busy}
+                      title="관리자 권한으로 남의 리뷰를 삭제합니다"
+                      onClick={() => removeAsAdmin(r)}
+                    >
+                      삭제
+                    </button>
+                  )}
                 </div>
                 {r.body && (
                   <p className="review-body">

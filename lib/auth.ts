@@ -375,7 +375,39 @@ export function configuredAdminNickname(): string {
  * (ensureAdminAccount)이 UNIQUE 에 막히는 어긋남이 생깁니다.
  */
 export function isReservedNickname(name: string): boolean {
-  return name.toLowerCase() === configuredAdminNickname().toLowerCase();
+  if (name.toLowerCase() === configuredAdminNickname().toLowerCase()) return true;
+  return impersonatesOperator(name);
+}
+
+/** 사칭으로 막는 아이디를 고르려 할 때 보여 주는 말 (가입 · 닉네임 변경 공통) */
+export const RESERVED_NICKNAME_MESSAGE = '운영자로 오해할 수 있는 아이디는 쓸 수 없습니다';
+
+/**
+ * 운영자로 오해할 수 있는 낱말. 한글은 이름 어디에 있어도 막습니다.
+ * 영문은 낱말 단위로 봅니다 — 아무 데서나 찾으면 'badminton' · 'stafford' 까지 걸립니다.
+ * admin 만은 앞뒤에 붙어도 막습니다("administrator", "kimadmin").
+ */
+const OPERATOR_WORDS_KO = ['관리자', '운영자', '운영진', '운영팀', '관리팀', '오락실파인더'];
+const OPERATOR_WORDS_EN = ['moderator', 'operator', 'staff', 'sysop'];
+
+/**
+ * 약관은 "타인을 사칭하는 이름은 쓸 수 없다" 고 적었는데, 막는 것은 관리자 아이디와
+ * 똑같은 이름 하나뿐이라 "운영자" 로 가입이 됐습니다(2026-10-28 QA). 글 신고가 없는
+ * 지금은 그 이름으로 쓴 공지 흉내를 사용자가 가려낼 방법도 없습니다.
+ *
+ * 한글은 띄어쓰기·점·밑줄·하이픈을 접어서 봅니다 — "운영 자" 가 빠져나가지 않게.
+ * 영문은 한글·숫자·기호에서 끊은 낱말로 봅니다("Admin_01" → admin, "운영staff" → staff).
+ * 이미 이런 이름을 쓰는 계정은 그대로 둡니다(가입과 이름 바꾸기에서만 봅니다).
+ */
+function impersonatesOperator(name: string): boolean {
+  const lower = name.normalize('NFKC').toLowerCase();
+  const folded = lower.replace(/[\s._\-·•]+/g, '');
+  if (OPERATOR_WORDS_KO.some((w) => folded.includes(w))) return true;
+  if (folded.includes('arcadefinder')) return true;
+  const words = lower.split(/[^a-z]+/).filter(Boolean);
+  return words.some(
+    (w) => w.startsWith('admin') || w.endsWith('admin') || OPERATOR_WORDS_EN.includes(w),
+  );
 }
 
 /**
@@ -571,7 +603,10 @@ export async function linkOAuthAccount(params: {
     };
   }
 
-  const base = normalizeNickname(params.nickname, params.provider);
+  // 제공자가 준 이름이 운영자처럼 보이면(예: "운영자 김") 뒤에 숫자를 붙여도 계속
+  // 막혀서 가입 자체가 실패합니다. 그때는 이름 없이 들어온 사람과 같이 제공자 이름에서 시작합니다.
+  const given = normalizeNickname(params.nickname, params.provider);
+  const base = isReservedNickname(given) ? params.provider : given;
   let playerId: number | null = null;
   let nickname = base;
 

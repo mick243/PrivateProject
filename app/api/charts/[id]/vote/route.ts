@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { badId, fail, forbidden, handle, parseBody, parseId } from '@/lib/api-errors';
-import { requirePlayer } from '@/lib/auth';
+import { newAccountMessage, playerAccountWaitMs } from '@/lib/account-age';
+import { isAdminRequest, requirePlayer } from '@/lib/auth';
 import { NotClearedError, getChartDetail, getSettings, setVote } from '@/lib/tier';
 
 export const runtime = 'nodejs';
@@ -27,6 +28,11 @@ const schema = z.object({
  * 누구의 표인지는 세션이 정합니다. 본문의 playerId 를 믿던 동안에는 클리어
  * 게이트가 사실상 없는 것과 같았습니다 — 그 채보를 깬 아무 번호나 적으면
  * 통과했고, 등급이 표의 평균이라 서열표 전체를 혼자 흔들 수 있었습니다.
+ *
+ * 세션으로 막은 뒤에도 **계정을 새로 만들면** 같은 일이 됐습니다 — 클리어는 스스로
+ * 체크하는 것이고 '미정' 의 기준이 3표라, 방금 만든 계정의 1표로 채보가 '상' 에서
+ * '개인차' 로 옮겨졌습니다(2026-10-28 QA). 그래서 투표는 가입한 지 하루가 지난
+ * 계정만 받습니다 (lib/account-age.ts). 취소(DELETE)는 막지 않습니다.
  */
 async function save(chartId: number, playerId: number, value: number | null): Promise<NextResponse> {
   try {
@@ -45,6 +51,11 @@ async function onPut(request: Request, ctx: Ctx) {
 
   const guard = await requirePlayer(request);
   if (!guard.ok) return guard.response;
+
+  const wait = await playerAccountWaitMs(guard.playerId);
+  if (wait > 0 && !(await isAdminRequest(request))) {
+    return forbidden(newAccountMessage('투표할', '서열이', wait));
+  }
 
   const body = await parseBody(request, schema);
   if (!body.ok) return body.response;
