@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { NextResponse } from 'next/server';
 import { SESSION_COOKIE, type SessionUser } from './auth-types';
 import { emailForStorage, isEmailMaskingOn, maskEmail } from './email-mask';
-import { noteLoginFailure as noteLoginFailureSql } from './typed-sql';
+import { noteLoginFailure as noteLoginFailureSql, takeLoginAttempt as takeLoginAttemptSql } from './typed-sql';
 import { isUniqueViolation, violatedConstraint } from './pg-errors';
 import { getPrismaClient } from './prisma';
 
@@ -895,6 +895,32 @@ export async function noteLoginFailure(key: string): Promise<void> {
   });
 }
 
+/**
+ * 비밀번호를 대조하기 **전에** 시도 한 번을 세고, 남은 잠금 시간(ms)을 돌려줍니다.
+ * 0 이면 대조해도 됩니다. 맞으면 `clearLoginFailures` 로 비우고, 틀렸으면 이미 셌으니
+ * 따로 기록하지 않습니다.
+ *
+ * `loginLockRemainingMs` → 대조 → `noteLoginFailure` 로 나누면 판정과 기록 사이에
+ * scrypt 만큼의 틈이 생깁니다. 같은 순간에 보낸 요청은 모두 "아직 안 잠김" 을 읽고
+ * 지나가서, 8회 제한이 보낸 개수만큼 늘어납니다. 그래서 비밀번호를 대조하는 곳
+ * (로그인 · /account 본인 확인)은 이쪽을 씁니다. 가입처럼 **실패만** 세는 곳은
+ * 대조가 없어 틈이 문제 되지 않으므로 앞의 두 함수를 그대로 씁니다.
+ */
+export async function takeLoginAttempt(key: string): Promise<number> {
+  const prisma = await getPrismaClient();
+  // 원자적 UPSERT 한 문장 — prisma/sql/takeLoginAttempt.sql
+  const [row] = await prisma.$queryRawTyped(takeLoginAttemptSql(key, LOCK_MINUTES, MAX_FAILURES));
+
+  // 낡은 줄 청소는 noteLoginFailure 와 같습니다.
+  await prisma.login_failures.deleteMany({
+    where: { until: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+  });
+
+  if (!row || row.count <= MAX_FAILURES) return 0;
+  const left = row.until.getTime() - Date.now();
+  return left > 0 ? Math.ceil(left) : 0;
+}
+
 /** 성공했으니 카운터를 비웁니다 */
 export async function clearLoginFailures(key: string): Promise<void> {
   const prisma = await getPrismaClient();
@@ -960,7 +986,17 @@ export function clientKey(request: Request): string | null {
  * 대소문자를 접는 이유: DB 의 닉네임 중복 차단이 `lower()` 기준이라(migrate-027)
  * 'Admin' 과 'admin' 이 같은 계정입니다. 접지 않으면 **대소문자만 바꿔가며
  * 카운터를 초기화**할 수 있습니다.
+ *
+ * 머리말(`login:`)은 아래 `accountCheckKey` 와 겹치지 않게 따로 둡니다. 예전에는 둘 다
+ * `account:` 여서 닉네임 '13' 의 로그인 키가 13번 회원의 /account 키와 같았습니다 —
+ * 남의 닉네임으로 틀려서 그 회원을 잠그거나, 내 계정으로 성공해서 그 회원의 카운터를
+ * 비울 수 있었습니다.
  */
 export function accountKey(nickname: string): string {
-  return `account:${nickname.normalize('NFC').trim().toLowerCase()}`;
+  return `login:${nickname.normalize('NFC').trim().toLowerCase()}`;
+}
+
+/** /account 의 본인 확인(수정 · 탈퇴 · 입장 확인)이 함께 쓰는 키. 회원번호 기준입니다 */
+export function accountCheckKey(playerId: number): string {
+  return `acct:${playerId}`;
 }

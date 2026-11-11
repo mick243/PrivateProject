@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { accountKey, clientKey } from '@/lib/auth';
+import { accountCheckKey, accountKey, clientKey } from '@/lib/auth';
 
 /**
  * 시도 제한의 **키**를 봅니다. 잠금 로직이 아니라 키입니다 — 로직이 맞아도
@@ -93,5 +93,10 @@ describe('accountKey — 표적은 위조할 수 없다', () => {
     process.env.TRUSTED_PROXY_HOPS = '1';
     const ip = clientKey(req({ 'x-forwarded-for': 'admin' }));
     expect(accountKey('admin')).not.toBe(ip);
+  });
+
+  it('/account 본인 확인 키와 섞이지 않는다 — 닉네임 "13" 이 13번 회원의 키가 되면 안 된다', () => {
+    // 예전에는 둘 다 `account:` 머리여서 남의 닉네임으로 그 회원을 잠그거나 카운터를 비울 수 있었습니다.
+    expect(accountKey('13')).not.toBe(accountCheckKey(13));
   });
 });

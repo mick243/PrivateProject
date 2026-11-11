@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { formatIssues } from './validation';
+import { formatIssues, isDbId } from './validation';
 import type { ZodError, ZodType, output } from 'zod';
 
 /**
@@ -69,10 +69,13 @@ export function fail(status: number, message: string, init?: string[] | FailInit
   return NextResponse.json(body, { status, headers });
 }
 
-/** 경로의 숫자 id. 양의 정수만 통과합니다 (라우트마다 다시 쓰던 것) */
+/**
+ * 경로의 숫자 id. 양의 정수만, 그리고 DB integer 범위 안의 것만 통과합니다
+ * (라우트마다 다시 쓰던 것 · 상한 이유는 lib/validation.ts MAX_DB_ID)
+ */
 export function parseId(raw: unknown): number | null {
   const id = Number(raw);
-  return Number.isInteger(id) && id > 0 ? id : null;
+  return isDbId(id) ? id : null;
 }
 
 export const badId = (): NextResponse => fail(400, '잘못된 id 입니다');

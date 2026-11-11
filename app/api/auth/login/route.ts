@@ -7,9 +7,8 @@ import {
   clientKey,
   configuredAdminPassword,
   ensureAdminAccount,
-  loginLockRemainingMs,
-  noteLoginFailure,
   setSessionCookie,
+  takeLoginAttempt,
 } from '@/lib/auth';
 import { loginInputSchema } from '@/lib/validation';
 
@@ -40,8 +39,9 @@ async function onPost(request: Request) {
   const keys = [accountKey(body.value.nickname), clientKey(request)].filter(
     (k): k is string => k !== null,
   );
-  // 이제 DB 를 보므로 await 합니다. 키가 둘이라 병렬로 — 순서가 없습니다.
-  const lockedFor = Math.max(0, ...(await Promise.all(keys.map(loginLockRemainingMs))));
+  // 대조하기 전에 시도부터 셉니다 (lib/auth.ts takeLoginAttempt — 동시 요청이 한도를
+  // 함께 넘지 못하게). 키가 둘이라 병렬로 — 순서가 없습니다.
+  const lockedFor = Math.max(0, ...(await Promise.all(keys.map(takeLoginAttempt))));
   if (lockedFor > 0) {
     return tooMany(`로그인 시도가 많습니다. ${Math.ceil(lockedFor / 60000)}분 후 다시 시도해 주세요`, lockedFor);
   }
@@ -55,10 +55,8 @@ async function onPost(request: Request) {
   await ensureAdminAccount();
 
   const user = await authenticate(body.value.nickname, body.value.password);
-  if (!user) {
-    await Promise.all(keys.map(noteLoginFailure));
-    return fail(401, '아이디 또는 비밀번호가 올바르지 않습니다');
-  }
+  // 틀렸으면 따로 기록하지 않습니다 — 위에서 이미 셌습니다.
+  if (!user) return fail(401, '아이디 또는 비밀번호가 올바르지 않습니다');
 
   await Promise.all(keys.map(clearLoginFailures));
   return setSessionCookie(NextResponse.json({ user }), user.playerId);

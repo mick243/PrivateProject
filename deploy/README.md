@@ -119,7 +119,7 @@ sudo systemctl reload arcade-finder        # SIGHUP → 인스턴스를 하나�
 
 - `db-<날짜>.dump` — `pg_dump -Fc` (176MB 급 DB 가 30MB 대로 압축됩니다)
 - `uploads-<날짜>.tar.zst` — 첨부 원본(`uploads/posts/`). **DB 밖 파일**이라 덤프에 없습니다
-- 14일 지난 것은 지웁니다 (`KEEP_DAYS`)
+- 7일 지난 것은 지웁니다 (`KEEP_DAYS`, `arcade-finder-backup.service`) — 14일치가 10GB 서버에서 600MB 를 차지해 2026-10-16 에 줄였습니다. 더 오래 둘 것은 PC 로 받아 두세요
 
 다른 장비로 복사하지 않으면 백업이 아닙니다 — 스크립트 끝의 `OFFSITE` 훅에 rclone/scp
 한 줄을 넣으세요.

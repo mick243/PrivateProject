@@ -10,17 +10,17 @@ import {
   tooMany,
 } from '@/lib/api-errors';
 import {
+  accountCheckKey,
   accountStatus,
   changeNickname,
   clearLoginFailures,
   clearSessionCookie,
   deleteAccount,
   getSession,
-  loginLockRemainingMs,
-  noteLoginFailure,
   RESERVED_NICKNAME_MESSAGE,
   setPlayerPassword,
   setSessionCookie,
+  takeLoginAttempt,
   verifyPlayerPassword,
 } from '@/lib/auth';
 import { accountUpdateSchema } from '@/lib/validation';
@@ -41,8 +41,6 @@ export const dynamic = 'force-dynamic';
  * 비밀번호를 무한정 대입해 보는 것을 막습니다.
  */
 
-const lockKey = (playerId: number) => `account:${playerId}`;
-
 /** 계정 행이 사라진 세션 — 쿠키를 지우며 로그인부터 다시 */
 const gone = () => clearSessionCookie(needLogin());
 
@@ -51,15 +49,15 @@ const locked = (lockedMs: number) =>
 
 /**
  * 비밀번호가 있는 계정의 본인 확인. 통과하면 null, 막히면 돌려줄 응답.
- * PUT(수정)과 DELETE(탈퇴)가 같은 순서로 확인합니다 — 잠금 → 입력 → 대조.
+ * PUT(수정)과 DELETE(탈퇴)가 같은 순서로 확인합니다 — 입력 → 시도 세기 → 대조.
+ * 빈 입력은 대조가 아니므로 세지 않습니다. 시도는 대조 전에 셉니다(lib/auth.ts takeLoginAttempt).
  */
 async function confirmPassword(playerId: number, currentPassword: string | null | undefined) {
-  const key = lockKey(playerId);
-  const lockedMs = await loginLockRemainingMs(key);
-  if (lockedMs > 0) return locked(lockedMs);
   if (!currentPassword) return fail(400, '현재 비밀번호를 입력해 주세요');
+  const key = accountCheckKey(playerId);
+  const lockedMs = await takeLoginAttempt(key);
+  if (lockedMs > 0) return locked(lockedMs);
   if (!(await verifyPlayerPassword(playerId, currentPassword))) {
-    await noteLoginFailure(key);
     return forbidden('비밀번호가 올바르지 않습니다');
   }
   await clearLoginFailures(key);

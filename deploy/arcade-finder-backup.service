@@ -9,7 +9,9 @@ Group=arcade
 WorkingDirectory=/srv/arcade-finder/app/arcade-finder
 EnvironmentFile=/srv/arcade-finder/app/arcade-finder/.env.local
 Environment=BACKUP_DIR=/var/backups/arcade-finder
-Environment=KEEP_DAYS=14
+# 7일 — 10GB 디스크에서 14일치(DB 덤프 + 첨부 묶음, 하루 약 40MB)가 600MB 까지 쌓여 여유가 16% 로
+# 디스크 경고(15%) 바로 위였다 (2026-10-16). 더 오래 둘 사본은 PC 로 받아 둔다 (deploy/ncp/README.md 운영 표)
+Environment=KEEP_DAYS=7
 # 다른 장비로 복사하는 한 줄 (deploy/backup.sh 끝). 비워 두면 같은 디스크 안의 사본입니다.
 # Environment=OFFSITE=rclone copy /var/backups/arcade-finder remote:arcade-finder-backups --max-age 2d
 ExecStart=/usr/bin/env bash deploy/backup.sh
