@@ -83,6 +83,7 @@ npm run data:release -- report
 | 공공데이터포털 청소년게임제공업 (15154958) | arcades `source='localdata'` 398곳 | `npm run games:localdata` → `arcades:localdata -- --geocode --write` | `source_ref` = `localdata:youth:{지자체}:{관리번호}`. 이름·주소만 (좌표는 주소를 옮긴 것) |
 | 네이버 대조 · 중복 병합 | arcades 삭제·이름 통일 | `arcades:verify` · `arcades:dedupe` | 지우기 전에 행 전체를 `localdata/*.json` 에 남깁니다 |
 | 사람이 등록 | arcades `source='manual'` 2곳 | 관리자 화면 | `source_ref` 가 없어 열쇠는 출처+이름+주소 |
+| 나무위키 「오락실/지역」 18개 문서 + 개별 오락실 문서 (CC BY-NC-SA 2.0 KR) | arcade_machines · arcade_cabinets (2026-10-26 개발 DB 214곳 · 기종 700 · 기체 1,308) | `npm run arcades:namu-machines -- <파일> [--write]` (짝짓기는 lib/namu-machines.ts) | 데이터 파일은 `localdata/` — 커밋하지 않습니다. 이미 있는 기종은 건드리지 않습니다. **운영에는 `data:release` 가 아니라 이 도구를 서버에서 다시** — 릴리스 적재는 새 오락실에만 기종을 붙입니다 |
 | SEGA 공식 곡 목록 (maimai DX · CHUNITHM JSON) | 두 기종의 songs · charts · machine_modes | `npm run charts:import -- maimai --write` (출처 목록은 lib/chart-sources.ts `SOURCES`) | 출처에서 사라진 곡은 지우지 않고 세기만 합니다 |
 | 참고 서열표 · 위키 (mentormin · 나무위키 · SDVX 17 스프레드시트 …) | 펌프 · 사볼 · EZ2DJ 의 곡 · 채보 | 마이그레이션 (migrate-005 … 079) | 원 표기와 출처는 각 파일 머리말 |
 | Gemini | arcade_machine_guesses · arcade_review_summaries | 상세 화면 단추 · `guess-arcade-machines.mjs` · 요약 API | 추정은 릴리스에 **담습니다**(다시 만들면 비용). 요약은 담지 않습니다(리뷰가 없는 곳에서는 뜻이 없음) |

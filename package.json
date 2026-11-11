@@ -43,6 +43,7 @@
     "charts:import": "node scripts/import-charts.ts",
     "arcades:dedupe": "node scripts/dedupe-arcades.mjs",
     "arcades:guess": "node scripts/guess-arcade-machines.mjs",
+    "arcades:namu-machines": "node scripts/import-namu-machines.ts",
     "news:sync": "node scripts/sync-news.mjs"
   },
   "dependencies": {
