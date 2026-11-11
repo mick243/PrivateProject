@@ -9,7 +9,7 @@ set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/arcade-finder}"
-KEEP_DAYS="${KEEP_DAYS:-14}"
+KEEP_DAYS="${KEEP_DAYS:-7}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 # .env.local 에서 DATABASE_URL 만 (다른 값은 건드리지 않음)

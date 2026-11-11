@@ -47,6 +47,12 @@ describe('parseId', () => {
     // 예전에는 라우트마다 따로 구현돼 있어 여기서 갈릴 수 있었습니다.
     expect(parseId('1e999')).toBeNull();
   });
+
+  it('DB integer 상한(2147483647)을 넘으면 거른다 — 넘기면 DB 에서 22003 으로 500 이 된다', () => {
+    expect(parseId('2147483647')).toBe(2147483647);
+    expect(parseId('2147483648')).toBeNull();
+    expect(parseId('9007199254740991')).toBeNull();
+  });
 });
 
 describe('표준 실패 응답', () => {

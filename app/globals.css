@@ -240,6 +240,47 @@ textarea {
   color: inherit;
 }
 
+/* 글자가 16px 보다 작은 칸을 누르면 iOS Safari 가 화면을 확대해 버린다 (.radius-fab select 와
+   같은 이유). 위 규칙 때문에 모든 칸이 본문 크기(--t4 14px)를 물려받고, 챗봇 · 편집기
+   도구줄처럼 12~13px 로 더 줄인 칸도 있다. 그래서 오락실 검색 · 글쓰기 · 로그인 · 제보 칸이
+   전부 누를 때마다 확대됐다 (2026-10-02).
+   viewport 에 maximum-scale · user-scalable=no 를 걸어 막지 않는다 — 그러면 손가락으로 벌려
+   확대하는 것까지 막혀서 글자를 키워 보는 저시력 사용자가 못 쓰게 된다. 칸의 글자를 키운다.
+   - 손가락으로 누르는 화면에서만 키운다. 마우스 화면의 칸 크기는 그대로 둔다.
+   - 체크박스 · 라디오 · 슬라이더 · 파일 같은 칸은 자판이 뜨지 않아 확대도 없으니 뺀다.
+   - max(16px, 1em) — 물려받은 크기가 16px 보다 크면 그것을 따른다. 바닥만 정한다.
+   - :is() 는 안에 든 선택자 중 가장 높은 명시도(contenteditable 쪽의 0,2,0)를 모두에게 준다.
+     그래서 파일 어디에 있든 .chat-rank select · .rt-select 같은 (0,1,1) 이하의 글자 크기를
+     이긴다. 손가락 화면에서 16px 보다 크게 둘 칸이 생기면 그 규칙의 명시도를 이보다 높인다. */
+@media (pointer: coarse) {
+  :is(
+      input:not(
+          [type='checkbox'],
+          [type='radio'],
+          [type='range'],
+          [type='file'],
+          [type='color'],
+          [type='button'],
+          [type='submit'],
+          [type='reset'],
+          [type='image'],
+          [type='hidden']
+        ),
+      select,
+      textarea,
+      [contenteditable]:not([contenteditable='false'])
+    ) {
+    font-size: max(16px, 1em);
+  }
+  /* 한 줄 칸은 줄 높이를 14px 때와 같은 21px(1.5배)로 묶는다. 물려받은 1.5 를 그대로 두면
+     글자와 함께 줄도 커져서 칸이 41 → 44px 이 되고, 검색창 옆의 40px 단추와 어긋났다.
+     textarea · 편집기는 여러 줄을 읽는 칸이라 저마다의 줄 간격(1.6 · 1.75)을 그대로 둔다.
+     파일 칸은 글자를 키우지 않았으니 줄 높이도 그대로 둔다 (체크박스 · 슬라이더는 줄 높이를 안 탄다) */
+  input:not([type='file']) {
+    line-height: 21px;
+  }
+}
+
 /* 클래스가 없는 글 속 링크 — 브라우저 기본 보라·파랑 대신 정보색 한 가지 */
 a {
   color: var(--info);
@@ -2650,6 +2691,9 @@ a.btn {
 }
 .rt-ask input {
   flex: 1;
+  /* flex 아이템인 input 은 제 기본 폭(약 20자) 아래로 줄지 않는다. 손가락 화면에서 글자가
+     16px 로 커지면 그 폭도 커져서, 375px 에서 '넣기 · 취소' 를 오른쪽 여백 밖으로 밀어냈다 */
+  min-width: 0;
   height: 28px;
   padding: 0 8px;
   background: var(--panel);
@@ -3427,6 +3471,18 @@ a.btn {
 }
 .feed-filters select {
   width: auto;
+}
+/* 손가락 화면에서는 칸 글자가 16px 로 커져서(위의 :is() 규칙) 375px 폭에서 두 상자가 한 줄에
+   들지 않고 기종 상자가 셋째 줄로 떨어졌다 (125 + 8 + 221 > 335). 둘째 줄을 나눠 쓰게 한다 —
+   7em 에서 출발해 남는 폭만큼 늘되 제 글자 폭(max-content)보다 넓어지지는 않는다. 기간 상자는
+   제 폭을 다 받고, 기종 상자는 가장 긴 기종 이름일 때만 끝이 조금 잘린다.
+   min-width: 0 이 없으면 select 는 가장 긴 항목의 폭 아래로 줄지 않는다. */
+@media (pointer: coarse) {
+  .feed-filters select {
+    flex: 1 1 7em;
+    min-width: 0;
+    max-width: max-content;
+  }
 }
 /* .seg 의 기본 margin-bottom 12px 은 단독으로 놓일 때를 위한 값이라,
    필터 줄 안에서는 세그먼트만 위로 뜨게 만든다. 줄 안에서만 없앤다. */

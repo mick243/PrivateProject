@@ -21,6 +21,22 @@ import { normalizeDoc, toPlainText } from './rich-text';
  * 보내도 zod 가 조용히 버립니다.
  */
 
+/**
+ * DB id 열(PostgreSQL `integer`)이 담을 수 있는 가장 큰 값.
+ *
+ * 이보다 큰 값은 모양만 보면 멀쩡한 양의 정수라 그대로 통과했고, DB 에 가서야
+ * 22003(범위 초과)으로 터져 500 이 됐습니다 — `/api/arcades/2147483648` 한 줄로 누구나
+ * 서버 오류를 만들고 실패 지표에 잡혔습니다. 경로·쿼리·본문의 id 는 전부 여기서 거릅니다.
+ */
+export const MAX_DB_ID = 2_147_483_647;
+
+/** DB id 로 쓸 수 있는 양의 정수인가 (parseId · 쿼리스트링 · 본문 스키마가 함께 씁니다) */
+export function isDbId(n: number): boolean {
+  return Number.isInteger(n) && n > 0 && n <= MAX_DB_ID;
+}
+
+const dbId = z.number().int().positive().max(MAX_DB_ID);
+
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /** '' → null 로 정규화하는 선택 문자열 */
@@ -60,7 +76,7 @@ export const arcadeInputSchema = z
     machines: z
       .array(
         z.object({
-          machineId: z.number().int().positive(),
+          machineId: dbId,
           /**
            * 대수는 이 배열의 길이입니다 (배열 순서 = 1호기, 2호기…).
            * cabinets 를 아예 안 보내면 컨디션 모르는 1대로 봅니다 — 기체 개념이
@@ -241,9 +257,9 @@ export const accountUpdateSchema = z
 // arcadeId 는 경로(/api/arcades/:id/reports)에서 오므로 본문에 받지 않습니다.
 export const reportInputSchema = z
   .object({
-    machineId: z.number().int().positive(),
+    machineId: dbId,
     /** 컨디션 제보가 가리키는 기체. 나머지 종류에서는 무시됩니다 */
-    cabinetId: z.number().int().positive().nullable().default(null),
+    cabinetId: dbId.nullable().default(null),
     // 익명 여부(playerId = null)는 세션이 있는지로 정해집니다 — 제보만은
     // 로그인 없이도 되므로 라우트가 401 대신 null 을 넣습니다.
     kind: z.enum(['presence', 'absence', 'queue', 'condition']),
@@ -317,7 +333,7 @@ export const postInputSchema = z
      * 글이 속한 게임. 공지는 비워 둘 수 있습니다 (아래 superRefine) — 모든 탭 맨
      * 위에 붙는 글이라 어느 게시판에 썼는지가 뜻이 없습니다.
      */
-    machineId: z.number().int().positive().nullable().default(null),
+    machineId: dbId.nullable().default(null),
     category: z.string().trim().min(1, '말머리를 골라주세요').max(20),
     title: z.string().trim().min(2, '제목을 입력해 주세요').max(120),
     /**
@@ -390,11 +406,14 @@ export const postCommentInputSchema = z.object({
  * 없으면 남의 브라우저에서 수십 KB짜리 패턴을 보내 DB 를 태울 수 있습니다.
  * 거절하지 않고 자르는 이유 — 이 길이를 넘겨 검색하는 사람은 없어서, 거절은
  * 사람에게는 안 보이고 공격자에게만 재시도 신호가 됩니다.
+ *
+ * 제어 문자는 공백으로 바꿉니다 — NUL 은 PostgreSQL 텍스트에 들어가지 못해 500 이
+ * 됩니다 (lib/arcades.ts searchTokens 와 같은 이유).
  */
 const SEARCH_TERM_MAX = 60;
 
 function searchTerm(searchParams: URLSearchParams): string | null {
-  const raw = searchParams.get('q')?.trim();
+  const raw = searchParams.get('q')?.replace(/\p{Cc}/gu, ' ').trim();
   return raw ? raw.slice(0, SEARCH_TERM_MAX) : null;
 }
 
@@ -404,7 +423,7 @@ export function parsePostQuery(searchParams: URLSearchParams) {
     const raw = searchParams.get(key);
     if (raw === null || raw.trim() === '') return null;
     const n = Number(raw);
-    return Number.isInteger(n) && n > 0 ? n : null;
+    return isDbId(n) ? n : null;
   };
 
   const rawSort = searchParams.get('sort') ?? '';
@@ -429,8 +448,11 @@ export function parseReportQuery(searchParams: URLSearchParams) {
     const raw = searchParams.get(key);
     if (raw === null || raw.trim() === '') return null;
     const n = Number(raw);
-    return Number.isInteger(n) && n > 0 ? n : null;
+    return isDbId(n) ? n : null;
   };
+  // 시간 창은 id 가 아니라서 상한이 따로 있어야 합니다 — 수억 시간 전은 DB timestamp
+  // 범위 밖이라 22008 로 터집니다. 10년이면 사실상 '전부' 와 같습니다.
+  const sinceHours = int('sinceHours');
 
   const KINDS = ['presence', 'absence', 'queue', 'condition'] as const;
   const kinds = (searchParams.get('kind') ?? '')
@@ -442,7 +464,7 @@ export function parseReportQuery(searchParams: URLSearchParams) {
     arcadeId: int('arcadeId'),
     machineId: int('machineId'),
     kinds: kinds.length ? kinds : null,
-    sinceHours: int('sinceHours'),
+    sinceHours: sinceHours === null ? null : Math.min(sinceHours, 24 * 365 * 10),
     q: searchTerm(searchParams),
     limit: Math.min(int('limit') ?? 50, 200),
   };
@@ -491,7 +513,7 @@ export function parseListQuery(searchParams: URLSearchParams) {
   const machineIds = (searchParams.get('machines') ?? '')
     .split(',')
     .map((s) => Number(s.trim()))
-    .filter((n) => Number.isInteger(n) && n > 0);
+    .filter(isDbId);
 
   return {
     q: searchParams.get('q'),

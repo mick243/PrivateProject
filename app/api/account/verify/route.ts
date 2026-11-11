@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { forbidden, handle, needLogin, parseBody, tooMany } from '@/lib/api-errors';
 import {
+  accountCheckKey,
   clearLoginFailures,
   getSession,
-  loginLockRemainingMs,
-  noteLoginFailure,
+  takeLoginAttempt,
   verifyPlayerPassword,
 } from '@/lib/auth';
 import { accountVerifySchema } from '@/lib/validation';
@@ -28,14 +28,14 @@ async function onPost(request: Request) {
   const body = await parseBody(request, accountVerifySchema, 'first');
   if (!body.ok) return body.response;
 
-  const key = `account:${session.playerId}`;
-  const lockedMs = await loginLockRemainingMs(key);
+  // 대조 전에 시도부터 셉니다 (lib/auth.ts takeLoginAttempt)
+  const key = accountCheckKey(session.playerId);
+  const lockedMs = await takeLoginAttempt(key);
   if (lockedMs > 0) {
     return tooMany(`시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요`, lockedMs);
   }
 
   if (!(await verifyPlayerPassword(session.playerId, body.value.password))) {
-    await noteLoginFailure(key);
     return forbidden('비밀번호가 올바르지 않습니다');
   }
 

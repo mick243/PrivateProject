@@ -8,4 +8,5 @@ export * from './purgeExpiredQueueReports.ts';
 export * from './recalcArcadeRating.ts';
 export * from './recalcChartStats.ts';
 export * from './recalcPostStats.ts';
+export * from './takeLoginAttempt.ts';
 export * from './tierCharts.ts';

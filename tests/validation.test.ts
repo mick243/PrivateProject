@@ -222,12 +222,27 @@ describe('쿼리스트링 파서 — 사용자가 주는 값이라 전부 방어
         expect(got).not.toBeNull();
         expect(got!.length).toBeLessThanOrEqual(60);
       });
+
+      it(`${name}: 제어 문자(NUL 등)는 공백이 된다 — PostgreSQL 텍스트에 NUL 은 못 들어간다`, () => {
+        expect(parse(q('q=%00')).q).toBeNull();
+        expect(parse(q('q=%EB%B0%9C%00%ED%8C%90')).q).toBe('발 판');
+      });
+
+      it(`${name}: DB integer 상한을 넘는 id 는 버린다`, () => {
+        expect(parse(q('machineId=2147483648')).machineId).toBeNull();
+      });
     }
+  });
+
+  it('parseReportQuery: 시간 창은 10년에서 자른다 — 더 멀면 DB timestamp 범위를 벗어난다', () => {
+    expect(parseReportQuery(q('sinceHours=24')).sinceHours).toBe(24);
+    expect(parseReportQuery(q('sinceHours=2147483647')).sinceHours).toBe(24 * 365 * 10);
   });
 
   it('parseListQuery: machines 는 양의 정수만 남긴다', () => {
     expect(parseListQuery(q('machines=1,abc,-2,3')).machineIds).toEqual([1, 3]);
     expect(parseListQuery(q('machines=')).machineIds).toBeNull();
+    expect(parseListQuery(q('machines=1,2147483648')).machineIds).toEqual([1]);
   });
 
   it('parseListQuery: 좌표는 음수를 허용한다 (서경·남위)', () => {

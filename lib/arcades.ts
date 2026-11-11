@@ -109,10 +109,14 @@ export interface ListArcadesParams {
  *
  * 8개 상한: 낱말 하나가 ILIKE 두 번이라, 상한이 없으면 공백 잔뜩인 입력이
  * 스캔 비용을 마음대로 키웁니다.
+ *
+ * 제어 문자는 공백으로 바꿉니다. 특히 NUL(`?q=%00`)은 PostgreSQL 이 UTF-8 텍스트에
+ * 아예 받지 않아(22021) 그대로 넘기면 500 이 됐습니다. 사람이 칠 일이 없는 글자라
+ * 거절하지 않고 낱말 경계로 취급합니다.
  */
 export function searchTokens(q: string | null | undefined): string[] | null {
   if (!q) return null;
-  const tokens = q.trim().split(/\s+/).filter(Boolean).slice(0, 8);
+  const tokens = q.replace(/\p{Cc}/gu, ' ').trim().split(/\s+/).filter(Boolean).slice(0, 8);
   return tokens.length ? tokens : null;
 }
 
