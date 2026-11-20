@@ -491,6 +491,16 @@ export const chatInputSchema = z.object({
     .refine((t) => t[t.length - 1]?.role === 'user', {
       message: '마지막 메시지는 사용자 차례여야 합니다',
     }),
+  /**
+   * 사용자의 기준점 — 파인더가 떠 있을 때만 옵니다 (내 위치 또는 지도 기준점).
+   * 오락실 도구가 거리를 재는 데만 쓰고, 저장하지도 모델에 보내지도 않습니다 (lib/chat-tools.ts).
+   */
+  near: z
+    .object({
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+    })
+    .nullish(),
 });
 
 /** zod 이슈를 "필드: 메시지" 문자열 배열로 평탄화 */

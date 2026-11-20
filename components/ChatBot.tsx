@@ -94,11 +94,16 @@ export default function ChatBot() {
         .slice(-HISTORY_LIMIT)
         .map((m) => ({ role: m.role, text: m.text }));
 
+      // 파인더가 떠 있으면 기준점을 함께 보낸다 — "내 근처 사볼" 을 가까운 순으로 찾는 데 쓴다.
+      // 다른 화면에서는 기준점이 없으므로 싣지 않고, 서버는 거리 없이 답한다.
+      const origin = searchRef.current?.origin() ?? null;
+      const near = origin ? { lat: origin.lat, lng: origin.lng } : undefined;
+
       try {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ turns }),
+          body: JSON.stringify({ turns, near }),
         });
         const data = (await res.json()) as ChatResponse & { error?: string };
 
@@ -111,6 +116,7 @@ export default function ChatBot() {
                   failed: !res.ok,
                   text: res.ok ? data.text : (data.error ?? '답변을 만들지 못했습니다'),
                   sources: data.sources,
+                  places: res.ok ? data.places : undefined,
                 }
               : m,
           ),
@@ -417,6 +423,25 @@ export default function ChatBot() {
                   </p>
                 ) : (
                   <p className={`chat-bubble ${m.failed ? 'is-failed' : ''}`}>{m.text}</p>
+                )}
+
+                {m.places && m.places.length > 0 && (
+                  // 답변에 나온 오락실의 길찾기 — 서버가 도구 결과에서 만든 링크만 답니다
+                  // (모델이 적은 주소가 아닙니다). 상세 화면의 길찾기 단추와 같은 곳으로 갑니다.
+                  <ul className="chat-sources">
+                    {m.places.map((p) => (
+                      <li key={p.directions}>
+                        <a
+                          href={p.directions}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="카카오맵 길찾기를 이 오락실을 목적지로 엽니다 (새 창)"
+                        >
+                          {p.name} 길찾기{p.distance ? ` · ${p.distance}` : ''}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
                 )}
 
                 {m.sources && m.sources.length > 0 && (

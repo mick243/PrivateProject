@@ -15,6 +15,7 @@
  * 같은 규칙).
  */
 
+import { machineTerms, matchMachines } from './machine-aliases';
 import type { Arcade, Machine } from './types';
 
 /** 문장에 언급된 오락실 — 탐색의 기준점이자 제외 대상 */
@@ -134,18 +135,12 @@ export function findMentionedArcade(text: string, arcades: Arcade[]): MentionedA
   return { id: best.id, name: best.name, lat: best.lat, lng: best.lng };
 }
 
-/** 문장에 언급된 기종들. 정식 명칭·축약명 어느 쪽이 있어도 잡습니다 */
+/**
+ * 문장에 언급된 기종들. 정식 명칭·축약명·별칭('PIU' · '투덱') 어느 쪽이 있어도 잡습니다
+ * (lib/machine-aliases.ts).
+ */
 export function findMentionedMachines(text: string, machines: Machine[]): Machine[] {
-  const sentence = norm(text);
-  if (sentence === '') return [];
-  return machines.filter((m) => {
-    const short = norm(m.shortName);
-    const full = norm(m.name);
-    return (
-      (short.length >= 2 && sentence.includes(short)) ||
-      (full.length >= 2 && sentence.includes(full))
-    );
-  });
+  return matchMachines(text, machines);
 }
 
 // ─── 지역 이름 ───────────────────────────────────────────────
@@ -192,16 +187,15 @@ const NON_PLACE_ENDINGS = /(은|는|을|를|한|던|고|게|다|요|까|야|아�
  * 한글이 없는 낱말(PIU 같은 영문 약칭)은 지역으로 보지 않습니다 — 지명은 한글로 씁니다.
  */
 export function findPlaceQuery(text: string, machines: Machine[]): string | null {
-  const machineTerms = machines
-    .flatMap((m) => [norm(m.shortName), norm(m.name)])
-    .filter((t) => t.length >= 2);
+  // 별칭도 기종 말이다 — '투덱' 이 지역 이름으로 넘어가 지역 검색에 실리면 안 된다.
+  const terms = machines.flatMap(machineTerms);
 
   const kept: string[] = [];
   for (const raw of text.split(/[\s,.!?~·]+/)) {
     let token = raw.toLowerCase();
     if (token === '') continue;
     if (GENERIC_STARTS.some((g) => g.length >= 2 && token.includes(g))) continue;
-    if (machineTerms.some((t) => token.includes(t))) continue;
+    if (terms.some((t) => token.includes(t))) continue;
     const suffix = PLACE_SUFFIXES.find((s) => token.endsWith(s) && token.length > s.length);
     if (suffix) token = token.slice(0, -suffix.length);
     if (PLACE_SUFFIXES.includes(token)) continue;

@@ -244,6 +244,16 @@ export default function ArcadeFinder() {
   const [follow, setFollow] = useState(false);
   const [fixedCenter, setFixedCenter] = useState<Coord | null>(null);
   const origin: Coord | null = follow && live.coord ? live.coord : fixedCenter;
+  /*
+    챗봇이 자유 질문을 보낼 때 읽어 가는 기준점 ("내 근처 사볼" — lib/chat-tools.ts).
+    값이 아니라 **읽는 함수**로 넘긴다. 추적 중에는 GPS 가 올 때마다 origin 이 바뀌는데,
+    값으로 넘기면 그때마다 챗봇 등록(useRegisterChatSearch)이 새로 돈다.
+  */
+  const originRef = useRef<Coord | null>(origin);
+  useEffect(() => {
+    originRef.current = origin;
+  }, [origin]);
+  const getOrigin = useCallback(() => originRef.current, []);
 
   /**
    * 서버에 보낸 기준점. origin 이 REFETCH_MOVE_KM 이상 움직였을 때만 갱신되고,
@@ -1294,10 +1304,11 @@ export default function ArcadeFinder() {
       onSearch: runSearch,
       extract,
       locate: locatePlace,
+      origin: getOrigin,
       initialOrder: order,
       ready: machinesLoaded && !loading,
     }),
-    [runSearch, extract, locatePlace, order, machinesLoaded, loading],
+    [runSearch, extract, locatePlace, getOrigin, order, machinesLoaded, loading],
   );
   useRegisterChatSearch(chatSearch);
 

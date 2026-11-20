@@ -21,10 +21,11 @@ import {
   searchPosts,
   searchReports,
   type ArcadeSearchArgs,
+  type ChatToolContext,
   type PostSearchArgs,
   type ReportSearchArgs,
 } from '@/lib/chat-tools';
-import type { ChatSource } from '@/lib/chat-types';
+import { placesInAnswer, type ChatPlace, type ChatSource } from '@/lib/chat-types';
 import { chatInputSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
@@ -93,12 +94,14 @@ const buildSystem = (
 
 답변 규칙:
 - 한국어로, 짧고 구체적으로 답합니다. 서론 없이 바로 답부터 씁니다.
-- 이 앱 안의 데이터를 먼저 봅니다: search_arcades(등록된 오락실·보유 기종·컨디션), search_reports(실시간 제보 피드), search_posts(커뮤니티 게시판).
-- 앱 밖의 정보(신곡, 버전, 대회, 기기 출시, 뉴스, 공략, 길찾기)는 구글 검색으로 찾되, 위 답변 범위 안의 것만 찾습니다.
+- 이 앱 안의 데이터를 먼저 봅니다: search_arcades(등록된 오락실·보유 기종·컨디션·기준점에서의 거리), search_reports(실시간 제보 피드), search_posts(커뮤니티 게시판).
+- "내 근처 · 가까운 · 주변" 을 물으면 search_arcades 에 radiusKm 을 줍니다. 결과의 order 가 '가까운 순' 일 때만 가깝다고 말하고, distance 가 없으면 거리를 지어내지 마세요.
+- 가는 길을 물으면 search_arcades 로 그 오락실을 찾고, **이름을 도구가 준 그대로** 적습니다. 그러면 앱이 답변 아래에 그 오락실의 길찾기 링크를 붙입니다. 지도 주소(URL)를 직접 쓰지 말고, 소요 시간·노선을 지어내지 마세요 — "아래 길찾기 링크를 누르면 지도 앱에서 경로를 볼 수 있다"고 안내합니다.
+- 앱 밖의 정보(신곡, 버전, 대회, 기기 출시, 뉴스, 공략, 주차)는 구글 검색으로 찾되, 위 답변 범위 안의 것만 찾습니다.
 - **도구가 돌려준 값만 사실로 말합니다.** 오락실 이름·주소·컨디션·대기 인원을 지어내지 마세요. 못 찾았으면 못 찾았다고 답합니다.
 - 제보가 없는 것은 "상태가 좋다"가 아니라 "최근 제보가 없다"는 뜻입니다. 이 둘을 섞지 마세요.
 - 컨디션은 1~5(5가 최상), 대기 인원은 사람 수입니다.
-- 사용자가 "오락실을 찾아 달라"고 하면 앱이 별도의 우선순위 선택 폼을 띄웁니다. 그 흐름은 당신이 처리하지 않습니다 — 그런 요청이 오면 채팅창 아래 폼에서 1·2·3순위를 고르라고만 안내하세요.
+- 거리·대기·컨디션의 **우선순위를 골라 순위를 매기는 탐색**은 앱의 별도 폼이 합니다. 그 흐름은 당신이 처리하지 않습니다 — 순위를 매겨 달라는 요청이면 "우선순위" 라고 적어 폼을 열라고만 안내하세요. 가까운 곳이나 특정 기종이 있는 곳을 묻는 질문은 search_arcades 로 답합니다.
 - 마크다운 표나 헤딩은 쓰지 마세요. 짧은 문단과 '- ' 목록만 씁니다.`;
 
 /**
@@ -112,14 +115,19 @@ const functionDeclarations: FunctionDeclaration[] = [
   {
     name: 'search_arcades',
     description:
-      '이 앱에 등록된 오락실을 이름·주소로 검색하고, 보유 기종·기체 수·컨디션(1~5)·현재 대기 인원·영업시간·평점을 돌려줍니다. "홍대에 펌프 있는 데" 같은 질문에 씁니다.',
+      '이 앱에 등록된 오락실을 이름·주소로 검색하고, 보유 기종·기체 수·컨디션(1~5)·현재 대기 인원·영업시간·평점을 돌려줍니다. 사용자의 기준점이 있으면 가까운 순으로 정렬하고 거리(distance)를 함께 줍니다. "홍대에 펌프 있는 데" · "내 근처 사볼 있는 곳" 같은 질문에 씁니다.',
     parametersJsonSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: '오락실 이름 또는 주소의 일부 (예: 홍대, 강남)' },
         machine: {
           type: 'string',
-          description: '기종 이름. 정식 명칭·축약 명칭 모두 가능 (예: 펌프, Pump It Up, 사볼)',
+          description: '기종 이름. 정식 명칭·축약 명칭·별칭 모두 가능 (예: 펌프, Pump It Up, PIU, 사볼, 투덱)',
+        },
+        radiusKm: {
+          type: 'number',
+          description:
+            '사용자의 기준점에서 이 거리(km) 안만. "내 근처 · 가까운 · 주변" 질문에 씁니다 (보통 5, 없으면 넓혀서 20). 최대 50',
         },
         page: {
           type: 'integer',
@@ -173,9 +181,17 @@ const functionDeclarations: FunctionDeclaration[] = [
   },
 ];
 
-/** 선언된 이름 → 실제로 돌릴 함수. 이름이 어긋나면 도구가 조용히 죽습니다 */
-const RUNNERS: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
-  search_arcades: (args) => searchArcades(args as ArcadeSearchArgs),
+/**
+ * 선언된 이름 → 실제로 돌릴 함수. 이름이 어긋나면 도구가 조용히 죽습니다.
+ *
+ * 둘째 인자(ChatToolContext)는 **모델을 거치지 않는** 값입니다 — 사용자의 기준점이 들어가고
+ * 길찾기 링크가 나옵니다 (lib/chat-tools.ts).
+ */
+const RUNNERS: Record<
+  string,
+  (args: Record<string, unknown>, ctx: ChatToolContext) => Promise<unknown>
+> = {
+  search_arcades: (args, ctx) => searchArcades(args as ArcadeSearchArgs, ctx),
   search_reports: (args) => searchReports(args as ReportSearchArgs),
   search_posts: (args) => searchPosts(args as PostSearchArgs),
 };
@@ -207,7 +223,7 @@ function collectSources(response: GenerateContentResponse, into: Map<string, Cha
 }
 
 /** 모델이 요청한 도구를 돌려 functionResponse 파트로 만듭니다 */
-async function runCalls(calls: FunctionCall[]): Promise<Part[]> {
+async function runCalls(calls: FunctionCall[], ctx: ChatToolContext): Promise<Part[]> {
   const parts: Part[] = [];
   for (const call of calls) {
     const run = RUNNERS[call.name ?? ''];
@@ -216,7 +232,7 @@ async function runCalls(calls: FunctionCall[]): Promise<Part[]> {
       output = { error: `알 수 없는 도구입니다: ${call.name}` };
     } else {
       try {
-        output = await run(call.args ?? {});
+        output = await run(call.args ?? {}, ctx);
       } catch (e) {
         // 도구 하나가 죽었다고 대화까지 끊지는 않습니다. 실패를 모델에게
         // 알려서 다른 도구로 돌아가거나 "못 찾았다" 고 답하게 둡니다.
@@ -301,6 +317,11 @@ async function onPost(request: Request) {
   }));
   const usage = emptyUsage();
   let toolChars = 0;
+  // 기준점은 도구까지만 갑니다. contents(모델로 가는 것)에는 싣지 않고, 로그에도 남기지 않습니다.
+  const toolContext: ChatToolContext = {
+    near: body.value.near ?? null,
+    places: new Map<string, ChatPlace>(),
+  };
 
   try {
     let response: GenerateContentResponse | undefined;
@@ -347,7 +368,7 @@ async function onPost(request: Request) {
           parts: calls.map((call) => ({ functionCall: call })),
         },
       );
-      const outputs = await runCalls(calls);
+      const outputs = await runCalls(calls, toolContext);
       toolChars += JSON.stringify(outputs).length;
       contents.push({ role: 'user', parts: outputs });
     }
@@ -367,10 +388,13 @@ async function onPost(request: Request) {
     }
 
     const text = (response.text ?? '').trim();
+    // 도구가 돌려준 오락실 중 답변에 이름이 나온 곳만 — 말하지 않은 곳의 링크는 달지 않습니다.
+    const places = placesInAnswer(text, toolContext.places?.values() ?? []);
 
     return NextResponse.json({
       text: text || '답을 만들지 못했습니다. 질문을 조금 더 구체적으로 적어 주세요.',
       sources: sources.size ? [...sources.values()] : undefined,
+      places: places.length ? places : undefined,
     });
   } catch (e) {
     // 키가 틀렸는지, 한도를 넘겼는지, 그냥 느린 건지를 구분해 줘야 다음에

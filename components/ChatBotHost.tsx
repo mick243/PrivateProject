@@ -44,6 +44,12 @@ export interface ChatSearchApi {
   extract: (text: string) => ChatConstraints;
   /** 문장의 지역 이름을 좌표로 (/api/places). 못 찾거나 실패하면 null */
   locate: (query: string) => Promise<MentionedPlace | null>;
+  /**
+   * 지금의 기준점 (내 위치를 따라가는 중이면 그 좌표, 아니면 붙잡아 둔 지도 기준점). 없으면 null.
+   * 자유 질문에 실어 보내 "내 근처" 를 가까운 순으로 찾게 합니다 — 서버는 거리 계산에만 쓰고
+   * 모델에는 보내지 않습니다 (lib/chat-tools.ts ChatToolContext.near).
+   */
+  origin: () => { lat: number; lng: number } | null;
   initialOrder: PartialOrder;
   /**
    * 기종 목록과 첫 오락실 목록을 받았는지. 이게 false 인 동안 extract 는 빈 사전으로
