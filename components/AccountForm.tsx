@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { MIN_PASSWORD_LENGTH, safeNext, type SessionUser } from '@/lib/auth-types';
+import { setBlocked, useBlockedPlayers } from '@/lib/use-blocks';
 import { setSession, useIsAdmin } from '@/lib/use-session';
 
 /**
@@ -42,14 +43,60 @@ type Phase =
  * 비밀번호를 다시 물을 이유가 없고, 관리 페이지 자체가 서버에서 다시 판정합니다
  * (app/api/emoticons/admin requireAdmin). 이 조건을 뚫고 들어가도 목록은 받지 못합니다.
  */
+/**
+ * 내가 차단한 사람 (lib/use-blocks.ts). 차단은 글 · 댓글 옆의 '⋯' 단추로 하고, 여기서 풉니다.
+ * 본인 확인(gate) 뒤에만 보입니다 — 누구를 차단했는지도 남이 볼 일은 아닙니다.
+ */
+function BlockedList() {
+  const blocked = useBlockedPlayers();
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const unblock = async (p: { playerId: number; nickname: string }) => {
+    setBusyId(p.playerId);
+    setError(await setBlocked(p, false));
+    setBusyId(null);
+  };
+  return (
+    <section className="account-section">
+      <h2>차단한 사용자</h2>
+      {blocked.length === 0 ? (
+        <p className="muted small">
+          차단한 사람이 없습니다. 글 · 댓글 · 리뷰 옆의 ⋯ 단추로 차단하면 그 사람의 글이 내 화면에서 가려집니다.
+        </p>
+      ) : (
+        <ul className="mod-list">
+          {blocked.map((p) => (
+            <li key={p.playerId} className="mod-card-head">
+              <strong>{p.nickname}</strong>
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={busyId === p.playerId}
+                onClick={() => void unblock(p)}
+              >
+                차단 풀기
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && <p className="warn small">{error}</p>}
+    </section>
+  );
+}
+
 function AdminTools() {
   return (
     <section className="account-section account-admin">
       <h2>관리자 도구</h2>
       <p className="muted small">
-        댓글·리뷰·채보 평가에서 고를 수 있는 그림 이모티콘을 등록하고, 빼고, 되살립니다.
+        신고함 · 계정 정지 · AI 기종 추정 승인은 관리 화면에서, 댓글·리뷰·채보 평가에서 고를 수 있는
+        그림 이모티콘은 이모티콘 관리에서 합니다.
       </p>
       <div className="form-actions">
+        <Link className="btn btn-sm" href="/admin">
+          관리 화면
+        </Link>
         <Link className="btn btn-sm" href="/admin/emoticons">
           이모티콘 관리
         </Link>
@@ -385,6 +432,8 @@ export default function AccountForm() {
             {revoked && <span className="muted small">끊었습니다.</span>}
           </div>
         </section>
+
+        <BlockedList />
 
         {isAdmin && <AdminTools />}
 

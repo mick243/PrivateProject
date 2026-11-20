@@ -382,6 +382,8 @@ model players {
   email                  String?
   email_verified_at      DateTime?                @db.Timestamptz(6)
   token_epoch            Int                      @default(0)
+  suspended_until        DateTime?                @db.Timestamptz(6)
+  suspended_reason       String?
   arcade_favorites       arcade_favorites[]
   arcade_reviews         arcade_reviews[]
   chart_comments         chart_comments[]
@@ -396,6 +398,11 @@ model players {
   post_likes             post_likes[]
   posts                  posts[]
   special_marks          special_marks[]
+  content_reports_filed    content_reports[]        @relation("content_reports_reporter")
+  content_reports_received content_reports[]        @relation("content_reports_target")
+  content_reports_resolved content_reports[]        @relation("content_reports_resolver")
+  player_blocks_made       player_blocks[]          @relation("player_blocks_blocker")
+  player_blocks_received   player_blocks[]          @relation("player_blocks_blocked")
 }
 
 model post_comments {
@@ -556,4 +563,41 @@ view cabinet_condition {
   value       Int?
   reports     Int?
   reported_at DateTime? @db.Timestamptz(6)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// 신고 (db/migrate-083-moderation.sql). 대상은 (target_type, target_id) 로만 가리킨다 — FK 없음.
+model content_reports {
+  id               Int       @id @default(autoincrement())
+  reporter_id      Int
+  target_type      String
+  target_id        Int
+  target_player_id Int?
+  reason           String
+  detail           String?
+  excerpt          String?
+  status           String    @default("open")
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  resolved_at      DateTime? @db.Timestamptz(6)
+  resolved_by      Int?
+  reporter         players   @relation("content_reports_reporter", fields: [reporter_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  target_player    players?  @relation("content_reports_target", fields: [target_player_id], references: [id], onUpdate: NoAction)
+  resolver         players?  @relation("content_reports_resolver", fields: [resolved_by], references: [id], onUpdate: NoAction)
+
+  @@unique([reporter_id, target_type, target_id])
+  @@index([created_at(sort: Desc)], map: "content_reports_open_idx", where: raw("(status = 'open'::text)"))
+  @@index([target_type, target_id], map: "content_reports_target_idx")
+  @@index([target_player_id], map: "content_reports_target_player_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// 차단 (db/migrate-083-moderation.sql) — 차단한 사람의 화면에서만 가린다.
+model player_blocks {
+  blocker_id Int
+  blocked_id Int
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  blocker    players  @relation("player_blocks_blocker", fields: [blocker_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  blocked    players  @relation("player_blocks_blocked", fields: [blocked_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([blocker_id, blocked_id])
 }

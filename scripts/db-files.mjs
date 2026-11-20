@@ -105,6 +105,7 @@ export const MIGRATION_FILES = [
   'migrate-080-restore-missing-fks.sql',
   'migrate-081-ops-alerts.sql',
   'migrate-082-ops-alerts-dismiss.sql',
+  'migrate-083-moderation.sql',
 ];
 
 // 파생 객체(뷰). 테이블이 다 만들어진 뒤 마지막에.

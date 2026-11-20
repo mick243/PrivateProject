@@ -13,12 +13,14 @@ import {
   peekPost,
   rememberPost,
 } from '@/lib/post-cache';
+import { useBlockedIds } from '@/lib/use-blocks';
 import { usePlayerId } from '@/lib/use-player';
 import { useIsAdmin } from '@/lib/use-session';
 import EmoticonPicker from './EmoticonPicker';
 import EmoticonText from './EmoticonText';
 import Pagination from './Pagination';
 import PostBody from './PostBody';
+import ReportMenu from './ReportMenu';
 
 interface Props {
   postId: number;
@@ -214,6 +216,10 @@ export default function PostDetailView({
     }
   };
 
+  // 훅이라 아래의 조기 반환보다 **앞**에 둔다 — 뒤에 두면 글이 오기 전과 후의 훅 수가 달라 화면이 죽는다
+  // (2026-11-20 로컬 확인에서 "Rendered more hooks" 로 실제로 죽었다).
+  const blockedIds = useBlockedIds();
+
   if (missing) return <p className="muted pad">글을 찾을 수 없습니다.</p>;
 
   /**
@@ -256,7 +262,19 @@ export default function PostDetailView({
             </button>
           </div>
         )}
+        {!isMine && !isAdmin && !pending && (
+          <ReportMenu
+            targetType="post"
+            targetId={shown.id}
+            author={{ playerId: shown.playerId, nickname: shown.nickname }}
+          />
+        )}
       </div>
+      {blockedIds.has(shown.playerId) && (
+        <p className="muted small blocked-note">
+          차단한 사용자의 글입니다. 목록에서는 가려지고, 직접 연 이 화면에서만 보입니다.
+        </p>
+      )}
 
       <header className="post-detail-head">
         <div className="post-row-head">
@@ -320,7 +338,11 @@ export default function PostDetailView({
         ) : (
           <>
             <ul className="comment-list">
-              {shown.comments.map((c, i) => (
+              {shown.comments.map((c, i) => blockedIds.has(c.playerId) ? (
+                <li key={c.id} className="muted small">
+                  <span className="comment-no muted small">{shown.commentOffset + i + 1}</span> 차단한 사용자의 댓글입니다.
+                </li>
+              ) : (
                 <li key={c.id} className={c.playerId === playerId ? 'is-mine' : ''}>
                   <div className="comment-head">
                     <span className="comment-no muted small">{shown.commentOffset + i + 1}</span>
@@ -340,6 +362,13 @@ export default function PostDetailView({
                       >
                         삭제
                       </button>
+                    )}
+                    {!isAdmin && (
+                      <ReportMenu
+                        targetType="post_comment"
+                        targetId={c.id}
+                        author={{ playerId: c.playerId, nickname: c.nickname }}
+                      />
                     )}
                   </div>
                   <p className="comment-body"><EmoticonText text={c.body} /></p>

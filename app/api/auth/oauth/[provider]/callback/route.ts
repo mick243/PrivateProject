@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { handle } from '@/lib/api-errors';
 import { appUrl } from '@/lib/app-url';
-import { linkOAuthAccount, readCookie, setSessionCookie } from '@/lib/auth';
+import { linkOAuthAccount, readCookie, setSessionCookie, suspensionMessage } from '@/lib/auth';
 import { safeNext } from '@/lib/auth-types';
 import {
   exchangeCode,
@@ -95,6 +95,9 @@ async function onGet(request: Request, ctx: Ctx) {
     // 세션 쿠키는 여기서 이미 나갑니다 — 로그인은 끝났고, 남은 건 "무슨 이름으로
     // 활동할지" 뿐입니다. 그 화면을 닫고 나가도 로그인 상태는 유지되고, 답하지
     // 않은 표시(nickname_pending)가 남아 다음 로그인에 다시 묻습니다.
+    // 정지된 계정에는 세션을 내주지 않습니다 (lib/auth.ts suspensionMessage)
+    if (await suspensionMessage(user.playerId)) return fail('suspended');
+
     const landing = needsNickname ? `/welcome?next=${encodeURIComponent(next)}` : next;
 
     const res = await setSessionCookie(
