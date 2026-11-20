@@ -19,7 +19,7 @@
 | 항목 | 값 |
 |---|---|
 | 배포 묶음 | 223MB, PC 에서 2분 13초 |
-| 첫 설치 (마이그레이션 89개 포함) | 56초 → `/api/health` 200 |
+| 첫 설치 (당시 마이그레이션 89개 포함) | 56초 → `/api/health` 200 |
 | 다시 배포 | 14초 |
 | 메모리 (쉴 때 → 페이지 8종 × 15회 동시 요청 중 최대) | 앱 211MB + DB 119MB → **앱 267MB + DB 248MB** |
 | 디스크 | 앱 872MB · 묶음 223MB/개(2개 보관) · DB 110MB · 스왑 2GB |
@@ -82,7 +82,7 @@ ssh root@$IP
 ```bash
 cd /root
 sudo SITE_DOMAIN=223-130-1-2.sslip.io bash bootstrap.sh     # 5분 안팎 — Node · PostgreSQL · Caddy
-sudo bash install-release.sh release-<새것>.tgz server.env   # 1분 — 마이그레이션 89개 + 기동 확인 (이름은 끝까지)
+sudo bash install-release.sh release-<새것>.tgz server.env   # 1분 — 새 마이그레이션 + 기동 확인 (이름은 끝까지)
 rm server.env                                               # 합쳤으면 지운다 (PC 쪽 사본도)
 cat /root/arcade-finder-secrets.env                         # 관리자 비밀번호 (닉네임 '관리자')
 ```
@@ -115,7 +115,7 @@ systemctl stop arcade-finder
 sudo -u postgres dropdb arcade_finder && sudo -u postgres createdb -O arcade -E UTF8 -T template0 arcade_finder
 chmod 644 /tmp/dev.dump && sudo -u postgres pg_restore --no-owner --role=arcade -d arcade_finder /tmp/dev.dump
 cd $APP
-sudo -u arcade -H node scripts/prisma-baseline.mjs        # "89개를 적용됨으로 표시" — DDL 은 실행하지 않음
+sudo -u arcade -H node scripts/prisma-baseline.mjs        # "N개를 적용됨으로 표시" — DDL 은 실행하지 않음 (--dry-run 으로 먼저 보기)
 sudo -u arcade -H npm run db:migrate:prisma               # "No pending migrations" 가 정상
 sudo -u arcade -H npm run db:purge-demo                   # 지울 목록만 보기
 sudo -u arcade -H npm run db:purge-demo -- --apply        # 시드 글 · 가상 오락실 삭제 (리허설: 글 28개)

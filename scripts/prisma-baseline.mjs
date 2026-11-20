@@ -4,7 +4,7 @@
  *   node scripts/prisma-baseline.mjs --dry-run   무엇을 적용됨으로 표시할지만 출력
  *   node scripts/prisma-baseline.mjs             표시 (DDL 은 한 줄도 실행하지 않습니다)
  *
- * 왜 필요한가: 개발·운영 DB 에는 이미 89개 SQL 이 다 들어가 있습니다. 그 DB 에
+ * 왜 필요한가: 옛 러너(schema_migrations)로 채운 개발·운영 DB 에는 이미 SQL 이 다 들어가 있습니다. 그 DB 에
  * `prisma migrate deploy` 를 그냥 돌리면 Prisma 는 "적용된 것이 하나도 없다" 고 보고
  * **처음부터 다시** 실행합니다. 그래서 먼저 `_prisma_migrations` 에 "이건 이미 됐다" 고
  * 적어 둡니다. 이 스크립트가 하는 일은 그 표시가 전부입니다.

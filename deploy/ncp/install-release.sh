@@ -4,8 +4,12 @@
 #   sudo bash install-release.sh release-20261001-1200-0de022b.tgz [server.env]
 #   sudo SKIP_MIGRATE=1 bash install-release.sh …     # 마이그레이션을 건너뛴다 (DB 를 덤프로 채울 때)
 #
-# 순서: 풀기 → (server.env 를 .env.local 에 합치기) → 서비스 정지 → 코드 교체
+# 순서: 풀기 → (server.env 를 .env.local 에 합치기) → DB 점검 · 배포 직전 백업 → 서비스 정지 → 코드 교체
 #       → systemd unit 갱신 → 마이그레이션 → 서비스 시작 → /api/health 200 확인
+#
+# DB 점검은 **서비스를 멈추기 전에** 한다 (2026-11-20 마이그레이션 회의). 기준점(베이스라인)이 없거나 지난
+# 배포에서 실패한 마이그레이션이 남아 있으면 migrate deploy 가 멈추는데, 예전에는 그걸 서비스를 멈춘 뒤에야
+# 알았다. 적용할 마이그레이션이 있으면 그 직전에 DB 를 덤프해 두고, 실패하면 되돌리는 명령을 찍는다.
 #
 # 인스턴스가 하나뿐인 작은 서버라 교체하는 10~20초 동안은 접속이 끊긴다.
 # 되돌리기: releases/ 에 남은 이전 묶음으로 이 스크립트를 다시 돌리면 된다 (지금 것 + 그 전에 설치한 것, 2개 보존).
@@ -111,7 +115,52 @@ if [[ -n "$SERVER_ENV" ]]; then
   echo "합친 키: $(grep -cE '^[A-Z]' "$SERVER_ENV")개 — 올린 server.env 는 이제 지워도 됩니다: rm $SERVER_ENV"
 fi
 
-step "3. 서비스 정지 · 코드 교체"
+step "3. DB 점검 · 배포 직전 백업 (서비스는 아직 돌고 있습니다)"
+DB_URL="$(tr -d '\r' < "$APP/.env.local" | grep -E '^DATABASE_URL=' | tail -1 | cut -d= -f2- | sed -E "s/^[\"']|[\"']\$//g")"
+PREDEPLOY_DUMP=""
+# 되돌릴 판 — 지금 설치하는 것 말고 가장 최근에 설치한 묶음 (아래에서 이 묶음의 시각을 갱신하기 전에 고른다)
+PREV_TGZ="$(ls -1t "$REL"/*.tgz 2>/dev/null | { grep -vxF "$REL/$NAME.tgz" || true; } | awk 'NR == 1')"
+if [[ "${SKIP_MIGRATE:-}" == "1" ]]; then
+  echo "SKIP_MIGRATE=1 — DB 점검과 백업을 건너뜁니다 (DB 를 덤프로 채우는 첫 설치용)"
+else
+  [[ -n "$DB_URL" ]] || { echo "✗ $APP/.env.local 에 DATABASE_URL 이 없습니다" >&2; exit 2; }
+  # 점검은 묶음에 든 스크립트로 한다 — 묶음의 마이그레이션 목록과 짝이 맞는다. 실패하면 여기서 멈추고
+  # 서비스는 그대로 돈다 (종료 코드 3 = 기준점 없음 · 4 = 실패한 마이그레이션 · 2 = DB 접속 불가)
+  set +e
+  check_out="$(bash "$STAGE/deploy/ncp/predeploy-check.sh" "$DB_URL" "$STAGE/prisma/migrations")"
+  check_rc=$?
+  set -e
+  [[ -n "$check_out" ]] && echo "$check_out"
+  if (( check_rc != 0 )); then
+    drop_copy
+    echo "✗ DB 점검에서 멈췄습니다 (코드 $check_rc) — 서비스와 코드는 그대로입니다. 위 안내대로 고친 뒤 다시 돌리세요." >&2
+    exit "$check_rc"
+  fi
+  PENDING="$(sed -n 's/^PENDING=//p' <<<"$check_out" | tail -1)"
+  if (( ${PENDING:-0} > 0 )); then
+    BACKUP_DIR="${BACKUP_DIR:-/var/backups/arcade-finder}"
+    mkdir -p "$BACKUP_DIR"
+    DB_MB=$(( $(psql -w -X -At "$DB_URL" -c "SELECT pg_database_size(current_database())") / 1048576 ))
+    BK_FREE_MB="$(df -Pm "$BACKUP_DIR" | awk 'NR == 2 {print $4}')"
+    # 덤프(-Fc)는 DB 크기보다 훨씬 작다. DB 크기만큼 여유가 있으면 넉넉하다
+    if (( BK_FREE_MB < DB_MB + 100 )); then
+      drop_copy
+      echo "✗ 배포 직전 백업을 둘 자리가 모자랍니다 — $BACKUP_DIR 남은 ${BK_FREE_MB}MB · DB ${DB_MB}MB. 서비스는 그대로입니다." >&2
+      exit 2
+    fi
+    PREDEPLOY_DUMP="$BACKUP_DIR/pre-deploy-$NAME-$(date +%Y%m%d%H%M%S).dump"
+    pg_dump -w -Fc --no-owner --dbname="$DB_URL" --file="$PREDEPLOY_DUMP.tmp"
+    mv "$PREDEPLOY_DUMP.tmp" "$PREDEPLOY_DUMP"
+    [[ -s "$PREDEPLOY_DUMP" ]] || { drop_copy; echo "✗ 배포 직전 덤프가 비었습니다 — 멈춥니다. 서비스는 그대로입니다." >&2; exit 1; }
+    echo "배포 직전 백업: $PREDEPLOY_DUMP ($(du -h "$PREDEPLOY_DUMP" | cut -f1))"
+    # 배포 직전 덤프는 3개만 남긴다 (매일 백업은 backup.sh 가 따로 7일치)
+    ls -1t "$BACKUP_DIR"/pre-deploy-*.dump 2>/dev/null | tail -n +4 | xargs -r rm -f
+  else
+    echo "적용할 마이그레이션이 없어 배포 직전 백업은 건너뜁니다 (매일 백업: /var/backups/arcade-finder)"
+  fi
+fi
+
+step "4. 서비스 정지 · 코드 교체"
 systemctl stop arcade-finder 2>/dev/null || true
 # 사용자 파일(uploads) · 운영 설정(.env.local) · 폴백 사본 자리(.pglite)는 교체 대상이 아니다
 rsync -a --delete \
@@ -123,7 +172,7 @@ chown -R arcade:arcade "$APP"
 rm -rf "$STAGE"
 cat "$APP/RELEASE" 2>/dev/null || true
 
-step "4. systemd unit"
+step "5. systemd unit"
 install -m 644 "$APP/deploy/arcade-finder.service" /etc/systemd/system/arcade-finder.service
 install -m 644 "$APP/deploy/arcade-finder-backup.service" /etc/systemd/system/arcade-finder-backup.service
 install -m 644 "$APP/deploy/arcade-finder-backup.timer" /etc/systemd/system/arcade-finder-backup.timer
@@ -132,16 +181,42 @@ systemctl enable arcade-finder arcade-finder-backup.timer >/dev/null 2>&1
 systemctl start arcade-finder-backup.timer
 
 if [[ "${SKIP_MIGRATE:-}" == "1" ]]; then
-  step "5. 마이그레이션 건너뜀 (SKIP_MIGRATE=1) — 서비스도 띄우지 않습니다"
+  step "6. 마이그레이션 건너뜀 (SKIP_MIGRATE=1) — 서비스도 띄우지 않습니다"
   echo "DB 를 채운 뒤 직접: sudo systemctl start arcade-finder"
   exit 0
 fi
 
-step "5. 마이그레이션 (prisma migrate deploy)"
-# prisma.config.ts 가 .env.local 을 스스로 읽는다 (DATABASE_URL)
-sudo -u arcade -H bash -c "cd '$APP' && npm run --silent db:migrate:prisma"
+step "6. 마이그레이션 (prisma migrate deploy)"
+# prisma.config.ts 가 .env.local 을 스스로 읽는다 (DATABASE_URL).
+# 실패하면 서비스는 멈춘 채다 — 그 자리에서 되돌리는 명령을 찍고 멈춘다. 마이그레이션 하나는 트랜잭션이라
+# 실패한 것은 대개 반쯤 남지 않지만, Prisma 는 그 이름을 "실패" 로 적어 두어 다음 deploy 를 막는다(P3009).
+if ! sudo -u arcade -H bash -c "cd '$APP' && npm run --silent db:migrate:prisma"; then
+  {
+    echo
+    echo "✗ 마이그레이션이 실패했습니다 — 서비스는 멈춰 있습니다. 위의 Prisma 오류를 먼저 읽으세요."
+    echo "  상태 보기:   cd $APP && sudo -u arcade -H npx prisma migrate status"
+    echo
+    echo "  ▶ 이전 판으로 되돌리기"
+    if [[ -n "$PREDEPLOY_DUMP" ]]; then
+      echo "    1) DB 를 배포 직전으로:  pg_restore -w --clean --if-exists --no-owner -d \"\$(grep ^DATABASE_URL= $APP/.env.local | cut -d= -f2-)\" $PREDEPLOY_DUMP"
+    else
+      echo "    1) 배포 직전 덤프가 없습니다(적용할 마이그레이션이 없다고 봤던 경우). 매일 백업: ls -lt /var/backups/arcade-finder"
+    fi
+    if [[ -n "$PREV_TGZ" ]]; then
+      echo "    2) 이전 코드로:          sudo SKIP_MIGRATE=1 bash $APP/deploy/ncp/install-release.sh $PREV_TGZ"
+      echo "    3) 서비스 시작:          sudo systemctl start arcade-finder"
+    else
+      echo "    2) 되돌릴 이전 묶음이 $REL 에 없습니다."
+    fi
+    echo
+    echo "  ▶ 고쳐서 다시 배포할 때는 실패 표시부터 지웁니다(DB 를 복원했으면 필요 없음):"
+    echo "       cd $APP && sudo -u arcade -H npx prisma migrate resolve --rolled-back <실패한 이름>"
+    echo "  자세한 것: $APP/deploy/README.md 「배포가 멈췄을 때」"
+  } >&2
+  exit 1
+fi
 
-step "6. 서비스 시작 · 확인"
+step "7. 서비스 시작 · 확인"
 systemctl start arcade-finder
 for i in $(seq 1 45); do
   code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health || true)"
