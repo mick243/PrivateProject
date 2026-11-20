@@ -56,7 +56,7 @@ DB 와 첫 데이터 (자세한 이유와 실측은 docs/DATA-SOURCES.md):
 ```bash
 sudo -u postgres createuser arcade --pwprompt
 sudo -u postgres createdb -O arcade arcade_finder
-npm run db:migrate:prisma                     # 스키마 + 기준 데이터 (마이그레이션 89개)
+npm run db:migrate:prisma                     # 스키마 + 기준 데이터 (prisma/migrations 전부)
 npm run db:views                              # 뷰 2개 (앱이 뜰 때도 만들어지지만 먼저 확인하려면)
 npm run db:purge-demo -- --apply              # 시드가 넣은 가상 오락실 8곳 · 시드 글 30개 치우기
 # 외부 원천 데이터(오락실 · maimai/CHUNITHM 곡·채보) — 개발 장비에서 export 한 폴더를 옮겨 와서:
@@ -112,6 +112,21 @@ sudo systemctl reload arcade-finder        # SIGHUP → 인스턴스를 하나�
 않습니다. 출시 전이면 신경 쓸 일이 아니고, 이미 사용자가 있다면 공지하고 한적한 시간에
 하세요. 순서를 반대로(코드 먼저, 마이그레이션 나중) 하면 `token_epoch` 이 없어 **모든
 로그인이 500 으로 깨집니다.**
+
+## 2-1. 배포가 멈췄을 때 (2026-11-20)
+
+`install-release.sh` 는 **서비스를 멈추기 전에** DB 를 점검합니다(`deploy/ncp/predeploy-check.sh`, 읽기만 함).
+아래 셋 중 앞의 둘은 서비스가 그대로 도는 채로 멈추므로 서두를 필요가 없습니다.
+
+| 멈춘 자리 | 뜻 | 할 일 |
+|---|---|---|
+| 3단계 · 코드 3 | 표는 있는데 `_prisma_migrations` 가 없다 — 기준점(베이스라인)이 없다. 그대로 deploy 하면 P3005 | 앱 폴더에서 `sudo -u arcade -H npm run db:prisma:baseline -- --dry-run` 으로 "표시 N · 미적용 M" 을 보고, 맞으면 `-- --dry-run` 없이. 그다음 설치를 다시 |
+| 3단계 · 코드 4 | 지난 배포에서 실패한 마이그레이션이 남았다. 그대로 deploy 하면 P3009 | 그 마이그레이션이 DB 에 남긴 것을 확인(배포 직전 덤프와 비교)한 뒤 `npx prisma migrate resolve --rolled-back <이름>`(되돌렸으면) 또는 `--applied`(손으로 끝냈으면) |
+| 6단계 | 마이그레이션이 실패했다. **서비스는 멈춰 있다** | 스크립트가 찍은 순서대로: ① `pg_restore` 로 배포 직전 덤프 복원 ② 이전 묶음을 `SKIP_MIGRATE=1` 로 설치 ③ `systemctl start arcade-finder`. 원인을 고쳐 다시 배포할 때는 실패 표시부터 `migrate resolve --rolled-back` |
+
+- **배포 직전 덤프**: 적용할 마이그레이션이 있을 때만 `/var/backups/arcade-finder/pre-deploy-<묶음>-<시각>.dump` 로 뜹니다(최근 3개). 매일 백업(`db-*.dump`, 7일)과 따로입니다.
+- **하지 말 것**: 적용된 마이그레이션 파일을 고치기(주석 포함) · `prisma migrate dev` / `migrate reset` · `db:init` / `db:reset` · 기준점 없는 DB 에 `SKIP_MIGRATE=1` 로 우회하기(서비스가 뜨지 않은 채 끝납니다).
+- 운영 DB 상태를 재는 명령(읽기만): `sudo -u arcade -H npx prisma migrate status` · `psql -c "SELECT count(*), max(migration_name), count(*) FILTER (WHERE finished_at IS NULL) FROM _prisma_migrations"`
 
 ## 3. 백업
 
