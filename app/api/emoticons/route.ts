@@ -13,8 +13,8 @@ import { detect, save } from '@/lib/uploads';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const TOO_LARGE = `이모티콘은 ${Math.round(EMOTICON_MAX_BYTES / 1024 / 1024)}MB 까지 올릴 수 있습니다`;
-const UNSUPPORTED = 'JPG · PNG · GIF 만 올릴 수 있습니다';
+const TOO_LARGE = `이모티콘은 ${Math.round(EMOTICON_MAX_BYTES / 1024 / 1024)}MB까지 올릴 수 있어요`;
+const UNSUPPORTED = 'JPG · PNG · GIF 그림만 올릴 수 있어요';
 
 /**
  * GET /api/emoticons — 고를 수 있는 이모티콘 전부.
@@ -50,11 +50,11 @@ async function onPost(request: Request) {
   try {
     form = await request.formData();
   } catch {
-    return fail(400, '업로드 본문을 읽을 수 없습니다');
+    return fail(400, '파일을 읽지 못했어요. 다시 올려 주세요');
   }
 
   const file = form.get('file');
-  if (!(file instanceof File)) return fail(400, 'file 이 필요합니다');
+  if (!(file instanceof File)) return fail(400, '올릴 파일을 골라 주세요');
   if (file.size > EMOTICON_MAX_BYTES) return fail(413, TOO_LARGE);
 
   const name = normalizeName(form.get('name'));

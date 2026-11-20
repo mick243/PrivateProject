@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const NOT_FOUND = () => notFound('오락실을 찾을 수 없습니다');
+const NOT_FOUND = () => notFound('오락실을 찾을 수 없어요. 지워졌을 수 있어요');
 
 async function onGet(request: Request, ctx: Ctx) {
   const id = parseId((await ctx.params).id);

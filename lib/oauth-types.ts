@@ -56,11 +56,11 @@ export const OAUTH_STATE_COOKIE = 'arcade_oauth_state';
  * 링크가 됩니다. 코드만 넘기고 문장은 화면이 고릅니다.
  */
 export const OAUTH_ERRORS = {
-  unconfigured: '아직 준비되지 않은 로그인 방식입니다 (관리자에게 문의해 주세요)',
-  state: '로그인 요청이 만료되었습니다. 다시 시도해 주세요',
-  denied: '소셜 로그인이 취소되었습니다',
-  provider: '소셜 로그인 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요',
-  suspended: '이용이 정지된 계정입니다. 문의는 개인정보처리방침의 연락처로 보내 주세요',
+  unconfigured: '이 로그인 방법은 아직 준비 중이에요. 아이디로 로그인해 주세요',
+  state: '로그인하는 데 시간이 너무 걸렸어요. 다시 시도해 주세요',
+  denied: '소셜 로그인을 취소했어요. 다시 하려면 아래 버튼을 눌러 주세요',
+  provider: '소셜 로그인 중에 문제가 생겼어요. 조금 뒤에 다시 시도해 주세요',
+  suspended: '이용이 정지된 계정이에요. 문의는 개인정보처리방침의 연락처로 보내 주세요',
 } as const;
 
 export type OAuthErrorCode = keyof typeof OAUTH_ERRORS;

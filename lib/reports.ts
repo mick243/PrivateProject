@@ -45,7 +45,7 @@ export interface CreateReportResult {
 /** 등록되지 않은 기종에 대기/컨디션 제보가 들어온 경우 */
 export class MachineNotAtArcadeError extends Error {
   constructor() {
-    super('그 오락실에 등록되지 않은 기종입니다. 먼저 "이 게임 있어요" 로 제보해 주세요.');
+    super('이 오락실에 아직 없는 게임이에요. 먼저 "이 게임 있어요"로 알려 주세요');
   }
 }
 
@@ -57,7 +57,7 @@ export class MachineNotAtArcadeError extends Error {
  */
 export class CabinetNotFoundError extends Error {
   constructor() {
-    super('그 기체를 찾을 수 없습니다. 목록이 바뀌었을 수 있으니 새로고침 후 다시 시도해 주세요.');
+    super('그 기계를 찾을 수 없어요. 목록이 바뀌었을 수 있으니 새로고침한 뒤 다시 알려 주세요');
   }
 }
 

@@ -14,7 +14,7 @@ export const REPORT_KIND_LABEL: Record<ReportKind, string> = {
   presence: '이 게임 있어요',
   absence: '없어졌어요',
   queue: '대기 인원',
-  condition: '기체 컨디션',
+  condition: '기계 상태',
 };
 
 export interface MachineReport {

@@ -183,6 +183,7 @@ sudo bash install-release.sh /root/release-<새것>.tgz
 | 관리자 비밀번호 | `/root/arcade-finder-secrets.env` (바꾸려면 `.env.local` 의 `ADMIN_PASSWORD` 수정 후 재시작) |
 | 패키지 업데이트 | `apt upgrade` 는 해도 되지만 **커널은 bootstrap 이 고정**해 둡니다 — NCP 가 Ubuntu 커널 업데이트를 지원하지 않습니다. `apt-mark unhold` 하지 마세요 |
 | 감시 (Grafana Cloud) | §9-5 |
+| 요청 수 (사이트로 온 모든 요청) | `sudo -u caddy node /srv/arcade-finder/app/arcade-finder/scripts/caddy-traffic.mjs --summary` — [10절](#10-요청-수-모니터링--사이트로-온-모든-요청) |
 
 ## 8. 문제가 생기면
 
@@ -325,3 +326,63 @@ sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/monitoring/install-mon
   `process-memory.sh` 가 1분마다 `/proc/<pid>/smaps_rollup` 의 PSS 를 프로세스 이름별로 더해 node_exporter 의 textfile
   폴더(`/var/lib/arcade-monitoring/textfile/processes.prom`)에 씁니다. PSS 는 같이 쓰는 메모리를 나눠 세므로 PostgreSQL 처럼
   프로세스가 여럿이어도 두 번 세지 않습니다. 1MB 가 안 되는 이름은 뺍니다.
+
+## 10. 요청 수 모니터링 — 사이트로 온 모든 요청
+
+앱 안의 Pulse 계측(`lib/telemetry.ts`)은 Next 핸들러까지 들어온 요청만 세고 `/_next/*` · `/api/health` 는 뺍니다.
+**Caddy 는 앱 앞에 있어서 나머지 전부를 봅니다** — 페이지 · 정적 파일 · 봇 · 스캐너 · 404, 그리고 앱이 죽었을 때 Caddy 가
+대신 돌려준 502/503. 그래서 Caddy 접근 로그를 읽는 집계기(`scripts/caddy-traffic.mjs`, 의존성 없음)를 앱과 **별개 프로세스**로 둡니다.
+요청 한 건 한 건은 저장하지 않고(IP · UA · 쿼리스트링은 집계에만 쓰고 버립니다) 30초 창의 건수만 남깁니다.
+
+**① 지금 바로 (Pulse 없이)** — 남아 있는 로그를 한 번 집계합니다.
+
+```bash
+sudo -u caddy node /srv/arcade-finder/app/arcade-finder/scripts/caddy-traffic.mjs --summary
+```
+
+기간 · 평균/피크 분당 요청 · 상태코드 비율 · 종류(페이지/api/정적/기타) · 봇 추정 · 경로별 상위 15 가 나옵니다.
+`caddy` 사용자로 돌리는 것이 중요합니다 — **Caddy 는 로그 파일을 기본 권한 600 으로 만들어서** 다른 사용자는 못 읽습니다.
+이 명령이 되면 ② 의 서비스도 같은 이유로 됩니다. ⚠ Caddyfile 이 로그를 10MiB × 5개(약 50MiB)만 남기니, 트래픽이 많으면
+며칠 치도 안 남습니다 — 오래 보려면 ② 로 Pulse 에 쌓으세요.
+
+**② 상주 + Pulse 로 보내기** — 한 번만 합니다. (`bootstrap.sh` · `install-release.sh` 는 이 서비스를 깔지 않습니다.)
+
+1. Pulse 대시보드에서 **새 AGENT 대상**(예: `arcade-finder-edge`)을 만들고 키를 받습니다. 앱 계측의 `PULSE_AGENT_KEY` 와
+   **같은 키를 쓰지 마세요** — 같은 대상에 섞으면 `app.http.*` 와 `edge.req.*` 가 한 차트에 뒤엉킵니다.
+2. 서버에서:
+
+```bash
+D=/srv/arcade-finder/app/arcade-finder/deploy
+sudo install -m 600 -o root $D/arcade-traffic.env.example /etc/arcade-traffic.env
+sudo nano /etc/arcade-traffic.env                       # PULSE_API_URL · PULSE_EDGE_KEY
+sudo cp $D/arcade-traffic.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now arcade-traffic
+journalctl -u arcade-traffic -n 20                      # "로그를 읽고 있습니다" 가 보이면 정상
+```
+
+서버가 Pulse 주소로 나갈 수 있는지 먼저 확인하세요: `curl -s -o /dev/null -w '%{http_code}\n' "$PULSE_API_URL/health"`.
+Pulse 를 같은 서버에 올리지는 마세요 — Pulse 는 Postgres · Redis · API · worker · web 스택이고, 이 서버는 앱 + DB 만으로 피크에 515MB 입니다.
+
+**Pulse 에 생기는 지표** (이름이 곧 계약입니다 — 64자 · 마지막 점 뒤가 통계 이름)
+
+| 지표 | 뜻 |
+|---|---|
+| `edge.req.rpm` | 전체 요청 수 (분당) |
+| `edge.req.2xx` `3xx` `4xx` `5xx` | 그 30초 창의 상태코드별 건수 |
+| `edge.req.p95_ms` | Caddy 가 요청을 받아 응답을 다 쓸 때까지 잰 시간 p95. 앞단에서 본 시간이라 앱 안 계측(`app.http.p95_ms`)보다 크게 나오는 게 정상 |
+| `edge.kind.page` `api` `static` `other` `.rpm` | 종류별 분당 요청. 404 는 경로와 무관하게 `other` |
+| `edge.bot.rpm` | 봇 · 스크립트 추정 (UA 기준이라 **추정치**) |
+| `edge.route.<METHOD /경로/[id]>.rpm` `.5xx` | 페이지 · API 경로별. 정적 파일은 경로별로 안 셈. 404 는 `(404)` 하나, 종류가 150개를 넘으면 `(other)` |
+| `edge.log.ok` | 1 = 로그를 읽는 중, **0 = 못 읽음**(권한 · 경로) |
+
+**알림 룰 후보** — 요청이 0건인 창에도 기본 지표를 전부 보냅니다. 그래서 "조용한 것" 과 "수집기가 죽은 것" 이 갈립니다.
+
+| 룰 | 잡는 것 |
+|---|---|
+| `edge.req.5xx > 0` (forSec 60 안팎) | 사용자가 5xx 를 받고 있음 — **앱이 죽어서 앱 계측이 침묵할 때도** 잡힌다 |
+| `edge.log.ok < 1` | 수집기가 로그를 못 읽음 (Caddy 로그 경로 · 권한이 바뀜) |
+| 수집기 하트비트 | Pulse 가 침묵을 `target.up` 으로 만들어 준다 — 수집기 프로세스가 죽었을 때 |
+| `edge.req.rpm` 급락 | 평소 트래픽이 있는 사이트에서 갑자기 0 에 가까움 (DNS · 인증서 · ACG 문제) |
+
+⚠ 로그가 회전(10MiB 마다)하는 순간 옛 파일에서 못 읽은 마지막 1초 안팎의 줄은 놓칩니다. 요청 수 추세에는 영향이 없는 크기입니다.
+⚠ 서버를 키워 앱 인스턴스가 2개 이상이 돼도 이 집계기는 **하나만** 있으면 됩니다 (Caddy 로그는 하나) — 앱 계측과 달리 인스턴스별 이름 충돌이 없습니다.

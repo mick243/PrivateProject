@@ -177,7 +177,7 @@ export interface PostDetail extends Omit<PostSummary, 'excerpt' | 'thumbnail'> {
 
 /** 목록 정렬 */
 export const POST_SORTS = [
-  { key: 'recent', label: '최신' },
+  { key: 'recent', label: '최신순' },
   { key: 'popular', label: '인기글' },
 ] as const;
 

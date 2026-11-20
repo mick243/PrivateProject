@@ -3,7 +3,7 @@ import SignupForm from '@/components/SignupForm';
 
 export const metadata = {
   title: '회원가입',
-  description: '아이디·비밀번호 또는 소셜 계정으로 가입',
+  description: '아이디와 비밀번호, 또는 소셜 계정으로 가입해요',
 };
 
 export default function Page() {

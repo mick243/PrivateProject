@@ -16,7 +16,14 @@ export default function StarRating({ value, onChange, disabled }: Props) {
 
   if (!onChange) {
     return (
-      <span className="stars" aria-label={value === null ? '평가 없음' : `${value} / 5`}>
+      // 평균(4.3333…)이 그대로 읽히지 않게 소수 한 자리로 줄여 읽는다
+      <span
+        className="stars"
+        role="img"
+        aria-label={
+          value === null ? '아직 평점이 없어요' : `5점 만점에 ${Math.round(value * 10) / 10}점`
+        }
+      >
         {STARS.map((s) => (
           <i key={s} className={s <= filled ? 'star is-on' : 'star'}>
             ★
@@ -35,7 +42,7 @@ export default function StarRating({ value, onChange, disabled }: Props) {
           className={s <= filled ? 'star is-on' : 'star'}
           disabled={disabled}
           onClick={() => onChange(s)}
-          aria-label={`${s}점`}
+          aria-label={`${s}점 주기`}
         >
           ★
         </button>

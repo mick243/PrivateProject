@@ -102,7 +102,7 @@ export function isVideoMime(mime: string): boolean {
 
 export class UnsupportedUploadError extends Error {
   constructor() {
-    super('사진(JPEG · PNG · GIF · WebP) 또는 동영상(MP4 · MOV) 만 올릴 수 있습니다');
+    super('사진(JPEG · PNG · GIF · WebP)이나 동영상(MP4 · MOV)만 올릴 수 있어요');
   }
 }
 
@@ -112,8 +112,8 @@ export class UploadTooLargeError extends Error {
   constructor(kind?: FileKind) {
     super(
       kind
-        ? `${isVideoMime(kind.mime) ? '동영상' : '사진'}은 ${mb(kind.maxBytes)}MB 까지 올릴 수 있습니다`
-        : `첨부는 ${mb(MAX_UPLOAD_BYTES)}MB 까지 올릴 수 있습니다`,
+        ? `${isVideoMime(kind.mime) ? '동영상' : '사진'}은 ${mb(kind.maxBytes)}MB까지 올릴 수 있어요`
+        : `첨부는 ${mb(MAX_UPLOAD_BYTES)}MB까지 올릴 수 있어요`,
     );
   }
 }

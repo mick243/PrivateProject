@@ -53,14 +53,35 @@ function sameForm(a: OpenForm, b: OpenForm): boolean {
   return a.kind === 'condition' && b.kind === 'condition' ? a.cabinetId === b.cabinetId : true;
 }
 
+/**
+ * 제보 뒤 한 줄. "제보 1/3" 같은 분수 대신 **남은 인원**을 말한다 — 몇 명이 더
+ * 있어야 하는지가 사람이 알고 싶은 값이다 (docs/DESIGN-GUIDE.md §2-8).
+ * 남은 인원이 0 인데 반영이 안 됐으면(이미 목록에 있던 게임 등) 고맙다는 말만 한다.
+ */
 function outcomeMessage(kind: ReportKind, outcome: PresenceOutcome, support: number, need: number) {
-  if (outcome === 'added') return '제보가 모여 보유 기종에 반영되었습니다.';
-  if (outcome === 'removed') return '제보가 모여 보유 기종에서 제외되었습니다.';
+  if (outcome === 'added') return '알려 줘서 고마워요! 이제 게임 목록에 들어갔어요';
+  if (outcome === 'removed') return '알려 줘서 고마워요! 게임 목록에서 빠졌어요';
   if (kind === 'presence' || kind === 'absence') {
-    return `제보 ${support}/${need} — ${need}명이 모이면 자동 반영됩니다.`;
+    const left = Math.max(0, need - support);
+    return left > 0
+      ? `알려 줘서 고마워요! ${left}명이 더 알려 주면 바로 반영돼요`
+      : '알려 줘서 고마워요!';
   }
-  return '제보가 등록되었습니다. 감사합니다!';
+  return '알려 줘서 고마워요! 다음 사람이 바로 볼 수 있어요';
 }
+
+/**
+ * 대기 제보 버튼에 넣을 값 — '대기 3명으로 알리기'. 누르기 전에 무엇이 나갈지 보인다.
+ * '12명+' 는 뒤에 조사를 붙일 수 없어 '12명 이상' 으로 읽는다. 그러면 없음·N명·이상
+ * 모두 받침으로 끝나 조사가 늘 '으로' 다.
+ */
+function waitSubmitLabel(count: number): string {
+  const label = waitChoiceLabel(count);
+  return `대기 ${label.endsWith('+') ? `${label.slice(0, -1)} 이상` : label}으로 알리기`;
+}
+
+/** 연결이 끊겨 fetch 자체가 못 나간 경우의 고정 문구 (docs/DESIGN-GUIDE.md §4) */
+const NETWORK_ERROR = '연결이 잠깐 끊겼어요. 다시 시도해 주세요';
 
 /**
  * memo 인 이유: 부모(ArcadeFinder)는 GPS 좌표·지도 이동(idle)·검색어 타이핑마다
@@ -100,7 +121,7 @@ function ArcadeDetailPanel({
    * 열지 않는 대다수가 그 값을 치릅니다 (lib/arcades.ts listMachineGuesses).
    */
   const [guesses, setGuesses] = useState<MachineGuess[]>([]);
-  /** "AI 로 기종 찾기" 가 도는 중인가 — 검색 두 번에 몇 초가 걸려 단추를 잠가야 합니다 */
+  /** "AI로 게임 찾기" 가 도는 중인가 — 검색 두 번에 몇 초가 걸려 단추를 잠가야 합니다 */
   const [guessing, setGuessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newMachineId, setNewMachineId] = useState<number | ''>('');
@@ -109,10 +130,17 @@ function ArcadeDetailPanel({
     try {
       const res = await fetch(`/api/arcades/${arcade.id}/reports?limit=20`);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? '최근 제보를 불러오지 못했습니다');
+      if (!res.ok) throw new Error(data.error ?? '최근 제보를 불러오지 못했어요. 다시 시도해 주세요');
       setReports((data.reports as MachineReport[]) ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '최근 제보를 불러오지 못했습니다');
+      // fetch 가 못 나가면 TypeError('Failed to fetch') 다 — 영어 원문을 그대로 띄우지 않는다
+      setError(
+        e instanceof TypeError
+          ? NETWORK_ERROR
+          : e instanceof Error
+            ? e.message
+            : '최근 제보를 불러오지 못했어요. 다시 시도해 주세요',
+      );
     }
   }, [arcade.id]);
 
@@ -166,7 +194,7 @@ function ArcadeDetailPanel({
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? '제보에 실패했습니다');
+        setError(data.error ?? '제보를 보내지 못했어요. 다시 시도해 주세요');
         return;
       }
 
@@ -186,7 +214,7 @@ function ArcadeDetailPanel({
       if (data.arcade) onArcadeChanged(data.arcade as Arcade);
       await loadReports();
     } catch {
-      setError('네트워크 오류');
+      setError(NETWORK_ERROR);
     } finally {
       setBusy(false);
     }
@@ -197,16 +225,16 @@ function ArcadeDetailPanel({
    * 20건짜리 고정 목록이라, 한 줄이 빠지면 그 자리를 다음 제보가 채워야 한다.
    */
   const removeReport = async (r: MachineReport) => {
-    if (!confirm(`${r.machineShortName} 제보를 삭제할까요?`)) return;
+    if (!confirm(`${r.machineShortName} 제보를 지울까요? 되돌릴 수 없어요.`)) return;
     setError(null);
     setNotice(null);
     const res = await fetch(`/api/reports/${r.id}`, { method: 'DELETE' });
     if (!res.ok && res.status !== 404) {
       const data = await res.json().catch(() => null);
-      setError(data?.error ?? '삭제에 실패했습니다');
+      setError(data?.error ?? '제보를 지우지 못했어요. 다시 시도해 주세요');
       return;
     }
-    setNotice('제보를 삭제했습니다. 이미 반영된 보유 기종은 오락실 수정에서 되돌리세요.');
+    setNotice('제보를 지웠어요. 이미 반영된 게임 목록은 오락실 수정에서 고쳐 주세요');
     await loadReports();
   };
 
@@ -223,15 +251,15 @@ function ArcadeDetailPanel({
       const res = await fetch(`/api/arcades/${arcade.id}/guesses`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error ?? '검색에 실패했습니다');
+        setError(data.error ?? '검색하지 못했어요. 잠시 뒤 다시 시도해 주세요');
         return;
       }
       setGuesses((data.guesses as MachineGuess[]) ?? []);
       /*
         found 는 검색이 찾은 수, fresh 는 그중 상자에 실제로 뜨는 수입니다. 이미
         제보로 확정된 기종은 추정 목록에서 빠지므로(lib/arcades.ts listMachineGuesses)
-        둘이 다를 수 있고, 전부 겹치면 상자가 아예 뜨지 않습니다. 그 경우 "3개를
-        찾았습니다" 라고만 말하면 아무것도 안 나온 화면과 어긋나 검색이 헛돈 것처럼
+        둘이 다를 수 있고, 전부 겹치면 상자가 아예 뜨지 않습니다. 그 경우 "게임 3개를
+        찾았어요" 라고만 말하면 아무것도 안 나온 화면과 어긋나 검색이 헛돈 것처럼
         보입니다 — 실은 이미 아는 것과 맞아떨어진, 나쁘지 않은 결과입니다.
       */
       const found = Number(data.found ?? 0);
@@ -241,24 +269,24 @@ function ArcadeDetailPanel({
         // 내가 누르기 전에 이미 돌려 본 곳이다. 검색은 나가지 않았고 한도도 쓰지 않았다.
         setNotice(
           fresh > 0
-            ? '이미 만들어 둔 추정이 있어 검색 없이 보여 드립니다.'
-            : '전에 검색해 본 곳입니다. 찾은 기종이 모두 이미 등록돼 있어 새로 뜨는 것은 없습니다.',
+            ? '전에 찾아 둔 게임이 있어서 바로 보여 드려요'
+            : '전에 찾아본 곳이에요. 찾은 게임이 모두 이미 목록에 있어요',
         );
       } else if (!data.searched) {
-        setNotice('검색이 돌지 않아 추정을 만들지 못했습니다. 잠시 뒤 다시 눌러 보세요.');
+        setNotice('검색이 되지 않아 게임을 찾지 못했어요. 잠시 뒤 다시 눌러 주세요');
       } else if (found === 0) {
-        setNotice('검색은 됐지만 근거가 있는 기종을 찾지 못했습니다.');
+        setNotice('검색해 봤지만 근거가 있는 게임은 찾지 못했어요. 다녀왔다면 아래에서 알려 주세요');
       } else if (fresh === 0) {
-        setNotice(`검색으로 ${found}개 기종을 찾았지만 모두 이미 등록된 기종이라 새로 뜨는 것은 없습니다.`);
+        setNotice(`게임 ${found}개를 찾았는데, 모두 이미 목록에 있어요`);
       } else if (already > 0) {
         setNotice(
-          `검색으로 ${found}개 기종을 찾았습니다. ${already}개는 이미 등록돼 있어, 새로 뜬 것은 ${fresh}개입니다.`,
+          `게임 ${found}개를 찾았어요. ${already}개는 이미 목록에 있어서 새로 찾은 ${fresh}개만 보여 드려요`,
         );
       } else {
-        setNotice(`검색으로 ${found}개 기종을 추정했습니다. 맞는지 아래 제보로 확인해 주세요.`);
+        setNotice(`게임 ${found}개를 찾았어요. 맞다면 아래에서 알려 주세요`);
       }
     } catch {
-      setError('네트워크 오류');
+      setError(NETWORK_ERROR);
     } finally {
       setGuessing(false);
     }
@@ -287,10 +315,10 @@ function ArcadeDetailPanel({
             <button
               type="button"
               className="btn btn-sm locate-btn"
-              title="지도를 이 오락실로 옮깁니다"
+              title="지도를 이 오락실로 옮겨요"
               onClick={onLocate}
             >
-              위치
+              지도에서 보기
             </button>
           </div>
           <p className="muted small">{arcade.address}</p>
@@ -306,7 +334,7 @@ function ArcadeDetailPanel({
                 ? '24시간'
                 : arcade.openTime && arcade.closeTime
                   ? `${arcade.openTime} ~ ${arcade.closeTime}`
-                  : '영업시간 정보 없음'}
+                  : '영업시간은 아직 몰라요'}
             </span>
             {arcade.phone && <span className="dot-sep">{arcade.phone}</span>}
             {arcade.homepage && /^https?:\/\//i.test(arcade.homepage) && (
@@ -363,6 +391,10 @@ function ArcadeDetailPanel({
               type="button"
               className={`fav-btn fav-btn-lg ${favorites.isFavorite(arcade.id) ? 'is-on' : ''}`}
               aria-pressed={favorites.isFavorite(arcade.id)}
+              // 별 글자만 있는 단추라 이름이 따로 있어야 한다 (docs/DESIGN-GUIDE.md §3-6)
+              aria-label={
+                favorites.isFavorite(arcade.id) ? '즐겨찾기에서 빼기' : '즐겨찾기에 담기'
+              }
               title={
                 favorites.isFavorite(arcade.id) ? '즐겨찾기에서 빼기' : '즐겨찾기에 담기'
               }
@@ -385,7 +417,7 @@ function ArcadeDetailPanel({
           // 이 오락실의 기종을 아무도 아직 안 알려 줬다는 뜻이다. 바로 아래가
           // 제보 칸이므로, 없다는 말 대신 그 칸을 가리킨다.
           <p className="muted small">
-            아직 등록된 기종이 없습니다. 이곳에서 본 기종을 아래에서 골라 알려 주세요.
+            아직 아무도 게임을 알려 주지 않았어요. 여기서 본 게임을 아래에서 골라 알려 주세요
           </p>
         ) : null}
 
@@ -412,19 +444,22 @@ function ArcadeDetailPanel({
               className="btn btn-sm"
               disabled={guessing}
               onClick={runGuess}
-              title="이 오락실의 보유 기종을 검색으로 추정합니다 (구글 검색 1회)"
+              title="AI가 인터넷 검색으로 이 오락실에 있는 게임을 찾아요"
             >
-              {guessing ? '검색 중…' : guesses.length > 0 ? 'AI 로 다시 찾기' : 'AI 로 기종 찾기'}
+              {guessing ? '찾는 중…' : guesses.length > 0 ? 'AI로 다시 찾기' : 'AI로 게임 찾기'}
             </button>
-            <span className="muted small">{isAdmin ? '관리자 · 한도 없음' : '하루 1회'}</span>
+            {/* 한도는 비용 사정이지만 사람에게는 "몇 번 누를 수 있나" 로 말한다 */}
+            <span className="muted small">
+              {isAdmin ? '관리자는 횟수 제한 없음' : '하루 한 번 쓸 수 있어요'}
+            </span>
           </div>
         )}
 
         {guesses.length > 0 && (
           <div className="guess-box">
             <p className="guess-head">
-              <span className="guess-tag">AI 추정</span>
-              검색으로 찾은 것이라 틀릴 수 있습니다. 가 보신 적 있다면 아래에서 알려 주세요.
+              <span className="guess-tag">AI가 찾은 게임</span>
+              검색으로 찾아서 틀릴 수 있어요. 다녀왔다면 아래에서 알려 주세요
             </p>
             <ul className="guess-list">
               {guesses.map((g) => (
@@ -477,15 +512,16 @@ function ArcadeDetailPanel({
 
       <div className="section">
         {missing.length === 0 ? (
-          <p className="muted small">기종 마스터의 모든 게임이 이미 등록돼 있습니다.</p>
+          <p className="muted small">고를 수 있는 게임이 모두 이미 목록에 있어요</p>
         ) : (
           <div className="presence-row">
             <select
               value={newMachineId}
               onChange={(e) => setNewMachineId(e.target.value ? Number(e.target.value) : '')}
               disabled={busy}
+              aria-label="여기서 본 게임"
             >
-              <option value="">기종 선택</option>
+              <option value="">게임 고르기</option>
               {/*
                 칩·뱃지는 줄임말(사볼)인데 여기만 정식 명칭(SOUND VOLTEX)이라, 필터에서
                 고른 게임을 이 목록에서 다시 찾아야 했다 (2026-09-13 UX 점검).
@@ -497,25 +533,28 @@ function ArcadeDetailPanel({
                 </option>
               ))}
             </select>
+            {/* 상세 패널에 늘 보이는 줄이라 주 버튼 무게를 주지 않습니다 — 주 버튼은 지금 열린
+                제보 폼 하나에만 (docs/DESIGN-GUIDE.md §1-2). 게임을 고르기 전에는 꺼져 있습니다. */}
             <button
               type="button"
-              className="btn btn-primary btn-sm"
+              className="btn btn-sm"
               disabled={busy || newMachineId === ''}
               onClick={() => submit({ machineId: Number(newMachineId), kind: 'presence' })}
             >
-              제보
+              {/* 제보 종류 이름(REPORT_KIND_LABEL.presence)과 같은 말 — 목록 빈 화면도 이 말을 부른다 */}
+              이 게임 있어요 알리기
             </button>
           </div>
         )}
         <p className="hint">
-          서로 다른 사람의 제보가 모이면 자동으로 보유 기종에 반영됩니다.
-          {!playerId && ' 익명 제보는 기록만 남고 자동 반영에는 세지 않습니다.'}
+          여러 사람이 알려 주면 게임 목록에 바로 반영돼요
+          {!playerId && '. 익명 제보는 기록만 남고 반영 인원에는 세지 않아요'}
         </p>
       </div>
 
       <div className="section">
         {reports.length === 0 ? (
-          <p className="muted small">아직 제보가 없습니다.</p>
+          <p className="muted small">아직 제보가 없어요. 다녀왔다면 위에서 알려 주세요</p>
         ) : (
           <ul className="feed feed-compact">
             {reports.map((r) => (
@@ -530,7 +569,7 @@ function ArcadeDetailPanel({
                   {r.kind === 'queue' &&
                     r.waitCount !== null &&
                     ` 대기 ${waitCountLabel(r.waitCount)}`}
-                  {r.kind === 'condition' && ` 컨디션 ${r.condition}/5`}
+                  {r.kind === 'condition' && ` 상태 ${r.condition}/5`}
                   {r.comment && <em className="feed-memo">{r.comment}</em>}
                 </span>
                 <span className="muted small feed-meta">
@@ -539,10 +578,10 @@ function ArcadeDetailPanel({
                     <button
                       type="button"
                       className="btn btn-sm btn-danger feed-del"
-                      title="이 제보를 삭제합니다 (관리자)"
+                      title="이 제보 지우기"
                       onClick={() => void removeReport(r)}
                     >
-                      삭제
+                      지우기
                     </button>
                   )}
                 </span>
@@ -607,7 +646,7 @@ function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFor
           className={queueOpen ? 'btn btn-sm btn-on' : 'btn btn-sm'}
           onClick={() => onToggle(queueForm)}
         >
-          대기 제보
+          대기 알리기
         </button>
         <button
           type="button"
@@ -615,7 +654,7 @@ function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFor
           disabled={busy}
           onClick={() => onSubmit({ machineId: machine.id, kind: 'absence' })}
         >
-          없어졌어요
+          없어졌다고 알리기
         </button>
       </div>
 
@@ -635,7 +674,7 @@ function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFor
             aria-label="대기 인원"
             onChange={(e) => onDraftWait(e.target.value === '' ? null : Number(e.target.value))}
           >
-            <option value="">인원 선택</option>
+            <option value="">인원 고르기</option>
             {WAIT_CHOICES.map((n) => (
               <option key={n} value={n}>
                 {waitChoiceLabel(n)}
@@ -645,10 +684,13 @@ function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFor
           <input
             type="text"
             placeholder="한 줄 메모 (선택)"
+            aria-label="한 줄 메모"
             maxLength={REPORT_COMMENT_MAX}
             value={memo}
             onChange={(e) => onMemo(e.target.value)}
           />
+          {/* 고른 값이 버튼에 들어간다 — 누르기 전에 무엇이 나갈지 보인다.
+              그래서 옆에 따로 '먼저 고르세요 / 메모는 선택' 을 적지 않는다. */}
           <div className="form-actions">
             <button
               type="button"
@@ -658,11 +700,8 @@ function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFor
                 onSubmit({ machineId: machine.id, kind: 'queue', waitCount: draftWait })
               }
             >
-              대기 제보
+              {draftWait === null ? '인원을 골라 주세요' : waitSubmitLabel(draftWait)}
             </button>
-            <span className="muted small">
-              {draftWait === null ? '인원을 먼저 고르세요' : '메모는 선택입니다'}
-            </span>
           </div>
         </div>
       )}
@@ -704,14 +743,14 @@ function CabinetCard({
             뜻으로 읽히기 쉽다. */}
         <ConditionBadge summary={cabinet.conditionSummary} />
         {cabinet.conditionSummary === null && (
-          <span className="muted small">컨디션 정보 없음</span>
+          <span className="muted small">상태는 아직 몰라요</span>
         )}
         <button
           type="button"
           className={isOpen ? 'btn btn-sm btn-on cabinet-btn' : 'btn btn-sm cabinet-btn'}
           onClick={() => onToggle(form)}
         >
-          컨디션 제보
+          상태 알리기
         </button>
       </div>
 
@@ -719,7 +758,7 @@ function CabinetCard({
         <div className="report-form">
           <p className="muted small">
             {cabinet.cabinetNo}호기 상태 (5 = 최상)
-            {draftCondition !== null && <strong className="picked"> {draftCondition}/5 선택</strong>}
+            {draftCondition !== null && <strong className="picked"> {draftCondition}점 고름</strong>}
           </p>
           {/* 대기와 달리 누르면 '선택'만 된다. 등록은 아래 버튼으로 —
               그 사이에 메모를 쓸 수 있어야 하기 때문이다. */}
@@ -740,10 +779,12 @@ function CabinetCard({
           <input
             type="text"
             placeholder="한 줄 메모 (선택)"
+            aria-label="한 줄 메모"
             maxLength={REPORT_COMMENT_MAX}
             value={memo}
             onChange={(e) => onMemo(e.target.value)}
           />
+          {/* 대기 폼과 같다 — 고른 점수가 버튼에 들어가므로 옆 안내는 두지 않는다 */}
           <div className="form-actions">
             <button
               type="button"
@@ -758,11 +799,10 @@ function CabinetCard({
                 })
               }
             >
-              {cabinet.cabinetNo}호기 컨디션 제보
+              {draftCondition === null
+                ? '상태를 골라 주세요'
+                : `${cabinet.cabinetNo}호기 상태 ${draftCondition}점으로 알리기`}
             </button>
-            <span className="muted small">
-              {draftCondition === null ? '상태를 먼저 고르세요' : '메모는 선택입니다'}
-            </span>
           </div>
         </div>
       )}

@@ -10,6 +10,13 @@ import {
   type ThemeChoice,
 } from '@/lib/theme';
 
+/** 누르면 그 테마가 될 때 단추가 말할 동사구 (조사가 이름마다 달라 문장째 둡니다) */
+const TOGGLE_ACTIONS: Record<ThemeChoice, string> = {
+  system: '색 테마를 시스템 설정에 맞추기',
+  light: '색 테마를 라이트로 바꾸기',
+  dark: '색 테마를 다크로 바꾸기',
+};
+
 /**
  * 색 테마 전환 — 시스템 설정 / 라이트 / 다크를 돌아가며 고릅니다.
  *
@@ -73,17 +80,19 @@ export default function ThemeToggle() {
     }
   };
 
-  const label = `색 테마: ${THEME_LABELS[choice]}`;
+  const next = nextChoice(choice);
+  // 토글의 이름은 지금 상태가 아니라 **누르면 일어날 일**입니다 (docs/DESIGN-GUIDE.md §3-6).
+  const label = TOGGLE_ACTIONS[next];
 
   return (
     <button
       type="button"
       className="theme-toggle"
-      // 지금 무엇인지와 누르면 무엇이 되는지를 함께 말해 준다 — 기호만으로는
+      // 누르면 무엇이 되는지와 지금 무엇인지를 함께 말해 준다 — 기호만으로는
       // '◐' 가 시스템 설정이라는 걸 알 수 없다.
-      title={`${label} (누르면 ${THEME_LABELS[nextChoice(choice)]})`}
+      title={`${label} (지금은 ${THEME_LABELS[choice]})`}
       aria-label={label}
-      onClick={() => pick(nextChoice(choice))}
+      onClick={() => pick(next)}
     >
       {/* 값을 읽기 전에는 기호가 한 번 바뀌어 보일 수 있으므로 자리만 잡아 둔다 */}
       <span aria-hidden="true">{ready ? THEME_GLYPHS[choice] : ''}</span>

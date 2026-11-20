@@ -13,7 +13,7 @@ import './fonts/pretendard/pretendardvariable-dynamic-subset.css';
 import './globals.css';
 
 const TITLE = '오락실 파인더';
-const DESCRIPTION = '내 주변 오락실 위치 · 보유 기종 · 실시간 대기 제보를 모으는 크라우드소싱 지도와 리듬게임 커뮤니티';
+const DESCRIPTION = '내 주변 오락실 위치 · 있는 게임 · 실시간 대기 제보를 함께 모으는 지도와 리듬게임 커뮤니티';
 
 export const metadata: Metadata = {
   // 상대 경로(OG 이미지·canonical)를 절대 주소로 바꾸는 기준. 운영은 APP_URL 필수.

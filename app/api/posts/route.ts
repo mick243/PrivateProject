@@ -53,7 +53,7 @@ async function onPost(request: Request) {
     // 없는 말머리(board_categories FK) 나 없는 기종/플레이어. 값 검증은 DB 가
     // 하고 있으므로, 위반을 500 이 아니라 400 으로 바꿔 준다.
     if (isForeignKeyViolation(err)) {
-      return fail(400, '말머리 또는 게임을 다시 확인해 주세요');
+      return fail(400, '말머리나 게임을 다시 골라 주세요');
     }
     throw err;
   }

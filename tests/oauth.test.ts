@@ -311,7 +311,7 @@ describe('safeNext — 로그인 뒤 돌아갈 곳', () => {
 describe('oauthErrorMessage — 문장은 화면이 고른다', () => {
   it('아는 코드는 그 안내를, 모르는 코드는 일반 안내를 준다', () => {
     expect(oauthErrorMessage('denied')).toContain('취소');
-    expect(oauthErrorMessage('unconfigured')).toContain('준비되지 않은');
+    expect(oauthErrorMessage('unconfigured')).toContain('준비 중');
     expect(oauthErrorMessage('<script>')).toBe(oauthErrorMessage('provider'));
     expect(oauthErrorMessage(null)).toBeNull();
   });

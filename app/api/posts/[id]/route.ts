@@ -12,9 +12,9 @@ export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const NOT_FOUND = () => notFound('글을 찾을 수 없습니다');
+const NOT_FOUND = () => notFound('글을 찾을 수 없어요. 지워졌을 수 있어요');
 /** 남의 글을 고치거나 지우려는 경우. 존재 여부는 알려주되 권한은 막는다. */
-const NOT_MINE = () => forbidden('본인이 쓴 글만 수정·삭제할 수 있습니다');
+const NOT_MINE = () => forbidden('내가 쓴 글만 고치거나 지울 수 있어요');
 
 /**
  * GET /api/posts/:id?view=1&commentOffset=10
@@ -67,7 +67,7 @@ async function onPut(request: Request, ctx: Ctx) {
     return NextResponse.json({ post: await getPost(id, guard.playerId) });
   } catch (err) {
     if (isForeignKeyViolation(err)) {
-      return fail(400, '말머리 또는 게임을 다시 확인해 주세요');
+      return fail(400, '말머리나 게임을 다시 골라 주세요');
     }
     throw err;
   }

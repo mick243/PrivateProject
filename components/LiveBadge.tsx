@@ -67,15 +67,16 @@ export function ConditionBadge({ summary }: { summary: CabinetCondition | null }
       className={`cond-live cond-${value}`}
       title={
         reports > 0
-          ? `등록 컨디션 + 제보 ${reports}건 종합${
+          ? `처음 적힌 상태와 제보 ${reports}건을 합친 값${
               reportedAt ? ` · 최근 제보 ${timeAgo(reportedAt)}` : ''
             }`
-          : '등록 컨디션 (아직 제보 없음)'
+          : '오락실을 추가할 때 적은 상태예요. 아직 제보가 없어요'
       }
     >
-      컨디션 {value}/5
-      {/* 몇 사람이 확인한 값인지가 숫자만큼 중요하다. 등록값뿐이면 그렇다고 적는다. */}
-      <em>{reports > 0 ? `${reports}건` : '등록값'}</em>
+      상태 {value}/5
+      {/* 몇 사람이 확인한 값인지가 숫자만큼 중요하다. 등록값뿐이면 그렇다고 적는다.
+          ('등록값' 은 사람에게 낯선 말이라 화면에는 '제보 없음' 으로 쓴다) */}
+      <em>{reports > 0 ? `${reports}건` : '제보 없음'}</em>
     </span>
   );
 }

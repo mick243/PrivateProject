@@ -34,11 +34,14 @@ import Pagination from './Pagination';
 const ACCEPT = 'image/jpeg,image/png,image/gif';
 const MB = Math.round(EMOTICON_MAX_BYTES / 1024 / 1024);
 
+/** 줄 단추가 '빼기' · '되살리기' 라 상태 이름도 같은 말을 쓴다 (DESIGN-GUIDE §2-6) */
 const STATUS_LABEL: Record<EmoticonStatus, string> = {
   live: '쓰는 중',
-  deleted: '지운 것',
+  deleted: '뺀 것',
   all: '전체',
 };
+
+const NETWORK_ERROR = '연결이 잠깐 끊겼어요. 다시 시도해 주세요';
 
 type ListState =
   | { kind: 'loading' }
@@ -86,13 +89,13 @@ export default function EmoticonAdmin() {
     try {
       const res = await fetch(`/api/emoticons/admin?${sp}`, { cache: 'no-store' });
       if (!res.ok) {
-        setList({ kind: 'failed', message: await errorOf(res, '목록을 불러오지 못했습니다') });
+        setList({ kind: 'failed', message: await errorOf(res, '목록을 불러오지 못했어요.') });
         return;
       }
       const data = (await res.json()) as { rows: EmoticonAdminRow[]; total: number };
       setList({ kind: 'ready', rows: data.rows, total: data.total });
     } catch {
-      setList({ kind: 'failed', message: '네트워크 오류' });
+      setList({ kind: 'failed', message: NETWORK_ERROR });
     }
   }, [status, page, q]);
 
@@ -134,7 +137,9 @@ export default function EmoticonAdmin() {
     const deleting = row.deletedAt === null;
     if (
       deleting &&
-      !window.confirm(`'${row.name}' 을(를) 목록에서 뺄까요?\n이미 쓰인 댓글은 이름표로 남고, 여기서 되살릴 수 있습니다.`)
+      !window.confirm(
+        `'${row.name}' 이모티콘을 목록에서 뺄까요?\n이미 쓰인 자리에는 이름표로 남고, 여기서 되살릴 수 있어요.`,
+      )
     ) {
       return;
     }
@@ -151,14 +156,20 @@ export default function EmoticonAdmin() {
           });
       if (!res.ok) {
         patchRow(row.id, { deletedAt: row.deletedAt });
-        setRowError({ id: row.id, message: await errorOf(res, deleting ? '빼지 못했습니다' : '되살리지 못했습니다') });
+        setRowError({
+          id: row.id,
+          message: await errorOf(
+            res,
+            deleting ? '빼지 못했어요. 다시 시도해 주세요' : '되살리지 못했어요. 다시 시도해 주세요',
+          ),
+        });
         return;
       }
       // 열려 있는 고르는 칸들이 같이 바뀌도록
       void refreshEmoticons();
     } catch {
       patchRow(row.id, { deletedAt: row.deletedAt });
-      setRowError({ id: row.id, message: '네트워크 오류' });
+      setRowError({ id: row.id, message: NETWORK_ERROR });
     } finally {
       setBusyId(null);
     }
@@ -168,7 +179,7 @@ export default function EmoticonAdmin() {
     if (!editing || editing.id !== row.id) return;
     const name = editing.name.trim().replace(/\s+/g, ' ');
     if (name === '') {
-      setRowError({ id: row.id, message: '이름을 입력해 주세요' });
+      setRowError({ id: row.id, message: '이름을 적어 주세요' });
       return;
     }
     if (name === row.name) {
@@ -186,14 +197,17 @@ export default function EmoticonAdmin() {
       });
       if (!res.ok) {
         patchRow(row.id, { name: row.name });
-        setRowError({ id: row.id, message: await errorOf(res, '이름을 바꾸지 못했습니다') });
+        setRowError({
+          id: row.id,
+          message: await errorOf(res, '이름을 바꾸지 못했어요. 다시 시도해 주세요'),
+        });
         return;
       }
       setEditing(null);
       void refreshEmoticons();
     } catch {
       patchRow(row.id, { name: row.name });
-      setRowError({ id: row.id, message: '네트워크 오류' });
+      setRowError({ id: row.id, message: NETWORK_ERROR });
     } finally {
       setBusyId(null);
     }
@@ -207,7 +221,7 @@ export default function EmoticonAdmin() {
       return;
     }
     if (newName.trim() === '') {
-      setUploadError('이름을 입력해 주세요');
+      setUploadError('이름을 적어 주세요');
       return;
     }
     setUploading(true);
@@ -219,7 +233,7 @@ export default function EmoticonAdmin() {
       form.append('name', newName.trim());
       const res = await fetch('/api/emoticons', { method: 'POST', body: form });
       if (!res.ok) {
-        setUploadError(await errorOf(res, '등록에 실패했습니다'));
+        setUploadError(await errorOf(res, '이모티콘을 올리지 못했어요. 다시 시도해 주세요'));
         return;
       }
       const data = (await res.json()) as { emoticon: { name: string } };
@@ -232,7 +246,7 @@ export default function EmoticonAdmin() {
       void refreshEmoticons();
       void load();
     } catch {
-      setUploadError('네트워크 오류');
+      setUploadError(NETWORK_ERROR);
     } finally {
       setUploading(false);
     }
@@ -244,18 +258,19 @@ export default function EmoticonAdmin() {
   if (user === null) {
     return (
       <main className="login-page">
+        {/* app/not-found.tsx 와 같은 화면 — 그쪽 문구·단추를 바꾸면 여기도 같이 */}
         <section className="login-card">
           <h1>이런 주소는 없어요</h1>
           <p className="muted small">
-            주소가 바뀌었거나 잘못 적힌 것 같아요. 오락실은 지도에서, 글은 커뮤니티에서 다시
-            찾아 주세요.
+            주소가 바뀌었거나 페이지가 없어졌을 수 있어요. 홈에서 오락실이나 글을 다시 찾아
+            주세요.
           </p>
-          <div className="form-actions">
-            <Link className="btn btn-primary btn-sm" href="/">
-              오락실 파인더
-            </Link>
-            <Link className="btn btn-sm" href="/community">
-              커뮤니티
+          <Link className="btn btn-primary btn-block" href="/">
+            홈으로 가기
+          </Link>
+          <div className="link-row">
+            <Link className="btn-link" href="/community">
+              커뮤니티에서 찾기
             </Link>
           </div>
         </section>
@@ -268,12 +283,10 @@ export default function EmoticonAdmin() {
       <main className="login-page">
         <section className="login-card">
           <h1>이런 주소는 없어요</h1>
-          <p className="muted small">주소가 바뀌었거나 잘못 적힌 것 같아요.</p>
-          <div className="form-actions">
-            <Link className="btn btn-primary btn-sm" href="/">
-              오락실 파인더
-            </Link>
-          </div>
+          <p className="muted small">주소가 바뀌었거나 페이지가 없어졌을 수 있어요.</p>
+          <Link className="btn btn-primary btn-block" href="/">
+            홈으로 가기
+          </Link>
         </section>
       </main>
     );
@@ -288,8 +301,8 @@ export default function EmoticonAdmin() {
           <p className="eyebrow muted small">관리자</p>
           <h1>이모티콘 관리</h1>
           <p className="muted small">
-            댓글·리뷰·채보 평가의 고르는 칸에 뜨는 그림입니다. 여기서 빼도 이미 쓰인 자리는
-            이름표로 남고, 되살리면 다시 그림이 됩니다.
+            댓글 · 리뷰 · 채보 평가에서 고를 수 있는 그림이에요. 빼도 이미 쓰인 자리는 이름표로
+            남고, 되살리면 다시 그림으로 보여요.
           </p>
         </div>
         <Link className="btn btn-sm" href="/account">
@@ -298,8 +311,10 @@ export default function EmoticonAdmin() {
       </header>
 
       <form className="admin-card emoticon-upload" onSubmit={upload}>
-        <h2>새 이모티콘 등록</h2>
-        <p className="muted small">JPG · PNG · GIF, {MB}MB 까지. 형식은 파일 내용으로 판정합니다.</p>
+        <h2>새 이모티콘 올리기</h2>
+        <p className="muted small">
+          JPG · PNG · GIF, {MB}MB까지 올릴 수 있어요. 형식은 파일 이름이 아니라 내용으로 가려요.
+        </p>
         <div className="emoticon-upload-row">
           <input type="file" accept={ACCEPT} ref={fileRef} disabled={uploading} />
           <input
@@ -311,11 +326,13 @@ export default function EmoticonAdmin() {
             onChange={(ev) => setNewName(ev.target.value)}
           />
           <button type="submit" className="btn btn-sm btn-primary" disabled={uploading}>
-            {uploading ? '올리는 중…' : '등록'}
+            {uploading ? '올리는 중…' : '이모티콘 올리기'}
           </button>
         </div>
         {uploadError && <p className="warn small">{uploadError}</p>}
-        {uploaded && !uploadError && <p className="muted small">&apos;{uploaded}&apos; 을(를) 등록했습니다.</p>}
+        {uploaded && !uploadError && (
+          <p className="muted small">&apos;{uploaded}&apos; 이모티콘을 올렸어요.</p>
+        )}
       </form>
 
       <section className="admin-card">
@@ -356,17 +373,17 @@ export default function EmoticonAdmin() {
           <div className="pad">
             <p className="warn small">{list.message}</p>
             <button type="button" className="btn btn-sm" onClick={() => void load()}>
-              다시 시도
+              다시 불러오기
             </button>
           </div>
         )}
         {list.kind === 'ready' && list.rows.length === 0 && (
           <p className="muted pad">
             {q.trim() !== ''
-              ? '그런 이름의 이모티콘이 없습니다.'
+              ? `'${q.trim()}' 에 맞는 이모티콘이 없어요. 다른 이름으로 찾아보세요.`
               : status === 'deleted'
-                ? '지운 이모티콘이 없습니다.'
-                : '아직 등록된 이모티콘이 없습니다. 위에서 첫 이모티콘을 올려 주세요.'}
+                ? '뺀 이모티콘이 없어요.'
+                : '아직 이모티콘이 없어요. 위에서 첫 이모티콘을 올려 주세요.'}
           </p>
         )}
         {list.kind === 'ready' && list.rows.length > 0 && (
@@ -417,9 +434,9 @@ export default function EmoticonAdmin() {
                               }}
                             />
                             <button type="submit" className="btn btn-sm btn-primary" disabled={busy}>
-                              저장
+                              저장하기
                             </button>
-                            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setEditing(null)}>
+                            <button type="button" className="btn-link" disabled={busy} onClick={() => setEditing(null)}>
                               취소
                             </button>
                           </form>
@@ -441,7 +458,7 @@ export default function EmoticonAdmin() {
                       <td className="small">
                         {gone ? (
                           <span className="admin-badge is-gone" title={row.deletedAt ?? undefined}>
-                            지움 · {timeAgo(row.deletedAt as string)}
+                            빠짐 · {timeAgo(row.deletedAt as string)}
                           </span>
                         ) : (
                           <span className="admin-badge">쓰는 중</span>
@@ -455,12 +472,14 @@ export default function EmoticonAdmin() {
                             disabled={busy}
                             onClick={() => setEditing({ id: row.id, name: row.name })}
                           >
-                            이름
+                            이름 바꾸기
                           </button>
                         )}
+                        {/* 되살리기는 줄마다 있어 btn-primary 로 두면 한 카드에 주 버튼이 여럿이 된다
+                            (DESIGN-GUIDE §1-2). 이 카드의 주 버튼은 이름을 바꾸는 줄의 '저장하기' 뿐이다 */}
                         <button
                           type="button"
-                          className={gone ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-danger'}
+                          className={gone ? 'btn btn-sm' : 'btn btn-sm btn-danger'}
                           disabled={busy}
                           onClick={() => void toggle(row)}
                         >

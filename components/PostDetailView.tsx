@@ -138,13 +138,13 @@ export default function PostDetailView({
       if (res.status === 204) return true;
       const data = await res.json();
       if (!res.ok) {
-        setError(data.details?.[0] ?? data.error ?? '요청에 실패했습니다');
+        setError(data.details?.[0] ?? data.error ?? '반영하지 못했어요. 다시 시도해 주세요');
         return false;
       }
       if (data.post) applyPost(data.post as PostDetail);
       return true;
     } catch {
-      setError('네트워크 오류');
+      setError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
       return false;
     } finally {
       setBusy(false);
@@ -195,17 +195,20 @@ export default function PostDetailView({
   };
 
   // 누가 지우는지는 보내지 않는다 — 본인인지 관리자인지 모두 세션 쿠키가 근거다.
-  const removeComment = (commentId: number) =>
-    send(
+  const removeComment = (commentId: number) => {
+    // 되돌릴 수 없는 일은 한 번 묻습니다 (글 지우기와 같은 규칙)
+    if (!confirm('이 댓글을 지울까요? 되돌릴 수 없어요.')) return;
+    return send(
       `/api/posts/${postId}/comments?${new URLSearchParams({
         commentId: String(commentId),
         commentOffset: String(currentOffset),
       })}`,
       { method: 'DELETE' },
     );
+  };
 
   const removePost = async () => {
-    if (!confirm('이 글을 삭제할까요? 댓글도 함께 지워지고 되돌릴 수 없습니다.')) return;
+    if (!confirm('이 글을 지울까요? 댓글도 함께 지워지고 되돌릴 수 없어요.')) return;
     const ok = await send(`/api/posts/${postId}`, {
       method: 'DELETE',
     });
@@ -220,7 +223,16 @@ export default function PostDetailView({
   // (2026-11-20 로컬 확인에서 "Rendered more hooks" 로 실제로 죽었다).
   const blockedIds = useBlockedIds();
 
-  if (missing) return <p className="muted pad">글을 찾을 수 없습니다.</p>;
+  // 막힌 화면에는 돌아갈 단추를 둔다 (DESIGN-GUIDE §1-3 · §4 없는 대상)
+  if (missing)
+    return (
+      <div className="pad">
+        <p className="muted">글을 찾을 수 없어요. 지워졌을 수 있어요.</p>
+        <button type="button" className="btn btn-sm" onClick={onBack}>
+          글 목록으로
+        </button>
+      </div>
+    );
 
   /**
    * 화면에 그리는 것 — 받아 온 글이 있으면 그것, 없으면 목록이 준 요약으로 만든
@@ -255,10 +267,10 @@ export default function PostDetailView({
               type="button"
               className="btn btn-sm btn-danger"
               disabled={busy}
-              title={!isMine && isAdmin ? '관리자 권한으로 남의 글을 삭제합니다' : undefined}
+              title={!isMine && isAdmin ? '관리자 권한으로 남의 글 지우기' : undefined}
               onClick={removePost}
             >
-              삭제
+              지우기
             </button>
           </div>
         )}
@@ -272,7 +284,7 @@ export default function PostDetailView({
       </div>
       {blockedIds.has(shown.playerId) && (
         <p className="muted small blocked-note">
-          차단한 사용자의 글입니다. 목록에서는 가려지고, 직접 연 이 화면에서만 보입니다.
+          차단한 사용자의 글이에요. 목록에서는 가려지고, 직접 연 이 화면에서만 보여요.
         </p>
       )}
 
@@ -298,7 +310,7 @@ export default function PostDetailView({
           본문이 아직 안 왔으면 같은 자리에 상자만 둔다 — 빈 본문을 그리면 아래
           내용이 위로 붙었다가 응답이 오는 순간 아래로 밀린다. */}
       {pending ? (
-        <div className="post-skeleton" aria-label="본문 불러오는 중">
+        <div className="post-skeleton" aria-label="본문을 불러오는 중">
           <span />
           <span />
           <span />
@@ -314,7 +326,14 @@ export default function PostDetailView({
           // 본문이 오기 전에 눌러도 서버는 처리하지만, 그 응답이 목록에서 받은
           // 요약을 덮어써서 숫자가 두 번 튄다 — 올 때까지만 막는다.
           disabled={busy || pending || !playerId}
-          title={playerId ? undefined : '로그인이 필요합니다'}
+          // 토글은 누르면 일어날 일을 적는다 (DESIGN-GUIDE §3-6)
+          title={
+            playerId
+              ? shown.myLike
+                ? '추천 취소하기'
+                : '추천하기'
+              : '로그인하면 추천할 수 있어요'
+          }
           onClick={() => setLikeTo(!shown.myLike)}
         >
           추천 {shown.likeCount}
@@ -329,18 +348,18 @@ export default function PostDetailView({
         {/* 댓글 수는 요약에 이미 있으므로 제목("댓글 N개")은 처음부터 맞다.
             내용만 안 온 것이니 그 자리에만 상자를 둔다. */}
         {pending ? (
-          <div className="post-skeleton" aria-label="댓글 불러오는 중">
+          <div className="post-skeleton" aria-label="댓글을 불러오는 중">
             <span />
             <span />
           </div>
         ) : shown.commentCount === 0 ? (
-          <p className="muted small">아직 댓글이 없습니다.</p>
+          <p className="muted small">아직 댓글이 없어요. 첫 댓글을 남겨 주세요.</p>
         ) : (
           <>
             <ul className="comment-list">
               {shown.comments.map((c, i) => blockedIds.has(c.playerId) ? (
                 <li key={c.id} className="muted small">
-                  <span className="comment-no muted small">{shown.commentOffset + i + 1}</span> 차단한 사용자의 댓글입니다.
+                  <span className="comment-no muted small">{shown.commentOffset + i + 1}</span> 차단한 사용자의 댓글이에요.
                 </li>
               ) : (
                 <li key={c.id} className={c.playerId === playerId ? 'is-mine' : ''}>
@@ -355,12 +374,12 @@ export default function PostDetailView({
                         disabled={busy}
                         title={
                           c.playerId !== playerId && isAdmin
-                            ? '관리자 권한으로 남의 댓글을 삭제합니다'
+                            ? '관리자 권한으로 남의 댓글 지우기'
                             : undefined
                         }
                         onClick={() => removeComment(c.id)}
                       >
-                        삭제
+                        지우기
                       </button>
                     )}
                     {!isAdmin && (
@@ -389,7 +408,7 @@ export default function PostDetailView({
             입력창의 일부처럼 읽힌다 (.comment-write 의 border-top / margin) */}
         {!playerId ? (
           <p className="comment-write muted small">
-            <Link href="/login?next=%2Fcommunity">로그인</Link>하면 댓글을 쓸 수 있습니다.
+            <Link href="/login?next=%2Fcommunity">로그인</Link>하면 댓글을 남길 수 있어요.
           </p>
         ) : (
           <div className="comment-write">
@@ -397,7 +416,8 @@ export default function PostDetailView({
               <textarea
                 rows={3}
                 maxLength={2000}
-                placeholder="댓글 남기기"
+                aria-label="댓글"
+                placeholder="댓글을 적어 주세요"
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
               />
@@ -408,7 +428,7 @@ export default function PostDetailView({
                   disabled={busy || comment.trim().length === 0}
                   onClick={addComment}
                 >
-                  등록
+                  댓글 남기기
                 </button>
                 <EmoticonPicker disabled={busy} onPick={addEmoticon} />
               </div>

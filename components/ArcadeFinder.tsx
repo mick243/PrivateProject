@@ -177,6 +177,17 @@ function readStoredMapView(initialArcadeId: number | null): MapView | null {
   }
 }
 
+/** 연결이 끊겨 fetch 자체가 못 나간 경우의 고정 문구 (docs/DESIGN-GUIDE.md §4) */
+const NETWORK_ERROR = '연결이 잠깐 끊겼어요. 다시 시도해 주세요';
+
+/**
+ * 지역·지점으로 이동한 뒤 한 줄. 거리를 거는 곳은 지도 왼쪽 아래 거리 칩 하나다
+ * (사이드바의 거리 선택 줄은 2026-10-01 에 걷어 냈다 — 아래 filters 주석).
+ */
+function aroundNotice(name: string): string {
+  return `'${name}' 주변을 보고 있어요. 거리를 정하려면 지도 왼쪽 아래 칩을 눌러 주세요`;
+}
+
 type Mode = { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; arcade: Arcade };
 
 /**
@@ -486,7 +497,8 @@ export default function ArcadeFinder() {
     try {
       const res = await fetch(`/api/arcades?${params}`);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? `오락실 목록을 불러오지 못했습니다 (${res.status})`);
+      // 상태 코드(503 등)는 사람에게 할 일을 말해 주지 않으므로 문구에 붙이지 않는다
+      if (!res.ok) throw new Error(data.error ?? '오락실 목록을 불러오지 못했어요. 다시 시도해 주세요');
       // 늦게 도착한 이전 요청이 최신 결과를 덮어쓰지 않도록.
       if (seq === reqSeq.current) {
         setArcades((data.arcades as Arcade[]) ?? []);
@@ -497,7 +509,14 @@ export default function ArcadeFinder() {
       }
     } catch (e) {
       if (seq === reqSeq.current) {
-        setListError(e instanceof Error ? e.message : '오락실 목록을 불러오지 못했습니다');
+        // fetch 가 못 나가면 TypeError('Failed to fetch') 다 — 영어 원문을 그대로 띄우지 않는다
+        setListError(
+          e instanceof TypeError
+            ? NETWORK_ERROR
+            : e instanceof Error
+              ? e.message
+              : '오락실 목록을 불러오지 못했어요. 다시 시도해 주세요',
+        );
       }
     } finally {
       if (seq === reqSeq.current) setLoading(false);
@@ -738,7 +757,7 @@ export default function ArcadeFinder() {
         setQ('');
       }
       if (place) {
-        setPlaceNotice(`'${place.name}' 주변을 보는 중 — 필요하면 지도 왼쪽 아래 반경 칩에서 반경을 걸 수 있습니다.`);
+        setPlaceNotice(aroundNotice(place.name));
       }
       setExcludedId(pivot ? pivot.id : null);
 
@@ -906,7 +925,7 @@ export default function ArcadeFinder() {
   /** 지역 이동을 지도에 알리는 신호 (MapPane centerNonce 주석) */
   const [centerNonce, setCenterNonce] = useState(0);
   const [placeBusy, setPlaceBusy] = useState(false);
-  /** "○○ 주변으로 이동했습니다" 한 줄. 기준점을 해제하면 같이 사라진다 */
+  /** "'○○' 주변을 보고 있어요" 한 줄. 기준 위치를 지우면 같이 사라진다 */
   const [placeNotice, setPlaceNotice] = useState<string | null>(null);
 
   /**
@@ -947,7 +966,7 @@ export default function ArcadeFinder() {
     setFixedCenter({ lat: arcade.lat, lng: arcade.lng });
     setRadiusKm(RADIUS_NONE);
     setQ('');
-    setPlaceNotice(`'${arcade.name}' 주변을 보는 중 — 필요하면 지도 왼쪽 아래 반경 칩에서 반경을 걸 수 있습니다.`);
+    setPlaceNotice(aroundNotice(arcade.name));
     setFocusPoint((prev) => ({
       lat: arcade.lat,
       lng: arcade.lng,
@@ -1000,11 +1019,11 @@ export default function ArcadeFinder() {
       const res = await fetch(`/api/places?q=${encodeURIComponent(query)}`);
       const data = (await res.json()) as { place?: Place | null; error?: string };
       if (!res.ok) {
-        setPlaceNotice(data.error ?? '지역 검색에 실패했습니다');
+        setPlaceNotice(data.error ?? '지역을 찾지 못했어요. 잠시 뒤 다시 시도해 주세요');
         return;
       }
       if (!data.place) {
-        setPlaceNotice(`'${query}' 를 찾지 못했습니다. 지역·역 이름으로 다시 써 보세요.`);
+        setPlaceNotice(`'${query}' 에 맞는 지역을 찾지 못했어요. 동네나 역 이름으로 다시 써 주세요`);
         return;
       }
       // 기존 기준점 기계를 그대로 탄다 (runSearch 의 pivot 과 같은 방식) —
@@ -1021,9 +1040,9 @@ export default function ArcadeFinder() {
       setSelectedId(null);
       closeDetail();
       setCenterNonce((n) => n + 1);
-      setPlaceNotice(`'${data.place.name}' 주변을 보는 중 — 필요하면 지도 왼쪽 아래 반경 칩에서 반경을 걸 수 있습니다.`);
+      setPlaceNotice(aroundNotice(data.place.name));
     } catch {
-      setPlaceNotice('네트워크 오류로 지역을 찾지 못했습니다');
+      setPlaceNotice(NETWORK_ERROR);
     } finally {
       setPlaceBusy(false);
     }
@@ -1117,7 +1136,15 @@ export default function ArcadeFinder() {
   // useCallback: memo(ArcadeList) 에 그대로 내려가는 참조다.
   const handleDelete = useCallback(
     async (arcade: Arcade) => {
-      if (!confirm(`'${arcade.name}' 을(를) 삭제할까요? 되돌릴 수 없습니다.`)) return;
+      // 이름 뒤에 곧바로 조사를 붙이지 않는다(을/를이 받침에 따라 갈린다) — '오락실' 을
+      // 사이에 두면 조사가 그쪽에 붙는다 (listEmptyState 와 같은 수). 리뷰·제보는
+      // FK 가 CASCADE 라 함께 지워진다 (prisma/schema.prisma).
+      if (
+        !confirm(
+          `'${arcade.name}' 오락실을 지울까요? 리뷰와 제보도 함께 지워지고 되돌릴 수 없어요.`,
+        )
+      )
+        return;
       const res = await fetch(`/api/arcades/${arcade.id}`, { method: 'DELETE' });
       if (res.ok) {
         if (selectedId === arcade.id) {
@@ -1130,7 +1157,7 @@ export default function ArcadeFinder() {
         // 401/403 이면 세션이 끊긴 것이다 — "실패했습니다" 만으로는 다시 로그인해야
         // 한다는 걸 알 수 없다.
         const data = await res.json().catch(() => null);
-        alert(data?.error ?? '삭제에 실패했습니다');
+        alert(data?.error ?? '오락실을 지우지 못했어요. 다시 시도해 주세요');
       }
     },
     [selectedId, mode, fetchArcades, closeForm],
@@ -1276,6 +1303,7 @@ export default function ArcadeFinder() {
       listEmptyState({
         loading,
         searching,
+        query: debouncedQ.trim(),
         offscreen,
         machineNames: machines
           .filter((m) => machineIds.includes(m.id))
@@ -1286,7 +1314,7 @@ export default function ArcadeFinder() {
         onClearMachines: () => setMachineIds([]),
         onClearConditions: clearConditions,
       }),
-    [loading, searching, offscreen, machines, machineIds, origin, radiusKm, arcades.length, clearConditions],
+    [loading, searching, debouncedQ, offscreen, machines, machineIds, origin, radiusKm, arcades.length, clearConditions],
   );
 
   /**
@@ -1351,7 +1379,7 @@ export default function ArcadeFinder() {
       <aside className="sidebar" id="arcade-sidebar">
         <header className="brand">
           <h1>오락실 파인더</h1>
-          <p>내 주변 오락실 · 보유 기종 · 영업시간</p>
+          <p>내 주변 오락실 · 있는 게임 · 영업시간</p>
         </header>
 
         {mode.kind === 'list' ? (
@@ -1362,7 +1390,8 @@ export default function ArcadeFinder() {
               <input
                 {...search.inputProps}
                 className="search"
-                placeholder="오락실 이름 · 주소 · 지역(역/동/로) 검색"
+                placeholder="오락실 이름 · 주소 · 동네 · 역으로 찾기"
+                aria-label="오락실 찾기"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
@@ -1377,10 +1406,10 @@ export default function ArcadeFinder() {
                   {placeBusy
                     ? '지역 찾는 중…'
                     : topMatch
-                      ? `'${topMatch.name}' 위치로 이동`
+                      ? `'${topMatch.name}' 위치로 가기`
                       : provinceOf(q)
-                        ? `'${provinceOf(q)!.label}' 지역으로 지도 이동`
-                        : `'${q.trim()}' 주변으로 지도 이동`}
+                        ? `'${provinceOf(q)!.label}' 지역 지도 보기`
+                        : `'${q.trim()}' 주변 지도 보기`}
                 </button>
               )}
               {placeNotice && <p className="notice">{placeNotice}</p>}
@@ -1414,20 +1443,24 @@ export default function ArcadeFinder() {
                 ))}
               </ScrollStrip>
               {machineIds.length > 1 && (
-                <p className="muted small">선택한 기종을 모두 보유한 곳만 표시됩니다</p>
+                <p className="muted small">고른 게임이 모두 있는 곳만 보여 드려요</p>
               )}
             </section>
 
             <div className="list-head">
               <span className="muted small">{listCountLabel}</span>
-              {isAdmin ? (
+              {/*
+                버튼만 지우면 "왜 없지"가 된다. 자리에 이유를 남긴다 —
+                대신 이 화면에서 할 수 있는 일(제보)은 상세 패널에 그대로 있다.
+
+                → 2026-09-29 뒤집음: 할 수 없는 일은 보여 주지 않는다
+                  (docs/DESIGN-GUIDE.md §1-1). 일반 사용자에게 '관리자만' 은 할 일이
+                  아니라 벽으로 읽힌다. 관리자에게만 단추를 그리고, 나머지에게는 없다.
+              */}
+              {isAdmin && (
                 <button type="button" className="btn btn-primary btn-sm" onClick={startCreate}>
-                  + 오락실 등록
+                  오락실 추가하기
                 </button>
-              ) : (
-                // 버튼만 지우면 "왜 없지"가 된다. 자리에 이유를 남긴다 —
-                // 대신 이 화면에서 할 수 있는 일(제보)은 상세 패널에 그대로 있다.
-                <span className="muted small admin-hint">등록·수정은 관리자만</span>
               )}
             </div>
 
@@ -1436,7 +1469,7 @@ export default function ArcadeFinder() {
               <p className="warn pad" role="alert">
                 {listError}{' '}
                 <button type="button" className="btn btn-sm" onClick={() => void fetchArcades()}>
-                  다시 시도
+                  다시 불러오기
                 </button>
               </p>
             )}
@@ -1521,19 +1554,19 @@ export default function ArcadeFinder() {
           푼 뒤에 다시 걸 방법이 없다.
         */}
         {mode.kind === 'list' && origin && (
-          <label className="radius-fab" title="검색 반경 — 바꾸거나 해제">
+          <label className="radius-fab" title="검색 거리 — 바꾸거나 풀기">
             <select
               value={radiusKm}
               onChange={(e) => setRadiusKm(Number(e.target.value))}
-              aria-label="검색 반경 — 바꾸거나 해제합니다 (위치 추적은 그대로)"
+              aria-label="검색 거리 바꾸기 · 풀기 (위치 따라가기는 그대로)"
             >
               {RADIUS_OPTIONS.map((r) => (
                 <option key={r} value={r}>
-                  반경 {r}km
+                  {r}km 안
                 </option>
               ))}
               {/* 반경이 걸려 있으면 '끄는 동작', 없으면 칩에 보이는 '지금 상태' 로 읽혀야 한다 */}
-              <option value={RADIUS_NONE}>{radiusKm > 0 ? '반경 탐색 해제' : '반경 없음'}</option>
+              <option value={RADIUS_NONE}>{radiusKm > 0 ? '거리 제한 풀기' : '거리 제한 없음'}</option>
             </select>
             {/* 눌러서 고르는 칸이라는 표시 (▾). 글자 위를 눌러도 select 가 받도록 클릭은 통과시킨다 */}
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -1562,7 +1595,7 @@ export default function ArcadeFinder() {
             type="button"
             className="unselect-fab"
             onClick={handleClearSelect}
-            aria-label="선택 취소 — 지도의 강조 표시를 끕니다"
+            aria-label="선택 취소 — 지도의 강조 표시를 꺼요"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path
@@ -1639,12 +1672,12 @@ function listHint({
   if (truncated) {
     // 검색 중에는 화면 컷이 없으므로 "지도를 확대하라" 는 답이 아니다.
     return searching
-      ? `검색 결과가 많아 ${SIDEBAR_MAX_ITEMS}곳까지만 보여 줍니다. 검색어를 더 좁혀 보세요.`
-      : `지도에 보이는 곳 중 ${SIDEBAR_MAX_ITEMS}곳까지만 보여 줍니다. 지도를 확대하거나 검색·기종으로 걸러 보세요.`;
+      ? `검색 결과가 많아 ${SIDEBAR_MAX_ITEMS}곳까지만 보여 드려요. 검색어를 더 좁혀 보세요`
+      : `화면 안에서 ${SIDEBAR_MAX_ITEMS}곳까지만 보여 드려요. 지도를 확대하거나 게임을 골라 좁혀 보세요`;
   }
-  if (offscreen > 0) return `${offscreen}곳은 지도 밖에 있습니다.`;
-  if (!hasOrigin) return '지도 왼쪽 아래 내 위치 단추를 켜면 가까운 순으로 정리됩니다.';
-  if (!canFavorite) return '로그인하면 즐겨찾기한 곳이 목록 맨 위에 옵니다.';
+  if (offscreen > 0) return `${offscreen}곳은 화면 밖에 있어요. 지도를 축소하면 보여요`;
+  if (!hasOrigin) return "지도 왼쪽 아래 '내 위치' 단추를 누르면 가까운 순으로 보여 드려요";
+  if (!canFavorite) return '로그인하면 즐겨찾기한 곳을 목록 맨 위에 보여 드려요';
   return null;
 }
 
@@ -1675,6 +1708,7 @@ function mergeById(all: readonly Arcade[], fresh: readonly Arcade[]): Arcade[] {
 function listEmptyState({
   loading,
   searching,
+  query,
   offscreen,
   machineNames,
   radiusKm,
@@ -1684,6 +1718,8 @@ function listEmptyState({
 }: {
   loading: boolean;
   searching: boolean;
+  /** 지금 걸려 있는 검색어 (앞뒤 공백 없이). 빈 화면 문구에 그대로 불러 준다 */
+  query: string;
   /** 조건에는 맞지만 화면 밖에 있는 곳 수 */
   offscreen: number;
   /** 켜 둔 기종 필터 이름 (없으면 빈 배열) */
@@ -1699,7 +1735,7 @@ function listEmptyState({
   // 조회가 도는 동안에는 말하지 않는다 — 결과가 오기 전의 0은 0이 아니다.
   if (loading) return null;
 
-  const conditions = [...machineNames, ...(radiusKm > 0 ? [`반경 ${radiusKm}km`] : [])];
+  const conditions = [...machineNames, ...(radiusKm > 0 ? [`${radiusKm}km 안`] : [])];
   const conditionLine = conditions.length > 0 && (
     <>
       <p className="muted small">
@@ -1712,12 +1748,17 @@ function listEmptyState({
   );
 
   // 이름·주소 검색이 전국에서 0곳. 다음 행동은 지도 조작이 아니라 지역 이동이다.
+  // 지역 이동 버튼은 지역처럼 보이는 검색어(isPlaceQuery)에만 뜨므로, 그때만 그 버튼을
+  // 가리키고 아니면 검색어를 줄이라고 한다 — 없는 버튼을 가리키지 않는다.
   // 기종 필터는 검색에도 걸리므로(fetchArcades) 그게 이유일 수 있다 — 같이 보여 준다.
   if (searching) {
     return (
       <>
         <p className="muted">
-          이름·주소가 맞는 오락실이 없습니다. 지역 이름이라면 위 버튼이 그 주변을 보여 줍니다.
+          &apos;{query}&apos; 에 맞는 오락실이 없어요.{' '}
+          {isPlaceQuery(query)
+            ? '위 버튼을 누르면 그 동네 주변을 보여 드려요'
+            : '검색어를 줄이거나 지워 보세요'}
         </p>
         {conditionLine}
       </>
@@ -1736,14 +1777,14 @@ function listEmptyState({
     return (
       <>
         <p className="muted">
-          <strong>{names}</strong> 보유 오락실이 아직 없습니다.
+          <strong>{names}</strong> 있는 오락실을 아직 아무도 알려 주지 않았어요
         </p>
         <p className="muted small">
-          보유 기종은 다녀온 사람들의 제보로 채워집니다. 오락실을 열고 “이 게임 있어요” 를
-          눌러 주시면 가장 먼저 등록됩니다.
+          게임 목록은 다녀온 사람들이 알려 줘서 채워져요. 가 본 곳이 있다면 오락실을 열고
+          “이 게임 있어요 알리기” 를 눌러 주세요
         </p>
         <button type="button" className="btn btn-sm" onClick={onClearMachines}>
-          기종 필터 끄기
+          고른 게임 풀기
         </button>
       </>
     );
@@ -1754,26 +1795,26 @@ function listEmptyState({
     return (
       <>
         <p className="muted">
-          조건에 맞는 {offscreen}곳이 지금 지도 밖에 있습니다. 지도를 옮기거나 축소해 보세요.
+          조건에 맞는 {offscreen}곳이 화면 밖에 있어요. 지도를 옮기거나 축소해 보세요
         </p>
         {conditionLine}
       </>
     );
   }
 
-  // 조건 안에는 한 곳도 없다 — 대개 반경이 이유다. "등록된 오락실이 없다" 고 하면
+  // 조건 안에는 한 곳도 없다 — 대개 거리가 이유다. "등록된 오락실이 없다" 고 하면
   // 이 동네에 오락실이 없는 것으로 읽힌다.
   if (conditions.length > 0) {
     return (
       <>
-        <p className="muted">걸린 조건에 맞는 오락실이 이 근처에 없습니다.</p>
+        <p className="muted">걸린 조건에 맞는 오락실이 이 근처에 없어요. 조건을 풀어 보세요</p>
         {conditionLine}
       </>
     );
   }
 
-  // 필터도 검색도 없이 지도에 아무것도 없는 경우 (바다 한가운데 등).
-  return <p className="muted">지금 지도에 보이는 곳에는 등록된 오락실이 없습니다. 지도를 옮기거나 축소해 보세요.</p>;
+  // 필터도 검색도 없이 이 화면에 아무것도 없는 경우 (바다 한가운데 등).
+  return <p className="muted">이 화면에는 오락실이 없어요. 지도를 옮기거나 축소해 보세요</p>;
 }
 
 /**
@@ -1796,7 +1837,7 @@ function LocationStatusLine({
   onGoToMyLocation: () => void;
 }) {
   if (follow && status === 'locating') {
-    return <p className="muted small">위치 확인 중…</p>;
+    return <p className="muted small">내 위치를 찾는 중…</p>;
   }
   if (follow && status === 'tracking') {
     return (
@@ -1805,7 +1846,7 @@ function LocationStatusLine({
         {accuracyM !== null && ` · 오차 ${formatDistance(accuracyM / 1000)}`}
         {/* 지도를 끌고 나갔다가 되돌아올 문 — 다음 GPS 좌표를 기다리지 않는다 */}
         <button type="button" className="btn btn-sm loc-go" onClick={onGoToMyLocation}>
-          내 위치로 이동
+          내 위치로 가기
         </button>
       </p>
     );

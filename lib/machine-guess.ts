@@ -66,7 +66,9 @@ const schema = {
 export async function guessMachines(arcadeId: number): Promise<GuessOutcome> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {
-    throw new MachineGuessUnavailable('GEMINI_API_KEY 가 없어 검색할 수 없습니다');
+    // 원인은 로그에, 화면에는 사람이 읽을 말만 (docs/DESIGN-GUIDE.md §6 — 설정 키 이름을 내지 않는다)
+    console.warn('[guess] GEMINI_API_KEY 가 없어 검색하지 않습니다');
+    throw new MachineGuessUnavailable('지금은 AI로 게임을 찾을 수 없어요. 조금 뒤에 다시 시도해 주세요');
   }
 
   const prisma = await getPrismaClient();
@@ -74,7 +76,7 @@ export async function guessMachines(arcadeId: number): Promise<GuessOutcome> {
     where: { id: arcadeId },
     select: { name: true, address: true },
   });
-  if (!arcade) throw new MachineGuessUnavailable('그런 오락실이 없습니다');
+  if (!arcade) throw new MachineGuessUnavailable('오락실을 찾을 수 없어요');
 
   // 리듬게임 기종만. 목록을 코드에 적지 않고 DB 에서 읽는 이유는 관리자가 기종을
   // 더하거나 뺄 때 여기가 따라 움직여야 하기 때문입니다 (챗봇 시스템 프롬프트와 같은 규칙).

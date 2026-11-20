@@ -197,7 +197,7 @@ describe('정보가 없을 때', () => {
       radiusKm: 5,
     });
     expect(s.topFactor).toBeNull();
-    expect(rankReason(s)).toBe('비교할 정보가 아직 없습니다');
+    expect(rankReason(s)).toBe('비교할 정보가 아직 없어요');
   });
 
   it('근거 없이 가운데 값으로 들어간 항목을 이름으로 돌려준다 — 말풍선이 점수 옆에 적는다', () => {
@@ -206,7 +206,7 @@ describe('정보가 없을 때', () => {
     const weights = weightsFromOrder(['distance', 'wait', 'condition']);
     const [s] = rankArcades({ arcades: [a], origin: ORIGIN, weights, radiusKm: 5 });
     expect(s.score).toBe(75); // 거리 50 + (대기 30 + 컨디션 20) 의 절반
-    expect(missingFactors(s, weights)).toEqual(['기체 컨디션', '대기 인원']);
+    expect(missingFactors(s, weights)).toEqual(['기계 상태', '대기 인원']); // 항목 이름은 UX 라이팅 지침의 쉬운 말 (2026-11-20)
   });
 
   it('가중치 0 인 항목은 "정보 없음" 으로 세지 않는다 — 보지 않은 항목이다', () => {

@@ -14,12 +14,25 @@
  * 돌리기로 한 자리입니다. p.eagate.573.jp 는 robots.txt 가 아예 없습니다(404).
  *
  * 어느 쪽이든 최소한은 지킵니다:
- *   · 하루 **한 번**, 출처마다 목록 페이지 **한 장**만. 상세는 열지 않습니다.
+ *   · 하루 **한 번**, 출처마다 목록 페이지 **한 장**.
+ *   · 펌프 잇 업은 **새로 올라온 공지만** 상세를 한 번씩 엽니다(한 번에 최대 --limit 장,
+ *     장마다 1초 쉼). 이미 옮겨 둔 글은 다시 열지 않습니다 — 목록이 그대로면 요청은
+ *     목록 한 장뿐입니다.
  *   · User-Agent 에 무엇인지 밝힙니다. 브라우저인 척하지 않습니다.
- *   · 실패하면 그냥 끝냅니다. 다시 두드리지 않습니다.
- *   · 본문을 **가져오지 않습니다** — 제목·날짜·원문 링크만 옮깁니다. 남의 글을
- *     통째로 복사해 우리 게시판에 세우지 않기 위해서입니다.
+ *   · 실패하면 그냥 끝냅니다. 다시 두드리지 않습니다. 상세만 실패하면 그 글은 예전처럼
+ *     제목·원문 링크만 싣습니다.
  * 상대가 막으면 막힌 채로 두세요. 우회를 붙이는 순간 성질이 달라집니다.
+ *
+ * ─── 본문을 가져옵니다 (2026-09-29 운영자 결정) ────────────────
+ * 예전에는 제목·날짜·링크만 옮기고 본문은 일부러 가져오지 않았습니다(남의 글을 통째로
+ * 복사하지 않으려고). 지금은 펌프 잇 업 공지의 **글자 본문**을 옮깁니다 — 소식 배너에서
+ * 눌러 들어온 사람이 링크를 한 번 더 타지 않고 읽게 하려는 운영자의 결정입니다. 대신
+ *   · 글 맨 아래에 **어디서 온 글인지**와 **원문 링크**를 늘 붙입니다 (위가 아닌 이유는
+ *     bodyDoc 주석 — 미리보기).
+ *   · **그림은 복사하지 않습니다** — 원문 그림으로 가는 링크 한 줄로 바꿉니다
+ *     (scripts/news-body.mjs 머리말).
+ *   · 글자색 · 표 너비 같은 겉모양은 버리고 문단 · 제목 · 표 · 목록 · 링크만 옮깁니다.
+ * 사운드 볼텍스(eagate)는 글마다 주소가 없어 목록 줄 그대로입니다.
  *
  * ─── 무엇을 지우는가 ──────────────────────────────────────
  * imported_news(migrate-063)에 적힌 글**만**, 그것도 **그 출처의 것만** 지웁니다.
@@ -32,6 +45,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { docToText, htmlToBlocks, piuNoticeContentHtml } from './news-body.mjs';
 
 const root = process.cwd();
 
@@ -72,7 +86,9 @@ const LIMIT = Number.isInteger(limitArg) && limitArg > 0 ? Math.min(limitArg, 6)
 const only = pick('--source');
 
 // 헤더 값은 latin-1 만 담깁니다 — 한글을 넣으면 fetch 가 던집니다.
-const UA = 'arcade-finder-news/1.0 (arcade-finder news sync; once a day; list page only)';
+const UA = 'arcade-finder-news/1.1 (arcade-finder news sync; once a day; list page + new notices only)';
+/** 상세를 여러 장 열 때 사이에 쉬는 시간 — 한꺼번에 몰아 두드리지 않습니다 */
+const DETAIL_PAUSE_MS = 1_000;
 
 const bail = (msg) => {
   console.error(`✖ ${msg}`);
@@ -126,7 +142,7 @@ async function fetchPage(startUrl) {
       url = new URL(next, url).toString();
       continue;
     }
-    if (!res.ok) throw new Error(`목록을 받지 못했습니다 (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(`페이지를 받지 못했습니다 (HTTP ${res.status})`);
     return res.text();
   }
   throw new Error('리다이렉트가 끝나지 않습니다 — 사이트 쪽이 바뀌었을 수 있습니다');
@@ -253,7 +269,11 @@ const SOURCES = [
     url: 'https://piugame.com/phoenix2_notice',
     machine: 'Pump It Up',
     note: '펌프 잇 업 PHOENIX 2 공식 공지입니다.',
+    /** 본문을 옮긴 글의 머리말 — 어디서 온 글인지 맨 위에서 밝힙니다 */
+    bodyNote: '펌프 잇 업 PHOENIX 2 공식 공지를 옮겨 왔어요. 그림은 원문에서 볼 수 있어요.',
     parse: parsePiu,
+    /** 공지 한 장의 본문 영역 HTML. 못 찾으면 null (그 글은 링크만 싣습니다) */
+    fetchBody: async (row) => piuNoticeContentHtml(await fetchPage(row.url)),
   },
   {
     key: 'eagate-sdvx',
@@ -286,25 +306,92 @@ try {
 
 const one = async (sql, params = []) => (await db.query(sql, params)).rows[0];
 
-function docOf(note, title, url) {
+const linkParagraph = (url) => ({
+  type: 'paragraph',
+  content: [
+    {
+      type: 'text',
+      text: `원문 보기 — ${new URL(url).host}`,
+      marks: [{ type: 'link', attrs: { href: url } }],
+    },
+  ],
+});
+
+/** 본문 없이 제목 · 원문 링크만 싣는 글 (eagate, 또는 상세를 못 받은 펌프 공지) */
+function linkOnlyDoc(note, title, url) {
   return {
     type: 'doc',
     content: [
       { type: 'paragraph', content: [{ type: 'text', text: `${note} 원문: ${title}` }] },
-      {
-        type: 'paragraph',
-        content: [
-          {
-            type: 'text',
-            text: `원문 보기 — ${new URL(url).host}`,
-            marks: [{ type: 'link', attrs: { href: url } }],
-          },
-        ],
-      },
+      linkParagraph(url),
     ],
   };
 }
 
+/** linkOnlyDoc 의 평문. **이미 옮겨 둔 글이 이 모양이면 본문이 없는 글**로 보고 채웁니다 */
+const linkOnlyBody = (source, r) => `${source.note}\n\n원문: ${r.title}\n${r.url}`;
+
+/**
+ * 본문을 옮긴 글 — 본문 · (끊겼으면 한 줄) · 가로줄 · 출처 안내 · 원문 링크.
+ *
+ * 출처 안내를 **맨 아래**에 두는 이유: 목록과 홈 소식 배너의 미리보기가 본문 앞 120자라
+ * (lib/board.ts excerptOf), 맨 위에 두면 모든 소식의 미리보기가 같은 안내 문장이 됩니다.
+ */
+function bodyDoc(source, r, blocks, truncated) {
+  return {
+    type: 'doc',
+    content: [
+      ...blocks,
+      ...(truncated
+        ? [{ type: 'paragraph', content: [{ type: 'text', text: '글이 길어 여기까지 옮겼어요. 나머지는 원문에서 봐 주세요.' }] }]
+        : []),
+      { type: 'horizontalRule' },
+      { type: 'paragraph', content: [{ type: 'text', text: source.bodyNote, marks: [{ type: 'italic' }] }] },
+      linkParagraph(r.url),
+    ],
+  };
+}
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * 글 한 장의 `{ body, doc, withBody }`.
+ *
+ * 본문을 가져올 수 있는 출처면 상세를 **한 번** 열고, 실패하거나 본문 칸을 못 찾으면 예전처럼
+ * 링크만 싣습니다 — 상세 한 장이 막혔다고 소식 전체가 멈추면 안 됩니다. 다시 두드리지 않습니다.
+ */
+async function contentOf(source, r) {
+  if (source.fetchBody) {
+    try {
+      const html = await source.fetchBody(r);
+      if (html) {
+        const { blocks, truncated } = htmlToBlocks(html, r.url);
+        if (blocks.length > 0) {
+          const doc = bodyDoc(source, r, blocks, truncated);
+          return { body: docToText(doc), doc, withBody: true };
+        }
+      }
+      console.warn(`    ! ${r.title}: 본문 칸을 찾지 못해 링크만 싣습니다 — 페이지 구조가 바뀌었을 수 있습니다`);
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      console.warn(`    ! ${r.title}: 본문을 받지 못해 링크만 싣습니다 (${why})`);
+    }
+  }
+  return { body: linkOnlyBody(source, r), doc: linkOnlyDoc(source.note, r.title, r.url), withBody: false };
+}
+
+/**
+ * 한 출처를 맞춥니다.
+ *
+ * 예전에는 목록이 조금이라도 바뀌면 이 출처의 글을 **전부** 지우고 다시 넣었습니다 — 그대로인
+ * 공지도 글 번호가 바뀌었고, 본문을 가져오게 된 지금은 그대로인 공지까지 다시 열게 됩니다.
+ * 이제는 세 갈래로 나눕니다.
+ *   · 남길 글 — 목록에 그대로 있는 공지(같은 원문 번호 · 같은 제목). 건드리지 않습니다.
+ *   · 채울 글 — 남길 글 가운데 본문 없이 링크만 실린 것(이 기능 전에 옮긴 글). **제자리에서**
+ *              본문만 채웁니다 — 글 번호가 그대로라 저장해 둔 링크가 깨지지 않습니다.
+ *   · 새 글 / 치울 글 — 목록에 새로 들어온 공지와 빠진 공지.
+ * 셋 다 비어 있으면 "변화 없음" 이고, 그때 남의 사이트에 나가는 요청은 목록 한 장뿐입니다.
+ */
 async function syncOne(source, ids) {
   const rows = source.parse(await fetchPage(source.url), source).slice(0, LIMIT);
   if (rows.length === 0) {
@@ -312,46 +399,74 @@ async function syncOne(source, ids) {
   }
 
   const { rows: have } = await db.query(
-    `SELECT source_id, title, post_id FROM imported_news WHERE source = $1`,
+    `SELECT n.source_id, n.title, n.post_id, p.body
+       FROM imported_news n
+       JOIN posts p ON p.id = n.post_id
+      WHERE n.source = $1`,
     [source.key],
   );
 
-  // 바뀐 것이 없으면 아무것도 건드리지 않습니다 — 글 id 가 매일 바뀌면
-  // 링크를 저장해 둔 사람의 주소가 매일 깨집니다.
-  const key = (list) => list.map((r) => `${r.id ?? r.source_id}:${r.title}`).sort().join('|');
-  if (key(rows) === key(have)) {
+  const sameKey = (r, h) => String(r.id) === String(h.source_id) && r.title === h.title;
+  const keep = have.filter((h) => rows.some((r) => sameKey(r, h)));
+  const remove = have.filter((h) => !keep.includes(h));
+  const add = rows.filter((r) => !have.some((h) => sameKey(r, h)));
+  const fill = source.fetchBody
+    ? keep
+        .map((h) => ({ h, r: rows.find((r) => sameKey(r, h)) }))
+        .filter(({ h, r }) => h.body === linkOnlyBody(source, r))
+    : [];
+
+  if (add.length === 0 && remove.length === 0 && fill.length === 0) {
     console.log(`· ${source.label}: 변화 없음`);
     return;
   }
 
-  console.log(`· ${source.label}: 새 목록`);
-  for (const r of rows) console.log(`    [${r.category}] ${r.title} (${r.date})`);
-  if (have.length) console.log(`    치울 글: ${have.map((h) => `#${h.post_id}`).join(', ')}`);
+  console.log(`· ${source.label}: ${[add.length && `새 글 ${add.length}`, fill.length && `본문 채울 글 ${fill.length}`, remove.length && `치울 글 ${remove.length}`].filter(Boolean).join(' · ')}`);
+  for (const r of add) console.log(`    + [${r.category}] ${r.title} (${r.date})`);
+  for (const { h } of fill) console.log(`    ~ #${h.post_id} ${h.title}`);
+  for (const h of remove) console.log(`    - #${h.post_id} ${h.title}`);
+
+  // 남의 사이트에 나가는 일은 트랜잭션 **밖에서** 먼저 끝냅니다 — 응답을 기다리는 동안
+  // DB 잠금을 쥐고 있지 않게.
+  const prepared = [];
+  for (const [i, r] of [...add, ...fill.map((f) => f.r)].entries()) {
+    if (i > 0 && source.fetchBody) await pause(DETAIL_PAUSE_MS);
+    const content = await contentOf(source, r);
+    prepared.push({ r, ...content });
+    if (dryRun) {
+      const preview = content.body.replace(/\s+/g, ' ').slice(0, 80);
+      console.log(`      ${content.withBody ? '본문' : '링크만'} · ${content.body.length}자 · ${preview}…`);
+    }
+  }
   if (dryRun) return;
+
+  const contentFor = (r) => prepared.find((p) => p.r === r);
 
   await db.query('BEGIN');
   try {
-    if (have.length > 0) {
+    if (remove.length > 0) {
       // imported_news 에 적힌 글만, 그것도 이 출처의 것만 지웁니다.
-      await db.query(`DELETE FROM posts WHERE id = ANY($1::int[])`, [have.map((h) => h.post_id)]);
+      await db.query(`DELETE FROM posts WHERE id = ANY($1::int[])`, [remove.map((h) => h.post_id)]);
     }
-    for (const r of rows) {
-      const body = `${source.note}\n\n원문: ${r.title}\n${r.url}`;
+    for (const { h, r } of fill) {
+      const { body, doc } = contentFor(r);
+      // updated_at 은 원문 날짜 그대로 둡니다 — 옮겨 온 글이 '수정됨' 으로 보일 이유가 없습니다.
+      await db.query(`UPDATE posts SET body = $2, body_doc = $3::jsonb WHERE id = $1`, [
+        h.post_id,
+        body,
+        JSON.stringify(doc),
+      ]);
+      console.log(`    ✔ #${h.post_id} 본문 채움`);
+    }
+    for (const r of add) {
+      const { body, doc } = contentFor(r);
       // 작성일은 원문 날짜로 둡니다 — 최신소식이 created_at 순이라, 오늘로 넣으면
       // 며칠 전 공지가 오늘 소식으로 보입니다.
       const post = await one(
         `INSERT INTO posts (machine_id, category, player_id, title, body, body_doc, created_at, updated_at)
               VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::timestamptz, $7::timestamptz)
            RETURNING id`,
-        [
-          ids.machine[source.machine],
-          r.category,
-          ids.admin,
-          r.title,
-          body,
-          JSON.stringify(docOf(source.note, r.title, r.url)),
-          `${r.date} 10:00+09`,
-        ],
+        [ids.machine[source.machine], r.category, ids.admin, r.title, body, JSON.stringify(doc), `${r.date} 10:00+09`],
       );
       await db.query(
         `INSERT INTO imported_news (source, source_id, post_id, title, url) VALUES ($1, $2, $3, $4, $5)`,

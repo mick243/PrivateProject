@@ -3,7 +3,7 @@ import NicknameForm from '@/components/NicknameForm';
 
 export const metadata = {
   title: '닉네임 정하기',
-  description: '소셜 로그인으로 처음 들어온 계정의 활동 이름을 정합니다',
+  description: '소셜 로그인으로 처음 들어왔다면 활동 이름을 정해요',
 };
 
 export default function Page() {

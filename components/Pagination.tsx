@@ -30,13 +30,14 @@ export default function Pagination({
   const go = (p: number) => onChange(Math.min(Math.max(1, p), totalPages));
 
   return (
-    <nav className="pagination" aria-label="페이지">
+    <nav className="pagination" aria-label="페이지 넘기기">
+      {/* 아이콘 단추의 이름은 동사구 — 누르면 어디로 가는지 (DESIGN-GUIDE §3-6) */}
       <button
         type="button"
         className="page-btn"
         disabled={page <= 1}
         onClick={() => go(1)}
-        aria-label="첫 페이지"
+        aria-label="첫 페이지로"
       >
         «
       </button>
@@ -45,7 +46,7 @@ export default function Pagination({
         className="page-btn"
         disabled={page <= 1}
         onClick={() => go(page - 1)}
-        aria-label="이전 페이지"
+        aria-label="이전 페이지로"
       >
         ‹
       </button>
@@ -67,7 +68,7 @@ export default function Pagination({
         className="page-btn"
         disabled={page >= totalPages}
         onClick={() => go(page + 1)}
-        aria-label="다음 페이지"
+        aria-label="다음 페이지로"
       >
         ›
       </button>
@@ -76,7 +77,7 @@ export default function Pagination({
         className="page-btn"
         disabled={page >= totalPages}
         onClick={() => go(totalPages)}
-        aria-label="마지막 페이지"
+        aria-label="마지막 페이지로"
       >
         »
       </button>

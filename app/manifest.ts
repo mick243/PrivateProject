@@ -20,7 +20,7 @@ export default function manifest(): MetadataRoute.Manifest {
     id: '/',
     name: '오락실 파인더',
     short_name: '오락실',
-    description: '내 주변 오락실 지도 · 보유 기종 · 실시간 대기 제보 · 리듬게임 서열표와 커뮤니티',
+    description: '내 주변 오락실 지도 · 있는 게임 · 실시간 대기 제보 · 리듬게임 서열표와 커뮤니티',
     lang: 'ko',
     start_url: '/?source=pwa',
     scope: '/',

@@ -26,6 +26,9 @@ interface Props {
   onArcadeChanged: (arcade: Arcade) => void;
 }
 
+/** 연결이 끊겨 fetch 자체가 못 나간 경우의 고정 문구 (docs/DESIGN-GUIDE.md §4) */
+const NETWORK_ERROR = '연결이 잠깐 끊겼어요. 다시 시도해 주세요';
+
 export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
   const playerId = usePlayerId();
   const isAdmin = useIsAdmin();
@@ -54,10 +57,17 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
     try {
       const res = await fetch(`/api/arcades/${arcade.id}/reviews`);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? '리뷰를 불러오지 못했습니다');
+      if (!res.ok) throw new Error(data.error ?? '리뷰를 불러오지 못했어요. 다시 시도해 주세요');
       setReviews((data.reviews as ArcadeReview[]) ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '리뷰를 불러오지 못했습니다');
+      // fetch 가 못 나가면 TypeError('Failed to fetch') 다 — 영어 원문을 그대로 띄우지 않는다
+      setError(
+        e instanceof TypeError
+          ? NETWORK_ERROR
+          : e instanceof Error
+            ? e.message
+            : '리뷰를 불러오지 못했어요. 다시 시도해 주세요',
+      );
     }
   }, [arcade.id]);
 
@@ -85,12 +95,15 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
         };
         if (!alive) return;
         if (!res.ok || !data.summary) {
-          setSummary({ kind: 'error', message: data.error ?? '요약을 불러오지 못했습니다' });
+          setSummary({
+            kind: 'error',
+            message: data.error ?? '요약을 불러오지 못했어요. 다시 시도해 주세요',
+          });
           return;
         }
         setSummary({ kind: 'ready', view: data.summary });
       } catch {
-        if (alive) setSummary({ kind: 'error', message: '네트워크 오류' });
+        if (alive) setSummary({ kind: 'error', message: NETWORK_ERROR });
       }
     })();
     return () => {
@@ -133,13 +146,13 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? '저장에 실패했습니다');
+        setError(data.error ?? '리뷰를 저장하지 못했어요. 다시 시도해 주세요');
         return;
       }
       setReviews(data.reviews as ArcadeReview[]);
       if (data.arcade) onArcadeChanged(data.arcade as Arcade);
     } catch {
-      setError('네트워크 오류');
+      setError(NETWORK_ERROR);
     } finally {
       setBusy(false);
     }
@@ -147,18 +160,25 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
 
   const remove = async () => {
     if (!playerId) return;
+    // 되돌릴 수 없는 일은 한 번 묻습니다 (docs/DESIGN-GUIDE.md §4 — 되돌릴 수 없는 확인)
+    if (!window.confirm('내 리뷰를 지울까요? 되돌릴 수 없어요.')) return;
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/arcades/${arcade.id}/reviews`, {
         method: 'DELETE',
       });
       const data = await res.json();
-      if (res.ok) {
-        setReviews(data.reviews as ArcadeReview[]);
-        setRating(0);
-        setBody('');
-        if (data.arcade) onArcadeChanged(data.arcade as Arcade);
+      if (!res.ok) {
+        setError(data.error ?? '리뷰를 지우지 못했어요. 다시 시도해 주세요');
+        return;
       }
+      setReviews(data.reviews as ArcadeReview[]);
+      setRating(0);
+      setBody('');
+      if (data.arcade) onArcadeChanged(data.arcade as Arcade);
+    } catch {
+      setError(NETWORK_ERROR);
     } finally {
       setBusy(false);
     }
@@ -166,7 +186,7 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
 
   /** 관리자가 남의 리뷰를 지웁니다 — 글 삭제와 같이 한 번 묻고, 되돌릴 수 없다고 알립니다 */
   const removeAsAdmin = async (review: ArcadeReview) => {
-    if (!window.confirm(`${review.nickname} 님의 리뷰를 지울까요? 평점도 다시 계산되고 되돌릴 수 없습니다.`)) {
+    if (!window.confirm(`${review.nickname} 님의 리뷰를 지울까요? 평점도 다시 계산되고 되돌릴 수 없어요.`)) {
       return;
     }
     setBusy(true);
@@ -177,7 +197,7 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error ?? '리뷰를 지우지 못했습니다');
+        setError(data.error ?? '리뷰를 지우지 못했어요. 다시 시도해 주세요');
         return;
       }
       setReviews(data.reviews as ArcadeReview[]);
@@ -204,18 +224,19 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
 
       {!playerId ? (
         <p className="muted small">
-          <Link href="/login?next=%2Ffinder">로그인</Link>하면 리뷰를 남길 수 있습니다.
+          <Link href="/login?next=%2Ffinder">로그인</Link>하면 리뷰를 남길 수 있어요
         </p>
       ) : (
         <div className="review-form">
           <div className="review-form-head">
             <StarRating value={rating === 0 ? null : rating} onChange={setRating} disabled={busy} />
-            <span className="muted small">{mine ? '내 리뷰 수정' : '평점을 선택하세요'}</span>
+            <span className="muted small">{mine ? '내가 남긴 리뷰예요' : '평점을 골라 주세요'}</span>
           </div>
           <textarea
             rows={3}
             maxLength={1000}
-            placeholder="기체 상태, 대기, 접근성 등 다음 사람에게 도움될 내용"
+            aria-label="리뷰 내용"
+            placeholder="기계 상태, 대기, 찾아가는 길 등 다음 사람에게 도움이 될 내용"
             value={body}
             onChange={(e) => setBody(e.target.value)}
           />
@@ -226,21 +247,24 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
               disabled={busy || rating === 0}
               onClick={save}
             >
-              {mine ? '수정' : '등록'}
+              {mine ? '고친 리뷰 저장하기' : '리뷰 남기기'}
             </button>
             <EmoticonPicker disabled={busy} onPick={addEmoticon} />
-            {mine && (
+          </div>
+          {error && <p className="warn">{error}</p>}
+          {/* 되돌릴 수 없는 지우기는 주 버튼과 같은 줄에 두지 않는다 (docs/DESIGN-GUIDE.md §1-2) */}
+          {mine && (
+            <div className="form-actions">
               <button
                 type="button"
                 className="btn btn-sm btn-danger"
                 disabled={busy}
                 onClick={remove}
               >
-                삭제
+                내 리뷰 지우기
               </button>
-            )}
-          </div>
-          {error && <p className="warn">{error}</p>}
+            </div>
+          )}
         </div>
       )}
 
@@ -273,7 +297,7 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
                 ))}
               </dl>
             ) : (
-              <p className="muted small">리뷰에서 세 칸에 넣을 만한 내용을 찾지 못했습니다.</p>
+              <p className="muted small">리뷰에서 요약할 만한 내용을 아직 찾지 못했어요</p>
             ))}
           {summary.kind === 'error' && <p className="warn small">{summary.message}</p>}
         </section>
@@ -283,7 +307,9 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
         <p className="muted small blocked-note">차단한 사용자의 리뷰 {hiddenCount}개를 가렸어요.</p>
       )}
       {visible.length === 0 ? (
-        reviews.length === 0 && <p className="muted small">아직 리뷰가 없습니다.</p>
+        reviews.length === 0 && (
+          <p className="muted small">아직 리뷰가 없어요. 다녀왔다면 첫 리뷰를 남겨 주세요</p>
+        )
       ) : (
         <>
           <ul className="review-list">
@@ -298,7 +324,7 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
                       type="button"
                       className="btn btn-sm btn-danger"
                       disabled={busy}
-                      title="관리자 권한으로 남의 리뷰를 삭제합니다"
+                      title="관리자 권한으로 남의 리뷰 지우기"
                       onClick={() => removeAsAdmin(r)}
                     >
                       삭제

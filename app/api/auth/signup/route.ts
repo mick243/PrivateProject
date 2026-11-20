@@ -1,5 +1,5 @@
 import { after, NextResponse } from 'next/server';
-import { conflict, handle, parseBody, tooMany } from '@/lib/api-errors';
+import { fail, handle, readJson, tooMany } from '@/lib/api-errors';
 import { appOrigin } from '@/lib/app-url';
 import {
   clearLoginFailures,
@@ -13,7 +13,7 @@ import {
 } from '@/lib/auth';
 import { sendVerificationMail } from '@/lib/email-verify';
 import { isUniqueViolation } from '@/lib/pg-errors';
-import { signupInputSchema } from '@/lib/validation';
+import { formatIssues, issueFields, signupInputSchema } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,6 +37,10 @@ export const dynamic = 'force-dynamic';
  *
  * 시도 제한은 로그인과 같은 통을 쓰되 키를 나눕니다 — 가입 실패로 로그인이
  * 잠기면 이미 계정이 있는 사람이 남의 시도 때문에 못 들어옵니다.
+ *
+ * 400 · 409 에는 **어느 칸이 문제인지**(`field`)를 함께 줍니다. 가입 화면은 한 단계에
+ * 한 칸만 묻기 때문에(docs/DESIGN-GUIDE.md §1-2), 문구만으로는 사용자를 어느 단계로
+ * 돌려보낼지 알 수 없습니다. 값은 입력 스키마의 키 이름(`nickname` · `email` · …)입니다.
  */
 async function onPost(request: Request) {
   /**
@@ -56,20 +60,29 @@ async function onPost(request: Request) {
   const key = ip === null ? null : `signup:${ip}`;
   const lockedFor = key === null ? 0 : await loginLockRemainingMs(key);
   if (lockedFor > 0) {
-    return tooMany(`가입 시도가 많습니다. ${Math.ceil(lockedFor / 60000)}분 후 다시 시도해 주세요`, lockedFor);
+    return tooMany(`가입 시도가 많아 잠깐 막았어요. ${Math.ceil(lockedFor / 60000)}분 뒤에 다시 시도해 주세요`, lockedFor);
   }
 
-  const body = await parseBody(request, signupInputSchema);
-  if (!body.ok) return body.response;
+  const raw = await readJson(request);
+  if (!raw.ok) return raw.response;
+  const parsed = signupInputSchema.safeParse(raw.value);
+  if (!parsed.success) {
+    const details = formatIssues(parsed.error);
+    // 한 칸짜리 화면이라 첫 문구를 그대로 error 로 줍니다 — "다시 확인해 주세요" 만으로는 무엇을 고칠지 모릅니다.
+    return fail(400, details[0] ?? '입력한 내용을 다시 확인해 주세요', {
+      details,
+      extra: { field: issueFields(parsed.error)[0] ?? null },
+    });
+  }
 
   try {
-    const result = await createAccount(body.value.nickname, body.value.password, body.value.email);
+    const result = await createAccount(parsed.data.nickname, parsed.data.password, parsed.data.email);
     if (!result.ok) {
       // 로그인과 달리 "이미 있는 아이디" 를 숨기지 않습니다. 숨기면 가입이
       // 불가능해집니다 — 무엇을 고쳐야 하는지 알려 줄 방법이 없습니다.
       // 어차피 플레이어 목록에 닉네임이 그대로 보입니다.
       if (key !== null) await noteLoginFailure(key);
-      return conflict(conflictMessage(result.reason));
+      return conflictResponse(result.reason);
     }
 
     if (key !== null) await clearLoginFailures(key);
@@ -90,7 +103,7 @@ async function onPost(request: Request) {
     // 같은 순간에 같은 아이디·같은 주소로 두 명이 가입한 경우 (createAccount 의
     // 선검사와 INSERT 사이). 500 이 아니라 위와 같은 안내로 돌려줍니다.
     if (isUniqueViolation(err)) {
-      return conflict(conflictMessage(signupConflictReason(err)));
+      return conflictResponse(signupConflictReason(err));
     }
     throw err;
   }
@@ -114,8 +127,20 @@ export const POST = handle(onPost);
  */
 function conflictMessage(reason: 'taken' | 'reserved' | 'email-taken'): string {
   if (reason === 'email-taken') {
-    return '이미 가입에 사용된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용해 주세요';
+    return '이미 가입한 이메일이에요. 그 계정으로 로그인해 주세요';
   }
   // 예약어를 "이미 사용 중" 이라고 하면 숫자만 바꿔 다시 시도하게 됩니다 — 그래도 막힙니다.
-  return reason === 'reserved' ? RESERVED_NICKNAME_MESSAGE : '이미 사용 중인 아이디입니다';
+  return reason === 'reserved'
+    ? RESERVED_NICKNAME_MESSAGE
+    : '이미 누가 쓰고 있는 아이디예요. 다른 아이디를 골라 주세요';
+}
+
+/** 겹친 값이 어느 칸인가 — 가입 화면이 그 단계로 돌아갑니다 */
+function conflictField(reason: 'taken' | 'reserved' | 'email-taken'): 'nickname' | 'email' {
+  return reason === 'email-taken' ? 'email' : 'nickname';
+}
+
+/** 409 + 문구 + 돌아갈 칸(`field`) */
+function conflictResponse(reason: 'taken' | 'reserved' | 'email-taken') {
+  return fail(409, conflictMessage(reason), { extra: { field: conflictField(reason) } });
 }

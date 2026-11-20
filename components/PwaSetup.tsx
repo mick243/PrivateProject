@@ -119,7 +119,7 @@ export default function PwaSetup() {
             <strong>앱으로 설치</strong>하면 홈 화면에서 바로 열 수 있어요.
           </span>
           <button type="button" className="btn btn-primary btn-sm" onClick={() => void install()}>
-            설치
+            앱 설치하기
           </button>
         </>
       ) : (
@@ -127,7 +127,13 @@ export default function PwaSetup() {
           Safari 아래 <strong>공유</strong> 버튼 → <strong>홈 화면에 추가</strong>로 앱처럼 쓸 수 있어요.
         </span>
       )}
-      <button type="button" className="pwa-banner-close" aria-label="닫기" onClick={dismiss}>
+      <button
+        type="button"
+        className="pwa-banner-close"
+        aria-label="설치 안내 닫기"
+        title="설치 안내 닫기 (30일 동안 다시 안 떠요)"
+        onClick={dismiss}
+      >
         ✕
       </button>
     </div>

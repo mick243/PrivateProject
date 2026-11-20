@@ -77,7 +77,7 @@ async function receive(request: Request, playerId: number) {
   const lengthHeader = request.headers.get('content-length');
   const declared = lengthHeader === null ? NaN : Number(lengthHeader);
   if (!Number.isFinite(declared) || declared < 0) {
-    return fail(411, '업로드 크기를 알 수 없습니다 (Content-Length 가 필요합니다)');
+    return fail(411, '올릴 파일의 크기를 알 수 없어요. 새로고침한 뒤 다시 올려 주세요');
   }
   if (declared > MAX_UPLOAD_BYTES + 1024 * 1024) {
     return fail(413, new UploadTooLargeError().message);
@@ -102,11 +102,11 @@ async function receive(request: Request, playerId: number) {
   try {
     form = await request.formData();
   } catch {
-    return fail(400, '업로드 본문을 읽을 수 없습니다');
+    return fail(400, '파일을 읽지 못했어요. 다시 올려 주세요');
   }
 
   const file = form.get('file') ?? form.get('image');
-  if (!(file instanceof File)) return fail(400, 'file 이 필요합니다');
+  if (!(file instanceof File)) return fail(400, '올릴 파일을 골라 주세요');
 
   // 본문을 버퍼로 올리기 전에 신고된 크기부터 거른다 — 제한이 50MB 인데 500MB 를
   // 메모리에 다 읽고 나서 거절하면 제한이 방어 역할을 못 한다.

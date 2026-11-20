@@ -108,7 +108,7 @@ async function onPost(request: Request, ctx: Ctx) {
       return unavailable(err.message);
     }
     console.error('[guess] 실패 —', err);
-    return fail(502, '검색 중 오류가 났습니다');
+    return fail(502, '검색하지 못했어요. 조금 뒤에 다시 시도해 주세요');
   }
 }
 

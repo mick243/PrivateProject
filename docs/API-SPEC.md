@@ -14,8 +14,12 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 
 ```json
 { "error": "사람이 읽는 한 문장" }
-{ "error": "입력값이 올바르지 않습니다", "details": ["nickname: 2자 이상이어야 합니다"] }
+{ "error": "입력한 내용을 다시 확인해 주세요", "details": ["닉네임은 2자 이상으로 써 주세요"] }
 ```
+
+문구는 [DESIGN-GUIDE.md](DESIGN-GUIDE.md) 를 따릅니다 — 해요체, "무슨 일 + 할 일", 내부 이름 없이.
+`details` 도 화면에 그대로 뜨므로 필드 이름(`nickname:`)을 앞에 붙이지 않습니다 (2026-09-29 부터,
+`lib/validation.ts` formatIssues). 어느 칸인지가 필요한 곳(가입)은 `field` 를 따로 줍니다.
 
 | 상태 | 언제 | 만드는 곳 |
 |---|---|---|
@@ -23,14 +27,14 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 | 400 | 본문이 JSON 이 아님 | `badJson()` |
 | 400 | 스키마 위반 (+`details`) | `invalid(parsed.error)` |
 | 401 | 세션이 없음 | `needLogin()` |
-| 404 | 대상이 없음 | `notFound('오락실을 찾을 수 없습니다')` |
+| 404 | 대상이 없음 | `notFound('오락실을 찾을 수 없어요. 지워졌을 수 있어요')` |
 | 409 | 상태가 어긋남 (중복 리뷰 등) | `fail(409, '…')` |
 | 500 | 그 밖의 모든 예외 | `handle()` 이 자동으로 |
 
 전부 `lib/api-errors.ts` 에 있습니다. 라우트마다 다시 쓰지 마세요 — 정규화 전에는
 `'잘못된 id 입니다'` 13곳 · `'JSON 본문을 파싱할 수 없습니다'` 19곳 ·
 `'입력값이 올바르지 않습니다'` 17곳 · `'로그인이 필요합니다'` 11곳이었고,
-`parseId` 가 7곳에 재정의돼 있었습니다.
+`parseId` 가 7곳에 재정의돼 있었습니다. (2026-09-29 에 이 문구들은 모두 해요체로 바뀌었습니다 — 아래 §1-2.)
 
 ### 500 은 원인을 말하지 않습니다
 
@@ -54,12 +58,12 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 ## 0. 공통 규약
 
 - 모든 라우트: `runtime = 'nodejs'`, `dynamic = 'force-dynamic'` (예외: `/api/uploads/[id]`는 runtime만, `/api/chat`은 `maxDuration = 120` 추가)
-- JSON 본문 파싱 실패 → `400 {error: 'JSON 본문을 파싱할 수 없습니다'}`
-- zod 검증 실패 → `400 {error: '입력값이 올바르지 않습니다', details: string[]}` (`/api/account*`는 `{error: details[0]}`)
-- 경로 id 불량 → `400 {error: '잘못된 id 입니다'}`
+- JSON 본문 파싱 실패 → `400 {error: '보낸 내용을 읽지 못했어요. 새로고침한 뒤 다시 시도해 주세요'}`
+- zod 검증 실패 → `400 {error: '입력한 내용을 다시 확인해 주세요', details: string[]}` (`/api/account*`는 `{error: details[0]}`, `/api/auth/signup` 은 `{error: details[0], details, field}`)
+- 경로 id 불량 → `400 {error: '찾는 대상을 알 수 없어요. 주소를 다시 확인해 주세요'}`
 - **관리자 게이트**: `requireAdmin(request)` — 세션 쿠키를 읽고 DB에서 `is_admin`을 **재조회**(권한 회수 즉시 반영). 관리자-또는-소유자 판정은 `isAdminRequest(request)`.
 - 인증: 서명된 세션 쿠키 `arcade_session` (scrypt 해시, `sealPayload` 서명 토큰).
-- **신원은 오직 세션**: 쓰기는 `requirePlayer(request)`(비로그인 `401 {error: '로그인이 필요합니다'}`), 개인 표시가 섞인 읽기는 `sessionPlayerId(request)`(비로그인 = `null`). **본문·쿼리의 `playerId` 는 어디서도 읽지 않습니다** — 스키마에 없어 zod 가 버립니다(`lib/validation.ts` 머리말). 제보만 로그인 없이 받고 그때 `playerId = null` 입니다.
+- **신원은 오직 세션**: 쓰기는 `requirePlayer(request)`(비로그인 `401 {error: '로그인한 뒤 다시 시도해 주세요'}`), 개인 표시가 섞인 읽기는 `sessionPlayerId(request)`(비로그인 = `null`). **본문·쿼리의 `playerId` 는 어디서도 읽지 않습니다** — 스키마에 없어 zod 가 버립니다(`lib/validation.ts` 머리말). 제보만 로그인 없이 받고 그때 `playerId = null` 입니다.
 
 ---
 
@@ -119,10 +123,10 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 
 ### `POST /api/auth/login`
 `{nickname, password}`. 순서: 레이트리밋(`429`, 남은 분 포함) → 파싱 → 관리자 비밀번호 미설정 `503` → `ensureAdminAccount()` → `authenticate()`.
-실패 → `401 {error: '아이디 또는 비밀번호가 올바르지 않습니다'}` — 닉네임 존재 여부를 탐지할 수 없게 단일 메시지. 성공 → `200 {user}` + 세션 쿠키.
+실패 → `401 {error: '아이디나 비밀번호가 맞지 않아요. 다시 확인해 주세요'}` — 닉네임 존재 여부를 탐지할 수 없게 단일 메시지. 성공 → `200 {user}` + 세션 쿠키.
 
 ### `POST /api/auth/signup`
-`{nickname, password, passwordConfirm}`. 레이트리밋 키를 로그인과 **분리**(`signup:` 접두 — 남의 가입 실패가 기존 사용자를 잠그면 안 됨). 중복 닉네임 → `409`(의도적으로 숨기지 않음 — 숨기면 가입 자체가 불가능). 성공 → `201 {user}` + 세션 쿠키(가입 즉시 로그인).
+`{nickname, password, passwordConfirm}`. 레이트리밋 키를 로그인과 **분리**(`signup:` 접두 — 남의 가입 실패가 기존 사용자를 잠그면 안 됨). 중복 닉네임·이메일 → `409 {error, field}`(의도적으로 숨기지 않음 — 숨기면 가입 자체가 불가능). 400·409 의 `field`(`nickname` · `email` · `password` · `passwordConfirm` · `termsAccepted`)는 가입 화면이 **그 칸을 묻는 단계로 되돌아가는** 데 씁니다(가입은 4단계 — `components/SignupForm.tsx`). 성공 → `201 {user}` + 세션 쿠키(가입 즉시 로그인).
 
 ### `POST /api/auth/logout` → `200 {user: null}` + 쿠키 삭제
 

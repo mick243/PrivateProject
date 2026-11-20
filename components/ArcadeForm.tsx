@@ -97,7 +97,7 @@ export default function ArcadeForm({
     setErrors([]);
 
     if (!pickedCoord) {
-      setErrors(['지도에서 위치를 지정해 주세요']);
+      setErrors(['지도에서 오락실 위치를 골라 주세요']);
       return;
     }
 
@@ -130,12 +130,12 @@ export default function ArcadeForm({
       );
       const data = await res.json();
       if (!res.ok) {
-        setErrors(data.details ?? [data.error ?? '저장에 실패했습니다']);
+        setErrors(data.details ?? [data.error ?? '저장하지 못했어요. 다시 시도해 주세요']);
         return;
       }
       onSaved(data.arcade as Arcade);
     } catch {
-      setErrors(['네트워크 오류로 저장하지 못했습니다']);
+      setErrors(['연결이 잠깐 끊겼어요. 다시 시도해 주세요']);
     } finally {
       setSaving(false);
     }
@@ -146,7 +146,7 @@ export default function ArcadeForm({
 
   return (
     <form className="form" onSubmit={handleSubmit}>
-      <h2>{initial ? '오락실 수정' : '오락실 등록'}</h2>
+      <h2>{initial ? '오락실 수정' : '오락실 추가'}</h2>
 
       {errors.length > 0 && (
         <ul className="form-errors">
@@ -184,12 +184,13 @@ export default function ArcadeForm({
             className={picking ? 'btn btn-on' : 'btn'}
             onClick={onTogglePick}
           >
-            {picking ? '지도 클릭 대기중…' : '지도에서 위치 지정'}
+            {picking ? '지도에서 고르는 중…' : '지도에서 위치 고르기'}
           </button>
           <input
             type="number"
             step="0.000001"
             placeholder="위도"
+            aria-label="위도"
             value={pickedCoord?.lat ?? ''}
             onChange={(e) =>
               onCoordChange({
@@ -202,6 +203,7 @@ export default function ArcadeForm({
             type="number"
             step="0.000001"
             placeholder="경도"
+            aria-label="경도"
             value={pickedCoord?.lng ?? ''}
             onChange={(e) =>
               onCoordChange({
@@ -239,7 +241,7 @@ export default function ArcadeForm({
 
       <label className="field">
         <span>전화번호</span>
-        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="선택" />
+        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="없으면 비워 두세요" />
       </label>
 
       <label className="field">
@@ -253,7 +255,7 @@ export default function ArcadeForm({
       </label>
 
       <div className="field">
-        <span>보유 기종 ({selected.size})</span>
+        <span>있는 게임 ({selected.size})</span>
         {[
           { title: '리듬게임', items: rhythm },
           { title: '기타', items: etc },
@@ -325,9 +327,10 @@ export default function ArcadeForm({
 
       <div className="form-actions">
         <button type="submit" className="btn btn-primary" disabled={saving}>
-          {saving ? '저장 중…' : initial ? '수정' : '등록'}
+          {saving ? '저장하는 중…' : initial ? '고친 내용 저장하기' : '오락실 추가하기'}
         </button>
-        <button type="button" className="btn" onClick={onCancel} disabled={saving}>
+        {/* 취소는 주 버튼과 같은 무게로 세우지 않는다 (docs/DESIGN-GUIDE.md §1-2) */}
+        <button type="button" className="btn-link" onClick={onCancel} disabled={saving}>
           취소
         </button>
       </div>

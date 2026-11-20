@@ -33,9 +33,9 @@ const SEARCH_DEBOUNCE_MS = 300;
 
 const KIND_FILTERS: { key: string; label: string; kinds: ReportKind[] | null }[] = [
   { key: 'all', label: '전체', kinds: null },
-  { key: 'queue', label: '대기', kinds: ['queue'] },
-  { key: 'condition', label: '컨디션', kinds: ['condition'] },
-  { key: 'roster', label: '기종 변동', kinds: ['presence', 'absence'] },
+  { key: 'queue', label: '대기 인원', kinds: ['queue'] },
+  { key: 'condition', label: '기계 상태', kinds: ['condition'] },
+  { key: 'roster', label: '게임 들어옴·빠짐', kinds: ['presence', 'absence'] },
 ];
 
 /**
@@ -52,7 +52,7 @@ const RANGES: { hours: number | null; label: string }[] = [
   { hours: 3, label: '3시간' },
   { hours: 24, label: '24시간' },
   { hours: 24 * 7, label: '1주일' },
-  { hours: 24 * 30, label: '1개월' },
+  { hours: 24 * 30, label: '한 달' },
   { hours: null, label: '전체' },
 ];
 
@@ -159,7 +159,7 @@ export default function LiveFeed() {
       const data = await res.json().catch(() => ({}));
       if (seq !== loadSeq.current) return;
       if (!res.ok) {
-        setLoadError(data.error ?? `제보를 불러오지 못했습니다 (${res.status})`);
+        setLoadError(data.error ?? '제보를 불러오지 못했어요. 새로고침을 눌러 다시 시도해 주세요');
         return;
       }
       setLoadError(null);
@@ -167,7 +167,7 @@ export default function LiveFeed() {
       setFetchedAt(Date.now());
     } catch {
       // 30초마다 다시 시도하므로 옛 목록은 그대로 두고 문구만 띄운다
-      if (seq === loadSeq.current) setLoadError('네트워크에 연결하지 못했습니다');
+      if (seq === loadSeq.current) setLoadError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
@@ -182,14 +182,14 @@ export default function LiveFeed() {
    * 30초 자동 갱신과 겹쳐 스크롤이 튀는 것보다 한 줄이 사라지는 게 낫다.
    */
   const removeReport = async (r: MachineReport) => {
-    if (!confirm(`${r.arcadeName} · ${r.machineShortName} 제보를 삭제할까요?`)) return;
+    if (!confirm(`'${r.arcadeName}' ${r.machineShortName} 제보를 지울까요? 되돌릴 수 없어요.`)) return;
     const res = await fetch(`/api/reports/${r.id}`, { method: 'DELETE' });
     if (res.ok || res.status === 404) {
       setReports((prev) => prev.filter((x) => x.id !== r.id));
       return;
     }
     const data = await res.json().catch(() => null);
-    alert(data?.error ?? '삭제에 실패했습니다');
+    alert(data?.error ?? '제보를 지우지 못했어요. 다시 시도해 주세요');
   };
 
   // 대기 인원은 몇 분 만에 뒤집히므로 열어 둔 화면이 조용히 낡지 않게 한다.
@@ -215,14 +215,14 @@ export default function LiveFeed() {
   const untouched = kindKey === 'all' && machineId === '' && !term;
   const emptyMessage = term
     ? hours === null || rangeLabel === null
-      ? `'${term}' 검색 결과가 없습니다.`
-      : `'${term}' 검색 결과가 최근 ${rangeLabel} 안에는 없습니다. 기간을 넓혀 보세요.`
+      ? `'${term}' 에 맞는 제보가 없어요. 다른 검색어로 찾아보세요.`
+      : `'${term}' 에 맞는 제보가 최근 ${rangeLabel} 안에는 없어요. 기간을 넓혀 보세요.`
     : !untouched
-      ? '고른 조건에 맞는 제보가 없습니다. 종류·기종·기간을 넓혀 보세요.'
+      ? '고른 조건에 맞는 제보가 없어요. 종류 · 게임 · 기간을 넓혀 보세요.'
       : hours === null
         ? // 기간이 '전체' 인데도 없다 — 정말 아직 아무도 올리지 않은 것이다.
-          '아직 올라온 제보가 없습니다. 오락실을 열고 대기 인원·기체 컨디션을 알려 주시면 여기에 바로 뜹니다.'
-        : `최근 ${rangeLabel ?? '24시간'} 안에 올라온 제보가 없습니다. 기간을 '전체' 로 넓혀 보거나, 오락실을 열고 지금 상태를 알려 주세요.`;
+          '아직 올라온 제보가 없어요. 오락실을 열고 대기 인원이나 기계 상태를 알려 주면 여기에 바로 떠요.'
+        : `최근 ${rangeLabel ?? '24시간'} 안에 올라온 제보가 없어요. 기간을 '모든 기간' 으로 넓히거나, 오락실을 열고 지금 상태를 알려 주세요.`;
 
   return (
     <div className="feed-page">
@@ -230,9 +230,9 @@ export default function LiveFeed() {
         <div>
           <h1>실시간 제보</h1>
           <p className="muted small">
-            대기 인원 · 기체 컨디션 · 기종 변동. {Math.round(REFRESH_MS / 1000)}초마다 자동
-            갱신됩니다
-            {fetchedAt !== null && ` · 마지막 갱신 ${timeAgo(new Date(fetchedAt).toISOString())}`}
+            대기 인원, 기계 상태, 게임 들어옴·빠짐을 {Math.round(REFRESH_MS / 1000)}초마다 새로
+            불러와요
+            {fetchedAt !== null && ` (${timeAgo(new Date(fetchedAt).toISOString())} 업데이트)`}
           </p>
         </div>
         <button type="button" className="btn btn-sm" onClick={() => void load()}>
@@ -250,17 +250,24 @@ export default function LiveFeed() {
           className="search"
           type="search"
           aria-label="제보 검색"
-          placeholder="오락실 이름 · 기종 · 메모 검색"
+          placeholder="오락실 이름 · 게임 · 메모로 찾기"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
+        {/* 커뮤니티 검색 줄과 같은 모양 — 그쪽은 '글쓰기' 가 주 버튼이라 검색을 보조로 낮췄다 */}
         <button type="submit" className="btn btn-sm">
           검색
         </button>
         {/* 값이 없을 때 **감추지 않고 끈다** — 감추면 나타나고 사라질 때마다
             오른쪽의 건수 칸이 밀려서, 글자를 치는 중에 줄이 흔들린다
             (app/globals.css 의 .list-search-count 주석과 같은 이유). */}
-        <button type="button" className="btn btn-sm" disabled={q === ''} onClick={clearSearch}>
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={q === ''}
+          aria-label="검색어 지우기"
+          onClick={clearSearch}
+        >
           지우기
         </button>
       </form>
@@ -280,22 +287,24 @@ export default function LiveFeed() {
         </div>
 
         <select
+          aria-label="기간"
           value={hours === null ? ALL_TIME : String(hours)}
           onChange={(e) => setHours(e.target.value === ALL_TIME ? null : Number(e.target.value))}
         >
           {RANGES.map((r) => (
             <option key={r.label} value={r.hours === null ? ALL_TIME : String(r.hours)}>
-              {/* '전체' 앞에 '최근' 을 붙이면 "최근 전체" 가 된다 */}
-              {r.hours === null ? '전체 기간' : `최근 ${r.label}`}
+              {/* '전체' 앞에 '최근' 을 붙이면 "최근 전체" 가 된다. 빈 목록 문구가 이 이름을 부른다 */}
+              {r.hours === null ? '모든 기간' : `최근 ${r.label}`}
             </option>
           ))}
         </select>
 
         <select
+          aria-label="게임"
           value={machineId}
           onChange={(e) => setMachineId(e.target.value ? Number(e.target.value) : '')}
         >
-          <option value="">모든 기종</option>
+          <option value="">모든 게임</option>
           {machines.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
@@ -349,10 +358,10 @@ export default function LiveFeed() {
                   <button
                     type="button"
                     className="btn btn-sm btn-danger feed-del"
-                    title="이 제보를 삭제합니다 (관리자)"
+                    title="이 제보 지우기 (관리자)"
                     onClick={() => void removeReport(r)}
                   >
-                    삭제
+                    지우기
                   </button>
                 )}
               </span>

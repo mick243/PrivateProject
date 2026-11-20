@@ -23,13 +23,13 @@ async function onGet(request: Request, ctx: { params: Promise<{ id: string }> })
   if (id === null) return badId();
 
   const attachment = await getAttachment(id);
-  if (!attachment) return notFound('첨부를 찾을 수 없습니다');
+  if (!attachment) return notFound('첨부를 찾을 수 없어요');
 
   // 크기만 읽는다 — 내용을 메모리에 올리지 않는다 (lib/uploads.ts readRange 주석).
   const total = await size(attachment.storageKey);
   if (total === null) {
     // DB 행은 있는데 파일이 없는 경우 (수동 삭제 등). 500 이 아니라 404 가 맞다.
-    return notFound('첨부 파일이 없습니다');
+    return notFound('첨부 파일을 찾을 수 없어요');
   }
 
   const base = {

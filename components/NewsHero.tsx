@@ -192,7 +192,7 @@ export default function NewsHero({ sites }: { sites: readonly GameSite[] }) {
   return (
     <section
       className="news-hero"
-      aria-roledescription="캐러셀"
+      aria-roledescription="넘겨 보는 소식"
       aria-labelledby={headingId}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
@@ -236,7 +236,7 @@ export default function NewsHero({ sites }: { sites: readonly GameSite[] }) {
             가로로 미는 손쉬운 방법이 없어 화살표가 안내이자 유일한 조작 수단입니다
             (components/ScrollStrip.tsx 가 같은 이유로 같은 선택을 합니다).
           */}
-          <button type="button" className="news-hero-arrow is-prev" onClick={prev} aria-label="이전 게임">
+          <button type="button" className="news-hero-arrow is-prev" onClick={prev} aria-label="이전 게임 보기">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
               <path
                 d="M15 5 8 12l7 7"
@@ -248,7 +248,7 @@ export default function NewsHero({ sites }: { sites: readonly GameSite[] }) {
               />
             </svg>
           </button>
-          <button type="button" className="news-hero-arrow is-next" onClick={next} aria-label="다음 게임">
+          <button type="button" className="news-hero-arrow is-next" onClick={next} aria-label="다음 게임 보기">
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
               <path
                 d="m9 5 7 7-7 7"
@@ -268,7 +268,7 @@ export default function NewsHero({ sites }: { sites: readonly GameSite[] }) {
                 type="button"
                 role="tab"
                 aria-selected={i === index}
-                aria-label={site.name}
+                aria-label={`${site.name} 보기`}
                 className={i === index ? 'is-on' : undefined}
                 onClick={() => scrollToSlide(i)}
               />

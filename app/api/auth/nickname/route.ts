@@ -52,12 +52,12 @@ async function onPost(request: Request) {
     if (result.reason === 'settled') {
       // 뒤로 가기로 이 화면에 다시 온 경우가 대부분입니다. 실패이긴 하지만
       // 사용자가 고칠 것이 없으므로 무엇이 끝났는지만 알려 줍니다.
-      return conflict('닉네임은 이미 정해졌습니다');
+      return conflict('닉네임은 이미 정했어요. 바꾸려면 내 정보에서 바꿔 주세요');
     }
     if (result.reason === 'reserved') return conflict(RESERVED_NICKNAME_MESSAGE);
     // 가입과 같은 이유로 "이미 있다"를 숨기지 않습니다 — 숨기면 무엇을 고쳐야
     // 하는지 알려 줄 방법이 없고, 어차피 플레이어 목록에 이름이 그대로 보입니다.
-    return conflict('이미 사용 중인 닉네임입니다');
+    return conflict('이미 누가 쓰고 있는 닉네임이에요. 다른 닉네임을 골라 주세요');
   }
 
   // 비밀번호는 이름이 확정된 뒤에 겁니다 — 이름이 409 로 반려됐는데 비밀번호만

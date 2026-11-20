@@ -15,14 +15,12 @@ export default function OfflinePage() {
       <section className="login-card" role="status">
         <h1>지금은 오프라인이에요</h1>
         <p className="muted small">
-          오락실 지도와 제보는 서버에서 바로 받아 오는 정보라, 네트워크가 돌아오면 다시 볼 수
-          있어요. 데이터 연결을 확인한 뒤 새로고침해 주세요.
+          오락실 지도와 제보는 인터넷이 연결돼야 볼 수 있어요. 와이파이나 데이터 연결을 확인한
+          뒤 다시 시도해 주세요.
         </p>
-        <div className="form-actions">
-          <a className="btn btn-primary btn-sm" href="/">
-            다시 시도
-          </a>
-        </div>
+        <a className="btn btn-primary btn-block" href="/">
+          다시 시도하기
+        </a>
       </section>
     </main>
   );

@@ -36,7 +36,7 @@ async function onPost(request: Request, ctx: Ctx) {
   if (!body.ok) return body.response;
 
   const existing = await getPost(postId, null);
-  if (!existing) return notFound('글을 찾을 수 없습니다');
+  if (!existing) return notFound('글을 찾을 수 없어요. 지워졌을 수 있어요');
 
   await createComment({ ...body.value, postId, playerId: guard.playerId });
   return NextResponse.json(
@@ -65,7 +65,7 @@ async function onDelete(request: Request, ctx: Ctx) {
   const { searchParams } = new URL(request.url);
   const commentId = parseId(searchParams.get('commentId') ?? '');
   const playerId = await sessionPlayerId(request);
-  if (commentId === null) return fail(400, 'commentId 가 필요합니다');
+  if (commentId === null) return fail(400, '어느 댓글인지 알 수 없어요. 새로고침한 뒤 다시 시도해 주세요');
 
   const isAdmin = await isAdminRequest(request);
   if (!isAdmin && playerId === null) return needLogin();
@@ -80,7 +80,7 @@ async function onDelete(request: Request, ctx: Ctx) {
   if (removedFrom === null) {
     // 관리자에게는 "없는 댓글", 그 외에는 "남의 댓글" — 관리자는 소유자 검사를
     // 거치지 않으므로 실패의 뜻이 하나뿐이다.
-    return isAdmin ? notFound('댓글을 찾을 수 없습니다') : forbidden('본인이 쓴 댓글만 삭제할 수 있습니다');
+    return isAdmin ? notFound('댓글을 찾을 수 없어요. 이미 지워졌을 수 있어요') : forbidden('내가 쓴 댓글만 지울 수 있어요');
   }
 
   return NextResponse.json({ post: await getPost(postId, playerId, commentOffset) });

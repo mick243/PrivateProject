@@ -44,11 +44,11 @@ async function onPost(request: Request) {
   // 함께 넘지 못하게). 키가 둘이라 병렬로 — 순서가 없습니다.
   const lockedFor = Math.max(0, ...(await Promise.all(keys.map(takeLoginAttempt))));
   if (lockedFor > 0) {
-    return tooMany(`로그인 시도가 많습니다. ${Math.ceil(lockedFor / 60000)}분 후 다시 시도해 주세요`, lockedFor);
+    return tooMany(`여러 번 틀려서 잠깐 잠갔어요. ${Math.ceil(lockedFor / 60000)}분 뒤에 다시 시도해 주세요`, lockedFor);
   }
 
   if (!configuredAdminPassword()) {
-    return unavailable('ADMIN_PASSWORD 가 설정되지 않아 로그인할 수 없습니다');
+    return unavailable('지금은 관리자 로그인을 쓸 수 없어요. 서버 설정을 확인해 주세요');
   }
 
   // env 의 관리자 계정을 DB 에 맞춰 둡니다. 첫 로그인이면 여기서 계정이 생기고,
@@ -57,7 +57,7 @@ async function onPost(request: Request) {
 
   const user = await authenticate(body.value.nickname, body.value.password);
   // 틀렸으면 따로 기록하지 않습니다 — 위에서 이미 셌습니다.
-  if (!user) return fail(401, '아이디 또는 비밀번호가 올바르지 않습니다');
+  if (!user) return fail(401, '아이디나 비밀번호가 맞지 않아요. 다시 확인해 주세요');
 
   await Promise.all(keys.map(clearLoginFailures));
   // 비밀번호가 맞은 **뒤에** 정지를 알립니다 — 먼저 알리면 남의 아이디가 정지됐는지 캐 볼 수 있습니다.

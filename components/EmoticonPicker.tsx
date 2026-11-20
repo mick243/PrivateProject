@@ -11,7 +11,7 @@ import { refreshEmoticons, useEmoticons } from '@/lib/use-emoticons';
 import { useIsAdmin } from '@/lib/use-session';
 
 /**
- * 이모티콘을 고르는 단추 (등록 단추 오른쪽).
+ * 이모티콘을 고르는 단추 (댓글 · 리뷰 · 채보 평가의 '남기기' 단추 오른쪽).
  *
  * 고른 것은 본문 **끝에** `[[emo:N]]` 로 붙습니다. 커서 자리에 끼워 넣지 않는
  * 이유는 세 화면(댓글·리뷰·채보 평가)이 각자 textarea 를 들고 있어서, 커서
@@ -65,7 +65,7 @@ export default function EmoticonPicker({
       return;
     }
     if (name.trim() === '') {
-      setError('이름을 입력해 주세요');
+      setError('이름을 적어 주세요');
       return;
     }
     setBusy(true);
@@ -77,21 +77,22 @@ export default function EmoticonPicker({
       const res = await fetch('/api/emoticons', { method: 'POST', body: form });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error ?? '등록에 실패했습니다');
+        setError(data.error ?? '이모티콘을 올리지 못했어요. 다시 시도해 주세요');
         return;
       }
       setName('');
       if (fileRef.current) fileRef.current.value = '';
       await refreshEmoticons();
     } catch {
-      setError('네트워크 오류');
+      setError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     } finally {
       setBusy(false);
     }
   };
 
   const remove = async (id: number, label: string) => {
-    if (!window.confirm(`'${label}' 이모티콘을 목록에서 뺄까요? 이미 쓰인 댓글은 그대로 남습니다.`)) {
+    // 뺀 이모티콘은 이미 쓰인 자리에서 이름표('[이모티콘]')로 보인다 — components/EmoticonText.tsx
+    if (!window.confirm(`'${label}' 이모티콘을 목록에서 뺄까요? 이미 쓰인 자리에는 이름표로 남아요.`)) {
       return;
     }
     setBusy(true);
@@ -100,12 +101,12 @@ export default function EmoticonPicker({
       const res = await fetch(`/api/emoticons/${id}`, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error ?? '삭제에 실패했습니다');
+        setError(data.error ?? '이모티콘을 빼지 못했어요. 다시 시도해 주세요');
         return;
       }
       await refreshEmoticons();
     } catch {
-      setError('네트워크 오류');
+      setError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     } finally {
       setBusy(false);
     }
@@ -117,8 +118,8 @@ export default function EmoticonPicker({
         type="button"
         className="btn btn-sm emoticon-btn"
         aria-expanded={open}
-        aria-label="이모티콘"
-        title="이모티콘"
+        aria-label="이모티콘 넣기"
+        title="이모티콘 넣기"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
       >
@@ -140,7 +141,7 @@ export default function EmoticonPicker({
         <div className="emoticon-panel">
           {emoticons.length === 0 ? (
             <p className="muted small emoticon-empty">
-              {isAdmin ? '아직 등록된 이모티콘이 없습니다. 아래에서 올려 주세요.' : '아직 등록된 이모티콘이 없습니다.'}
+              {isAdmin ? '아직 이모티콘이 없어요. 아래에서 첫 이모티콘을 올려 주세요.' : '아직 이모티콘이 없어요.'}
             </p>
           ) : (
             <ul className="emoticon-grid">
@@ -175,7 +176,7 @@ export default function EmoticonPicker({
           {isAdmin && (
             <div className="emoticon-add">
               <p className="muted small">
-                관리자 · JPG · PNG · GIF, {MB}MB 까지 ·{' '}
+                관리자 · JPG · PNG · GIF, {MB}MB까지 ·{' '}
                 <Link href="/admin/emoticons">관리 페이지</Link>
               </p>
               <input type="file" accept={ACCEPT} ref={fileRef} disabled={busy} />
@@ -194,7 +195,7 @@ export default function EmoticonPicker({
                   disabled={busy}
                   onClick={() => void upload()}
                 >
-                  {busy ? '올리는 중…' : '등록'}
+                  {busy ? '올리는 중…' : '올리기'}
                 </button>
               </div>
             </div>

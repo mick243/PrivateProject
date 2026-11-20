@@ -38,7 +38,7 @@ async function onGet(_request: Request, ctx: Ctx) {
   if (arcadeId === null) return badId();
 
   const found = await lookupReviewSummary(arcadeId);
-  if (found.kind === 'no-arcade') return notFound('오락실을 찾을 수 없습니다');
+  if (found.kind === 'no-arcade') return notFound('오락실을 찾을 수 없어요. 지워졌을 수 있어요');
   if (found.kind === 'ready') return NextResponse.json({ summary: found.view });
 
   const notEnough = () =>
@@ -71,7 +71,7 @@ async function onGet(_request: Request, ctx: Ctx) {
     // undici 의 'fetch failed' 는 진짜 이유를 cause 에 숨기므로 그것까지 적습니다.
     const cause = err instanceof Error && err.cause instanceof Error ? ` (cause: ${err.cause.message})` : '';
     console.error(`[review-summary] arcade ${arcadeId}:`, err instanceof Error ? err.name + ': ' + err.message + cause : err);
-    return fail(502, '요약을 만들지 못했습니다. 잠시 뒤 다시 열어 주세요.', {
+    return fail(502, '요약을 만들지 못했어요. 조금 뒤에 다시 열어 주세요.', {
       extra: { summary: null, reason: 'failed' },
     });
   }

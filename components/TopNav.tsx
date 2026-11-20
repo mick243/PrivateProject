@@ -34,6 +34,7 @@ export default function TopNav() {
         type="button"
         className="topnav-burger"
         aria-label={open ? '메뉴 닫기' : '메뉴 열기'}
+        title={open ? '메뉴 닫기' : '메뉴 열기'}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >

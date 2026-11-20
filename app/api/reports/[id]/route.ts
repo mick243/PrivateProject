@@ -24,7 +24,7 @@ async function onDelete(request: Request, ctx: Ctx) {
   if (id === null) return badId();
 
   const deleted = await deleteReport(id);
-  return deleted ? new NextResponse(null, { status: 204 }) : notFound('제보를 찾을 수 없습니다');
+  return deleted ? new NextResponse(null, { status: 204 }) : notFound('제보를 찾을 수 없어요. 이미 지워졌을 수 있어요');
 }
 
 export const DELETE = handle(onDelete);

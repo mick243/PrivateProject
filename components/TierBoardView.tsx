@@ -100,13 +100,18 @@ export default function TierBoardView() {
 
       const res = await fetch(`/api/tier?${params}`);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? `서열표를 불러오지 못했습니다 (${res.status})`);
+      if (!res.ok) throw new Error(data.error ?? '서열표를 불러오지 못했어요.');
       setGames((data.games as TierGame[]) ?? []);
       setLevels((data.levels as LevelOption[]) ?? []);
       setBoard((data.board as TierBoard) ?? null);
       setLoadError(null);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : '서열표를 불러오지 못했습니다');
+      // fetch 가 던지는 TypeError 의 message 는 브라우저 문구('Failed to fetch')라 화면에 내지 않는다
+      setLoadError(
+        e instanceof Error && !(e instanceof TypeError)
+          ? e.message
+          : '연결이 잠깐 끊겼어요. 다시 시도해 주세요',
+      );
     } finally {
       setLoading(false);
     }
@@ -213,7 +218,8 @@ export default function TierBoardView() {
     ? [board.game.name, board.versionLabel, modeLevelLabel(board.mode, board.level)]
         .filter(Boolean)
         .join(' ')
-    : '서열표';
+    : // 아래 h1 이 뒤에 '서열표' 를 붙인다 — 여기도 '서열표' 면 "서열표 서열표" 가 된다
+      '체감 난이도';
 
   /**
    * 사볼의 NOV/ADV/EXH/MXM 은 모드가 아니라 난이도다 (migrate-045).
@@ -268,12 +274,12 @@ export default function TierBoardView() {
                 (tier_settings.chart_basis · migrate-044). 없으면 줄을 그리지 않는다. */}
             {board?.settings.chartBasis && (
               <p className="tier-basis muted">
-                해당 서열표는 {board.settings.chartBasis}를 기준으로 작성되었습니다.
+                채보 목록은 {board.settings.chartBasis} 기준이에요.
               </p>
             )}
             <p className="muted small">
-              같은 레벨 안에서의 체감 난이도를, 그 채보를 <strong>클리어한 사람들의</strong>{' '}
-              투표 평균으로 배치합니다. 채보를 누르면 평가(코멘트)도 볼 수 있습니다.
+              같은 레벨 채보를 <strong>클리어한 사람들</strong>의 체감 난이도 투표로 줄 세웠어요.
+              채보를 누르면 평가를 보고 투표할 수 있어요.
             </p>
           </div>
 
@@ -302,7 +308,7 @@ export default function TierBoardView() {
                   level: null,
                 })
               }
-              title="서열표가 등록된 게임"
+              title="서열표가 있는 게임"
             >
               {games.map((g) => (
                 <option key={g.machineId} value={g.machineId}>
@@ -384,13 +390,13 @@ export default function TierBoardView() {
           <p className="warn pad" role="alert">
             {loadError}{' '}
             <button type="button" className="btn btn-sm" onClick={() => void loadBoard()}>
-              다시 시도
+              다시 불러오기
             </button>
           </p>
         ) : loading && !board ? (
           <p className="muted pad">불러오는 중…</p>
         ) : !board ? (
-          <p className="muted pad">이 게임에는 아직 등록된 채보가 없습니다.</p>
+          <p className="muted pad">이 게임은 아직 채보 목록이 없어요. 위에서 다른 게임을 골라 주세요.</p>
         ) : (
           <div className="tier-rows">
             {board.groups.map((g, i) => (
@@ -421,7 +427,7 @@ export default function TierBoardView() {
                         .filter(Boolean)
                         .join(' · ')}
                     >
-                      {c.myClear && <i className="clear-mark" title="클리어함" />}
+                      {c.myClear && <i className="clear-mark" title="내가 클리어한 채보" />}
                       <span className="chip-title">
                         {c.title}
                         {/* 한 보드에 여러 채보가 섞이는 게임은 어느 것인지 곡명 뒤에
@@ -465,19 +471,21 @@ export default function TierBoardView() {
                   푸터로 내려오면서 둘 다 방향이 뒤집혔습니다. 원래 문장을 그대로 두면
                   화면이 위를 가리키며 "아래" 라고 말하게 됩니다.
                 */}
-                아직 투표가 모이지 않아 등급에 놓인 채보가 없습니다.
-                {undecidedCount > 0 && ` 이 구간의 ${undecidedCount}곡은 모두 위 ‘미정’ 에 있습니다.`}{' '}
-                클리어한 채보를 눌러 체감 난이도를 투표하면 등급 칸에 줄이 섭니다.
+                {undecidedCount > 0
+                  ? `아직 투표가 모이지 않아 ${undecidedCount}곡이 위 ‘미정’ 칸에 있어요.`
+                  : '아직 등급 칸에 놓인 채보가 없어요.'}{' '}
+                클리어한 채보를 눌러 투표하면 등급 칸에 줄이 서요.
               </p>
             )}
+            {/* 판정 규칙은 줄이지 않는다 — 왜 '미정' · '개인차' 에 있는지 읽는 사람이 알아야 한다.
+                말만 쉽게, 두 문장으로 (DESIGN-GUIDE §1-1 · §5 수렴도 → 의견 일치도). */}
             {[board.game.name, board.versionLabel, modeLevelLabel(board.mode, board.level)]
               .filter(Boolean)
               .join(' ')}{' '}
-            · 총 {board.totalCharts}곡 · 투표{' '}
-            {board.settings.minVotes}건 미만은 &lsquo;미정&rsquo;, 수렴도{' '}
-            {board.settings.minConvergence} 미만은 &lsquo;개인차&rsquo;로 분류됩니다. 투표 범위{' '}
-            {board.settings.voteMin.toFixed(1)} ~ {board.settings.voteMax.toFixed(1)}. 등급 단계와 임계값은 게임마다
-            다릅니다.
+            · 총 {board.totalCharts}곡. 투표가 {board.settings.minVotes}표보다 적으면
+            &lsquo;미정&rsquo;, 의견 일치도가 {board.settings.minConvergence}보다 낮으면
+            &lsquo;개인차&rsquo; 칸에 놓여요. 투표는 {board.settings.voteMin.toFixed(1)} ~{' '}
+            {board.settings.voteMax.toFixed(1)} 사이로 하고, 등급 기준은 게임마다 달라요.
           </footer>
         )}
       </section>
@@ -492,7 +500,7 @@ export default function TierBoardView() {
           />
         ) : (
           <div className="detail-empty muted">
-            <p>채보를 선택하면 투표 분포 · 내 기록 · 채보 평가를 볼 수 있습니다.</p>
+            <p>채보를 누르면 투표 분포와 평가를 보고, 체감 난이도를 투표할 수 있어요.</p>
           </div>
         )}
       </aside>
