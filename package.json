@@ -29,6 +29,7 @@
     "db:snapshot": "node scripts/snapshot-pg-to-pglite.mjs",
     "db:prune-players": "node scripts/prune-passwordless-players.mjs",
     "db:purge-demo": "node scripts/purge-demo-data.mjs",
+    "uploads:purge": "node scripts/purge-uploads.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
