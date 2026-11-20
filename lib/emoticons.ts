@@ -29,7 +29,7 @@ const url = (id: number): string => `/api/emoticons/${id}/image`;
 
 export class EmoticonNameTakenError extends Error {
   constructor() {
-    super('같은 이름의 이모티콘이 이미 있습니다');
+    super('같은 이름의 이모티콘이 이미 있어요. 다른 이름을 써 주세요');
   }
 }
 

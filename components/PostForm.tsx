@@ -60,7 +60,7 @@ export default function PostForm({
    * 매 입력마다 캐럿이 튑니다 (RichTextEditor 주석 참고).
    *
    * `body` 는 평문(마커 포함)이고 `bodyDoc` 은 서식 있는 문서입니다. 서버는
-   * 문서가 있으면 평문을 문서에서 다시 만들지만, 등록 버튼을 언제 열지는 화면이
+   * 문서가 있으면 평문을 문서에서 다시 만들지만, 올리기 버튼을 언제 열지는 화면이
    * 판단해야 하므로 평문도 함께 들고 있습니다.
    */
   const [body, setBody] = useState(initial?.body ?? '');
@@ -89,12 +89,12 @@ export default function PostForm({
       });
       const data = await res.json();
       if (!res.ok) {
-        setErrors(data.details ?? [data.error ?? '저장에 실패했습니다']);
+        setErrors(data.details ?? [data.error ?? '글을 저장하지 못했어요. 다시 시도해 주세요']);
         return;
       }
       onSaved(data.post as PostDetail);
     } catch {
-      setErrors(['네트워크 오류']);
+      setErrors(['연결이 잠깐 끊겼어요. 다시 시도해 주세요']);
     } finally {
       setBusy(false);
     }
@@ -126,17 +126,35 @@ export default function PostForm({
    */
   const noticeSelected = isNotice(category);
 
+  /**
+   * 주 버튼이 꺼져 있는 이유 — 첫 번째 하나만. 꺼진 버튼만 보여 주면 무엇을 채워야 하는지
+   * 알 수 없습니다 (docs/DESIGN-GUIDE.md §1-3). 문구는 서버(lib/validation.ts)와 같게.
+   */
+  const missing =
+    machineId === '' && !noticeSelected
+      ? '게임을 골라 주세요'
+      : title.trim().length < 2
+        ? '제목을 2자 이상 써 주세요'
+        : isBodyEmpty(body)
+          ? '내용을 입력해 주세요'
+          : null;
+
   return (
     <div className="post-form">
+      {/*
+        취소는 여기 한 곳만, 글자 링크로 둔다 (DESIGN-GUIDE §1-2). 예전에는 맨 아래
+        저장 바에도 같은 무게의 '취소' 가 있어 할 일이 둘로 읽혔다 — 아래 바에는
+        주 버튼 하나만 남긴다. 폼 맨 위라 쓰기 전에 마음을 바꾼 사람에게 가깝다.
+      */}
       <header className="board-head">
         <h1>{initial ? '글 수정' : '글쓰기'}</h1>
-        <button type="button" className="btn btn-sm" onClick={onCancel}>
+        <button type="button" className="btn-link" onClick={onCancel}>
           취소
         </button>
       </header>
 
       <div className="field">
-        <label htmlFor="post-game">게임{noticeSelected && ' (공지는 선택하지 않습니다)'}</label>
+        <label htmlFor="post-game">게임{noticeSelected && ' (공지는 고르지 않아요)'}</label>
         <select
           id="post-game"
           /* 공지일 때는 저장될 값(게임 없음)을 그대로 보여준다 — 화면과 저장물이
@@ -145,7 +163,7 @@ export default function PostForm({
           disabled={busy || noticeSelected}
           onChange={(e) => setMachineId(e.target.value ? Number(e.target.value) : '')}
         >
-          <option value="">{noticeSelected ? '게임 없음 (커뮤니티 전체)' : '게임 선택'}</option>
+          <option value="">{noticeSelected ? '게임 없음 (커뮤니티 전체)' : '게임 고르기'}</option>
           {boards.map((b) => (
             <option key={b.machineId} value={b.machineId}>
               {b.name}
@@ -211,19 +229,12 @@ export default function PostForm({
           type="button"
           className="btn btn-primary btn-sm"
           /* 첨부만 있는 글도 허용 — 그래서 글자 수가 아니라 "글자 또는 첨부" 를 본다 */
-          disabled={
-            busy ||
-            (machineId === '' && !noticeSelected) ||
-            title.trim().length < 2 ||
-            isBodyEmpty(body)
-          }
+          disabled={busy || missing !== null}
           onClick={save}
         >
-          {initial ? '수정' : '등록'}
+          {initial ? '고친 글 저장하기' : '글 올리기'}
         </button>
-        <button type="button" className="btn btn-sm" disabled={busy} onClick={onCancel}>
-          취소
-        </button>
+        {!busy && missing && <span className="muted small">{missing}</span>}
       </div>
     </div>
   );

@@ -9,8 +9,8 @@ import type { ZodError, ZodType, output } from 'zod';
  * 본문 모양(`{ error: string }`)은 이미 95곳에서 일관됐습니다. 문제는 두 가지였습니다.
  *
  * ① **같은 것을 라우트마다 다시 씁니다.** `parseId` 가 7곳에 재정의돼 있고,
- *    `'잘못된 id 입니다'` 13곳 · `'JSON 본문을 파싱할 수 없습니다'` 19곳 ·
- *    `'입력값이 올바르지 않습니다'` 17곳 · `'로그인이 필요합니다'` 11곳입니다.
+ *    `'찾는 대상을 알 수 없어요. 주소를 다시 확인해 주세요'` 13곳 · `'보낸 내용을 읽지 못했어요. 새로고침한 뒤 다시 시도해 주세요'` 19곳 ·
+ *    `'입력한 내용을 다시 확인해 주세요'` 17곳 · `'로그인한 뒤 다시 시도해 주세요'` 11곳입니다.
  *    문구를 고치려면 60군데를 찾아야 하고, 하나 놓치면 화면에서만 갈립니다.
  *
  * ② **처리되지 않은 에러는 `{ error }` 가 아닙니다.** 실측했습니다 — DB 를 끊고
@@ -30,10 +30,10 @@ import type { ZodError, ZodType, output } from 'zod';
  */
 
 /** 500 응답의 문구. 원인은 서버 로그에만 남깁니다 */
-const GENERIC_500 = '일시적인 오류입니다. 잠시 후 다시 시도해 주세요';
+const GENERIC_500 = '잠깐 문제가 생겼어요. 조금 뒤에 다시 시도해 주세요';
 
 /** zod 실패의 기본 문구 */
-const INVALID = '입력값이 올바르지 않습니다';
+const INVALID = '입력한 내용을 다시 확인해 주세요';
 
 /**
  * 실패 응답에 `error` 말고 더 실을 것.
@@ -78,9 +78,9 @@ export function parseId(raw: unknown): number | null {
   return isDbId(id) ? id : null;
 }
 
-export const badId = (): NextResponse => fail(400, '잘못된 id 입니다');
-export const badJson = (): NextResponse => fail(400, 'JSON 본문을 파싱할 수 없습니다');
-export const needLogin = (): NextResponse => fail(401, '로그인이 필요합니다');
+export const badId = (): NextResponse => fail(400, '찾는 대상을 알 수 없어요. 주소를 다시 확인해 주세요');
+export const badJson = (): NextResponse => fail(400, '보낸 내용을 읽지 못했어요. 새로고침한 뒤 다시 시도해 주세요');
+export const needLogin = (): NextResponse => fail(401, '로그인한 뒤 다시 시도해 주세요');
 /** 로그인은 했지만 이 일을 할 권한이 없음 (남의 글·관리자 전용·클리어 게이트) */
 export const forbidden = (message: string): NextResponse => fail(403, message);
 export const notFound = (message: string): NextResponse => fail(404, message);
@@ -96,11 +96,11 @@ export const unavailable = (message: string, retryAfterMs?: number): NextRespons
 /**
  * zod 실패의 머리 문구를 무엇으로 할지.
  *
- *   'generic' → '입력값이 올바르지 않습니다' + details. 폼이 details 를 칸마다 보여 줄 때
+ *   'generic' → '입력한 내용을 다시 확인해 주세요' + details. 폼이 details 를 칸마다 보여 줄 때
  *               (ArcadeForm · PostForm · ChartComments · PostDetailView 가 details 를 먼저 봅니다)
  *   'first'   → 첫 번째 문구를 그대로 error 로. details 를 보지 않고 `data.error` 한 줄만
- *               띄우는 화면(/account)용 — "비밀번호는 8자 이상" 이 "입력값이 올바르지
- *               않습니다" 로 뭉개지면 무엇을 고칠지 모릅니다.
+ *               띄우는 화면(/account)용 — "비밀번호는 8자 이상" 이 "입력한 내용을
+ *               다시 확인해 주세요" 로 뭉개지면 무엇을 고칠지 모릅니다.
  *
  * 어느 쪽이든 details 는 실립니다. 예전에 'first' 모양을 손으로 만들던 라우트 2곳
  * (계정 수정 · 계정 확인)은 details 를 빼고 보냈는데, 더 실어도 그 화면은 모르는 키라 무시합니다.

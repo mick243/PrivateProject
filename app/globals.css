@@ -733,6 +733,79 @@ a.btn {
   color: var(--text-danger);
 }
 
+/*
+ * 주 행동을 카드 폭으로 — 폼 카드(로그인 · 가입 · 내 정보)의 "그 화면에서 할 일 하나".
+ * 옆에 같은 무게의 버튼을 세우지 않는 것이 요점입니다 (docs/DESIGN-GUIDE.md §1-2).
+ */
+.btn-block {
+  width: 100%;
+  justify-content: center;
+  padding: 11px 14px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/*
+ * 낮춘 보조 행동 — 취소 · 다른 길 · 나중에. 주 버튼과 같은 무게로 나란히 두면
+ * 한 화면에 할 일이 둘로 읽힙니다 (docs/DESIGN-GUIDE.md §3-5).
+ * <a> 와 <button> 양쪽에 씁니다.
+ */
+.btn-link {
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.btn-link:hover:not(:disabled) {
+  color: var(--text);
+}
+.btn-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 보조 링크들을 한 줄에 모으는 자리 — 주 버튼 바로 아래 */
+.link-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/*
+ * 단계 표시 — "몇 번째 질문인지" (가입 1/4). 막대는 글자를 대신하지 않고 거듭니다.
+ */
+.steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.steps-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.steps-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .steps-bar > span {
+    transition: none;
+  }
+}
+
 /* ── 목록 ───────────────────────────────────────────────── */
 .list-head {
   display: flex;
@@ -3193,10 +3266,6 @@ a.btn {
 }
 
 /* 목록 헤더에서 등록 버튼이 있던 자리 — 없는 이유를 남긴다 */
-.admin-hint {
-  white-space: nowrap;
-}
-
 /* 제보 한 줄에 붙는 관리자 삭제 */
 .feed-del {
   padding: 1px 7px;
@@ -4451,27 +4520,65 @@ a.btn {
 .consent a {
   color: var(--info);
 }
-/* /account 아래쪽 구역 — 탈퇴(.danger-zone)와 같은 모양이되 경고색이 아니다.
-   "다른 기기에서 로그아웃" 은 되돌릴 수 없는 일이 아니라 잠그는 쪽 동작이다. */
-.account-section {
-  margin-top: 20px;
-  padding-top: 16px;
+/*
+ * /account 메뉴 — 한 줄이 한 가지 일입니다. 누르면 그 일만 하는 화면으로 들어갑니다
+ * (components/AccountForm.tsx · docs/DESIGN-GUIDE.md §1-2). 예전의 .account-section ·
+ * .danger-zone 구역(한 화면에 할 일 다섯)을 대신합니다.
+ */
+.account-menu {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.account-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.account-menu-row:first-child {
+  border-top: 0;
+}
+.account-menu-row:hover,
+.account-menu-row:focus-visible {
+  background: var(--overlay);
+}
+.account-menu-row > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.account-menu-row strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.account-menu-chevron {
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+/* 탈퇴는 메뉴와 떨어뜨려 맨 아래에 — 되돌릴 수 없는 일은 주 행동 곁에 두지 않습니다 */
+.account-leave {
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px dashed var(--line);
+  text-align: center;
 }
-.account-section h2 {
-  margin: 0 0 6px;
-  font-size: var(--t4);
-  color: var(--fg);
-}
-.danger-zone {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px dashed var(--line);
-}
-.danger-zone h2 {
-  margin: 0 0 6px;
-  font-size: var(--t4);
-  color: var(--danger);
+.btn-link.is-danger {
+  color: var(--text-danger);
 }
 .btn-danger {
   border-color: var(--danger);
@@ -4611,9 +4718,6 @@ a.btn {
 }
 .admin-actions .btn + .btn {
   margin-left: 6px;
-}
-.account-admin h2 {
-  color: var(--text);
 }
 @media (max-width: 600px) {
   .admin-head {

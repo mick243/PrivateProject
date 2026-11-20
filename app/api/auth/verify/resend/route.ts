@@ -33,7 +33,7 @@ async function onGet(request: Request) {
   if (!guard.ok) return guard.response;
 
   const status = await verificationStatus(guard.playerId);
-  if (!status) return notFound('계정을 찾을 수 없습니다');
+  if (!status) return notFound('계정을 찾을 수 없어요. 다시 로그인해 주세요');
 
   return NextResponse.json({
     ...status,
@@ -47,17 +47,17 @@ async function onPost(request: Request) {
   if (!guard.ok) return guard.response;
 
   if (isEmailMaskingOn()) {
-    return conflict('시험 기간에는 이메일을 가려서 저장하고 있어 확인 메일을 보낼 수 없습니다');
+    return conflict('시험 기간에는 이메일을 가려서 저장하고 있어 확인 메일을 보낼 수 없어요');
   }
 
   const status = await verificationStatus(guard.playerId);
-  if (!status) return notFound('계정을 찾을 수 없습니다');
+  if (!status) return notFound('계정을 찾을 수 없어요. 다시 로그인해 주세요');
   if (!status.email) {
     // 소셜로만 가입한 계정입니다 — players.email 이 비어 있어 보낼 곳이 없습니다.
-    return conflict('이 계정에는 등록된 이메일이 없습니다');
+    return conflict('이 계정에는 이메일이 없어요');
   }
   if (status.verified) {
-    return conflict('이미 확인된 이메일입니다');
+    return conflict('이미 확인한 이메일이에요');
   }
 
   const issued = await sendVerificationMail(guard.playerId, appOrigin(request), {
@@ -68,14 +68,14 @@ async function onPost(request: Request) {
     if (issued.reason === 'too-soon') {
       const s = issued.retryAfterS ?? 60;
       return tooMany(
-        s > 120 ? '메일을 너무 자주 보냈습니다. 잠시 후 다시 시도해 주세요' : `${s}초 후에 다시 보낼 수 있습니다`,
+        s > 120 ? '메일을 여러 번 보냈어요. 조금 뒤에 다시 받아 주세요' : `${s}초 뒤에 다시 보낼 수 있어요`,
         s * 1000,
       );
     }
     // 발송 실패(제공자 오류·키 미설정)는 사용자가 고칠 수 없습니다. 그대로
     // 말해 주고 다시 누를 수 있게 둡니다 — 성공한 척하면 오지 않는 메일을
     // 기다리게 됩니다.
-    return fail(502, '메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요');
+    return fail(502, '메일을 보내지 못했어요. 조금 뒤에 다시 시도해 주세요');
   }
 
   return NextResponse.json({ sent: true, email: status.email });

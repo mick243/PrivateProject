@@ -90,7 +90,7 @@ function ArcadeList({
   onClearSelect,
   onEdit,
   onDelete,
-  emptyMessage = '조건에 맞는 오락실이 없습니다.',
+  emptyMessage = '조건에 맞는 오락실이 없어요',
 }: Props) {
   if (loading) return <p className="muted pad">불러오는 중…</p>;
   if (items.length === 0) {
@@ -146,6 +146,8 @@ function ArcadeList({
                   type="button"
                   className={`fav-btn ${isFavorite(a.id) ? 'is-on' : ''}`}
                   aria-pressed={isFavorite(a.id)}
+                  // 별 글자만 있는 단추라 이름이 따로 있어야 한다 (docs/DESIGN-GUIDE.md §3-6)
+                  aria-label={isFavorite(a.id) ? '즐겨찾기에서 빼기' : '즐겨찾기에 담기'}
                   title={isFavorite(a.id) ? '즐겨찾기에서 빼기' : '즐겨찾기에 담기'}
                   onClick={(e) => {
                     // 행 전체가 '선택' 이다 — 별을 눌렀는데 상세까지 열리면
@@ -194,7 +196,7 @@ function ArcadeList({
                       `${m.name} · ${m.cabinetCount}대`,
                       ...m.cabinets.map((c) => {
                         const v = cabinetCondition(c);
-                        return `${c.cabinetNo}호기 ${v === null ? '컨디션 모름' : `${v}/5`}`;
+                        return `${c.cabinetNo}호기 ${v === null ? '상태 모름' : `상태 ${v}/5`}`;
                       }),
                     ].join(' · ')}
                   >
@@ -269,7 +271,7 @@ function ArcadeList({
                         onDelete(a);
                       }}
                     >
-                      삭제
+                      지우기
                     </button>
                   </>
                 )}
@@ -277,13 +279,13 @@ function ArcadeList({
                   <button
                     type="button"
                     className="btn btn-sm unselect-btn"
-                    title="선택 해제 — 지도의 강조 표시를 끕니다"
+                    title="선택을 풀고 지도의 강조 표시를 꺼요"
                     onClick={(e) => {
                       e.stopPropagation();
                       onClearSelect();
                     }}
                   >
-                    위치 찾기 취소
+                    선택 풀기
                   </button>
                 )}
               </div>

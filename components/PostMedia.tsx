@@ -82,5 +82,5 @@ export function PostVideo({ src }: { src: string }) {
   if (near) return <video className="post-video" src={src} controls preload="metadata" />;
   // 실제 비율은 metadata 가 와야 아는데 그걸 안 받는 게 목적이므로 16/9 로 잡아 둔다.
   // 스크롤이 닿기 400px 전에 진짜 영상으로 바뀌니 어긋남이 눈에 띄는 일은 드물다.
-  return <div ref={ref} className="post-video post-media-loading" aria-label="동영상 불러오는 중" />;
+  return <div ref={ref} className="post-video post-media-loading" aria-label="동영상을 불러오는 중" />;
 }

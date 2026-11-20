@@ -53,20 +53,20 @@ const boundedOptionalText = (max: number, subject: string) =>
   z
     .string()
     .trim()
-    .max(max, `${subject} ${max}자까지 쓸 수 있습니다`)
+    .max(max, `${subject} ${max}자까지 쓸 수 있어요`)
     .transform((v) => (v === '' ? null : v))
     .nullable()
     .default(null);
 
 const timeField = optionalText.refine(
   (v) => v === null || TIME_RE.test(v),
-  { message: 'HH:MM 형식이어야 합니다 (예: 10:00)' },
+  { message: '시간은 10:00 처럼 써 주세요' },
 );
 
 export const arcadeInputSchema = z
   .object({
-    name: z.string().trim().min(1, '이름은 필수입니다').max(100),
-    address: z.string().trim().min(1, '주소는 필수입니다').max(200),
+    name: z.string().trim().min(1, '오락실 이름을 써 주세요').max(100),
+    address: z.string().trim().min(1, '주소를 써 주세요').max(200),
     lat: z.number().min(-90).max(90),
     lng: z.number().min(-180).max(180),
     openTime: timeField,
@@ -89,8 +89,8 @@ export const arcadeInputSchema = z
                 condition: z.number().int().min(1).max(5).nullable().default(null),
               }),
             )
-            .min(1, '기체는 1대 이상이어야 합니다')
-            .max(20, '같은 기종은 20대까지 등록할 수 있습니다')
+            .min(1, '기계는 1대 이상 넣어 주세요')
+            .max(20, '같은 게임은 20대까지 넣을 수 있어요')
             .default([{ condition: null }]),
         }),
       )
@@ -138,12 +138,12 @@ function nicknameField(topic: string, locative: string) {
       .pipe(
         z
           .string()
-          .min(2, `${topic} 2자 이상이어야 합니다`)
-          .max(20, `${topic} 20자까지 쓸 수 있습니다`)
-          .regex(/^[^\s]+$/, `${locative} 공백은 쓸 수 없습니다`)
+          .min(2, `${topic} 2자 이상으로 써 주세요`)
+          .max(20, `${topic} 20자까지 쓸 수 있어요`)
+          .regex(/^[^\s]+$/, `${topic} 띄어쓰기 없이 써 주세요`)
           // 제어·서식 문자(zero-width space 등)는 눈에 안 보여서, 섞어 넣으면
           // 기존 이름과 똑같아 보이는 다른 이름을 만들 수 있습니다.
-          .regex(/^[^\p{Cc}\p{Cf}]+$/u, `${locative} 보이지 않는 문자는 쓸 수 없습니다`),
+          .regex(/^[^\p{Cc}\p{Cf}]+$/u, `${locative} 보이지 않는 글자가 섞여 있어요. 지우고 다시 써 주세요`),
       )
   );
 }
@@ -168,9 +168,9 @@ const emailField = z
   .string({ error: '이메일을 입력해 주세요' })
   .trim()
   .min(1, '이메일을 입력해 주세요')
-  .max(254, '이메일이 너무 깁니다')
+  .max(254, '이메일 주소가 너무 길어요. 다른 주소를 써 주세요')
   .transform((v) => v.toLowerCase())
-  .pipe(z.email('이메일 형식이 올바르지 않습니다'));
+  .pipe(z.email('이메일 주소를 다시 확인해 주세요 (예: you@example.com)'));
 
 export const signupInputSchema = z
   .object({
@@ -183,19 +183,19 @@ export const signupInputSchema = z
     email: emailField,
     password: z
       .string()
-      .min(MIN_PASSWORD_LENGTH, `비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다`)
-      .max(200, '비밀번호는 200자까지 쓸 수 있습니다'),
+      .min(MIN_PASSWORD_LENGTH, `비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상으로 정해 주세요`)
+      .max(200, '비밀번호는 200자까지 쓸 수 있어요'),
     // 화면에서도 같은 검사를 하지만, 여기서 빠뜨리면 브라우저를 거치지 않는
     // 요청이 확인 없이 통과합니다.
     passwordConfirm: z.string(),
     // 약관·개인정보처리방침 동의 + 만 14세 이상 확인. 화면의 체크박스 하나가 이 값이고,
     // 브라우저를 거치지 않는 요청이 체크 없이 가입하지 못하게 서버가 다시 봅니다.
     termsAccepted: z.literal(true, {
-      error: '이용약관과 개인정보처리방침에 동의해야 가입할 수 있습니다',
+      error: '이용약관과 개인정보처리방침에 동의하면 가입할 수 있어요',
     }),
   })
   .refine((v) => v.password === v.passwordConfirm, {
-    message: '비밀번호가 서로 다릅니다',
+    message: '두 비밀번호가 달라요. 다시 확인해 주세요',
     path: ['passwordConfirm'],
   });
 
@@ -211,16 +211,16 @@ export const nicknameInputSchema = z
     nickname: nicknameField('닉네임은', '닉네임에'),
     password: z
       .string()
-      .max(200, '비밀번호는 200자까지 쓸 수 있습니다')
+      .max(200, '비밀번호는 200자까지 쓸 수 있어요')
       .optional()
       .transform((v) => (v === '' ? undefined : v))
       .refine((v) => v === undefined || v.length >= MIN_PASSWORD_LENGTH, {
-        message: `비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다`,
+        message: `비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상으로 정해 주세요`,
       }),
     passwordConfirm: z.string().optional(),
   })
   .refine((v) => v.password === undefined || v.password === v.passwordConfirm, {
-    message: '비밀번호가 서로 다릅니다',
+    message: '두 비밀번호가 달라요. 다시 확인해 주세요',
     path: ['passwordConfirm'],
   });
 
@@ -241,16 +241,16 @@ export const accountUpdateSchema = z
     nickname: nicknameField('닉네임은', '닉네임에').optional(),
     newPassword: z
       .string()
-      .min(MIN_PASSWORD_LENGTH, `비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상이어야 합니다`)
-      .max(200, '비밀번호는 200자까지 쓸 수 있습니다')
+      .min(MIN_PASSWORD_LENGTH, `비밀번호는 ${MIN_PASSWORD_LENGTH}자 이상으로 정해 주세요`)
+      .max(200, '비밀번호는 200자까지 쓸 수 있어요')
       .optional(),
     newPasswordConfirm: z.string().optional(),
   })
   .refine((v) => v.nickname !== undefined || v.newPassword !== undefined, {
-    message: '바꿀 항목이 없습니다',
+    message: '바꿀 내용을 넣어 주세요',
   })
   .refine((v) => v.newPassword === undefined || v.newPassword === v.newPasswordConfirm, {
-    message: '비밀번호가 서로 다릅니다',
+    message: '두 비밀번호가 달라요. 다시 확인해 주세요',
     path: ['newPasswordConfirm'],
   });
 
@@ -277,14 +277,14 @@ export const reportInputSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['waitCount'],
-        message: '대기 인원을 입력해 주세요',
+        message: '대기 인원을 골라 주세요',
       });
     }
     if (v.kind === 'condition' && v.condition === null) {
       ctx.addIssue({
         code: 'custom',
         path: ['condition'],
-        message: '컨디션(1~5)을 선택해 주세요',
+        message: '상태를 1~5 중에서 골라 주세요',
       });
     }
     // 컨디션은 기체 1대에 대한 제보다. 어느 기체인지 없이 받으면 2대 중
@@ -293,7 +293,7 @@ export const reportInputSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['cabinetId'],
-        message: '어느 기체인지 골라 주세요',
+        message: '어느 기계인지 골라 주세요',
       });
     }
   })
@@ -306,15 +306,15 @@ export const reportInputSchema = z
 
 // ─── 오락실 리뷰 ─────────────────────────────────────────────
 export const reviewInputSchema = z.object({
-  rating: z.number().int().min(1, '평점은 1~5 입니다').max(5, '평점은 1~5 입니다'),
+  rating: z.number().int().min(1, '별점은 1~5 중에서 골라 주세요').max(5, '별점은 1~5 중에서 골라 주세요'),
   body: z.string().trim().max(1000).transform((v) => (v === '' ? null : v)).nullable().default(null),
 });
 
 // ─── 채보 평가 ───────────────────────────────────────────────
 export const commentInputSchema = z.object({
-  body: z.string().trim().min(2, '평가 내용을 입력해 주세요').max(1000),
+  body: z.string().trim().min(2, '평가를 2자 이상 써 주세요').max(1000),
   // 자유 입력을 막는 이유는 lib/community-types.ts CHART_TAGS 주석 참고.
-  tags: z.array(z.enum(CHART_TAGS)).max(4, '태그는 4개까지 고를 수 있습니다').default([]),
+  tags: z.array(z.enum(CHART_TAGS)).max(4, '태그는 4개까지 고를 수 있어요').default([]),
 });
 
 // ─── 커뮤니티 게시판 ─────────────────────────────────────────
@@ -335,8 +335,8 @@ export const postInputSchema = z
      * 위에 붙는 글이라 어느 게시판에 썼는지가 뜻이 없습니다.
      */
     machineId: dbId.nullable().default(null),
-    category: z.string().trim().min(1, '말머리를 골라주세요').max(20),
-    title: z.string().trim().min(2, '제목을 입력해 주세요').max(120),
+    category: z.string().trim().min(1, '말머리를 골라 주세요').max(20),
+    title: z.string().trim().min(2, '제목을 2자 이상 써 주세요').max(120),
     /**
      * 평문 본문. 서식 있는 글에서는 아래 transform 이 문서에서 다시 만들므로
      * 보내지 않아도 됩니다 (문서가 없는 요청에서만 이 값이 쓰입니다).
@@ -370,13 +370,13 @@ export const postInputSchema = z
   .superRefine((v, ctx) => {
     // 공지가 아닌 글은 반드시 어느 게시판(게임)에 속해야 한다.
     if (v.machineId === null && !isNotice(v.category)) {
-      ctx.addIssue({ code: 'custom', path: ['machineId'], message: '게임을 선택해 주세요' });
+      ctx.addIssue({ code: 'custom', path: ['machineId'], message: '게임을 골라 주세요' });
     }
     if (v.body.length > MAX_BODY) {
       ctx.addIssue({
         code: 'custom',
         path: ['body'],
-        message: `본문은 ${MAX_BODY.toLocaleString('ko-KR')}자까지 쓸 수 있습니다`,
+        message: `본문은 ${MAX_BODY.toLocaleString('ko-KR')}자까지 쓸 수 있어요`,
       });
     }
     const ids = attachmentIdsInBody(v.body);
@@ -384,7 +384,7 @@ export const postInputSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['body'],
-        message: `첨부는 사진·동영상 합쳐 ${MAX_ATTACHMENTS_PER_POST}개까지 붙일 수 있습니다`,
+        message: `사진·동영상은 합쳐서 ${MAX_ATTACHMENTS_PER_POST}개까지 붙일 수 있어요`,
       });
     }
     // 첨부만 있고 글이 없는 것은 허용하지만, 둘 다 비면 막는다.
@@ -485,12 +485,12 @@ export const chatInputSchema = z.object({
         text: z.string().trim().min(1).max(4000),
       }),
     )
-    .min(1, '보낼 메시지가 없습니다')
-    .max(24, '대화가 너무 깁니다')
+    .min(1, '보낼 메시지를 써 주세요')
+    .max(24, '대화가 너무 길어졌어요. 새로고침한 뒤 다시 물어봐 주세요')
     // 대화는 사용자 말로 끝나야 합니다. 조수 말로 끝나면 모델이 답할 차례가
     // 아니라서 빈 응답이 돌아옵니다.
     .refine((t) => t[t.length - 1]?.role === 'user', {
-      message: '마지막 메시지는 사용자 차례여야 합니다',
+      message: '마지막 메시지는 사용자 차례여야 해요',
     }),
   /**
    * 사용자의 기준점 — 파인더가 떠 있을 때만 옵니다 (내 위치 또는 지도 기준점).
@@ -506,10 +506,16 @@ export const chatInputSchema = z.object({
 
 /** zod 이슈를 "필드: 메시지" 문자열 배열로 평탄화 */
 export function formatIssues(error: z.ZodError): string[] {
-  return error.issues.map((i) => {
-    const path = i.path.join('.');
-    return path ? `${path}: ${i.message}` : i.message;
-  });
+  // 필드 이름(`body:` · `waitCount:`)을 앞에 붙이지 않습니다. 이 배열은 화면에 그대로
+  // 뜨는데(PostForm · ArcadeForm · ChartComments 가 `data.details` 를 먼저 봅니다), 문구가
+  // 이미 "제목을 …" 처럼 칸 이름을 담고 있어 내부 이름은 읽는 사람에게 소음입니다
+  // (docs/DESIGN-GUIDE.md §2-1). 어느 칸인지가 필요한 곳은 issueFields 를 씁니다.
+  return error.issues.map((i) => i.message);
+}
+
+/** 문제가 난 칸의 이름(최상위 키). formatIssues 와 같은 순서 — 가입 단계 되돌리기 등에 씁니다 */
+export function issueFields(error: z.ZodError): string[] {
+  return error.issues.map((i) => String(i.path[0] ?? ''));
 }
 
 /** 쿼리스트링 → listArcades 파라미터 */
@@ -587,7 +593,7 @@ export const contentReportInputSchema = z.object({
   targetType: reportTarget,
   targetId: positiveInt,
   reason: z.enum(REPORT_REASONS),
-  detail: z.string().trim().max(REPORT_DETAIL_MAX, `설명은 ${REPORT_DETAIL_MAX}자까지 쓸 수 있습니다`).nullish(),
+  detail: z.string().trim().max(REPORT_DETAIL_MAX, `설명은 ${REPORT_DETAIL_MAX}자까지 쓸 수 있어요`).nullish(),
 });
 
 /** PUT /api/blocks — 차단할 사람 */
@@ -603,7 +609,7 @@ export const reportResolveSchema = z.object({
 /** PUT /api/admin/players/:id/suspension — days 가 null 이면 무기한 */
 export const suspendInputSchema = z.object({
   days: z.number().int().min(1).max(3650).nullable(),
-  reason: z.string().trim().max(200, '사유는 200자까지 쓸 수 있습니다').nullish(),
+  reason: z.string().trim().max(200, '사유는 200자까지 쓸 수 있어요').nullish(),
 });
 
 /** PUT /api/admin/guesses — 승인할 AI 추정 */

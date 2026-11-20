@@ -64,7 +64,7 @@ async function onPost(request: Request, ctx: Ctx) {
   const body = await parseBody(request, reportInputSchema);
   if (!body.ok) return body.response;
 
-  if (!(await getArcade(arcadeId))) return notFound('오락실을 찾을 수 없습니다');
+  if (!(await getArcade(arcadeId))) return notFound('오락실을 찾을 수 없어요. 지워졌을 수 있어요');
 
   const playerId = await sessionPlayerId(request);
   const ip = playerId === null ? clientKey(request) : null;
@@ -77,7 +77,7 @@ async function onPost(request: Request, ctx: Ctx) {
   const quota = await consume(key, limit, TEN_MINUTES_MS);
   if (!quota.allowed) {
     return tooMany(
-      `제보가 너무 잦습니다. ${retryAfterLabel(quota.retryAfterMs)} 뒤에 다시 시도해 주세요`,
+      `짧은 시간에 제보를 많이 보냈어요. ${retryAfterLabel(quota.retryAfterMs)} 뒤에 다시 알려 주세요`,
       quota.retryAfterMs,
     );
   }

@@ -21,6 +21,8 @@ import { useSession } from '@/lib/use-session';
  *
  * 긴 이름은 CSS 가 줄임표로 자릅니다(.player-name) — 소셜 로그인 닉네임은
  * 제공자가 주는 이름이라 100자까지 옵니다. 잘려도 title 로 온전히 읽힙니다.
+ * title 에 플레이어 번호(#id)는 싣지 않습니다 — 내부 값이라 사람이 쓸 데가 없습니다
+ * (docs/DESIGN-GUIDE.md §2-1).
  */
 export default function PlayerPicker() {
   const user = useSession();
@@ -29,7 +31,7 @@ export default function PlayerPicker() {
   if (!user) return null;
 
   return (
-    <span className="player-picker" title={`${user.nickname} · 플레이어 #${user.playerId}`}>
+    <span className="player-picker" title={user.nickname}>
       <span className="muted small">플레이어</span>
       <strong className="player-name">{user.nickname}</strong>
       {user.isAdmin && <em className="admin-tag">{ADMIN_LABEL}</em>}

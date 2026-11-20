@@ -63,7 +63,7 @@ async function onPut(request: Request, ctx: Ctx) {
   const { value } = body.value;
   const { voteMin, voteMax } = await getSettings();
   if (value < voteMin || value > voteMax) {
-    return fail(400, `투표값은 ${voteMin} ~ ${voteMax} 사이여야 합니다`);
+    return fail(400, `체감 난이도는 ${voteMin}~${voteMax} 사이로 골라 주세요`);
   }
 
   return save(chartId, guard.playerId, value);

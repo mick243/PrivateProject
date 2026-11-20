@@ -45,7 +45,7 @@ export const dynamic = 'force-dynamic';
 const gone = () => clearSessionCookie(needLogin());
 
 const locked = (lockedMs: number) =>
-  tooMany(`시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요`, lockedMs);
+  tooMany(`여러 번 틀려서 잠깐 잠갔어요. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 시도해 주세요`, lockedMs);
 
 /**
  * 비밀번호가 있는 계정의 본인 확인. 통과하면 null, 막히면 돌려줄 응답.
@@ -58,7 +58,7 @@ async function confirmPassword(playerId: number, currentPassword: string | null 
   const lockedMs = await takeLoginAttempt(key);
   if (lockedMs > 0) return locked(lockedMs);
   if (!(await verifyPlayerPassword(playerId, currentPassword))) {
-    return forbidden('비밀번호가 올바르지 않습니다');
+    return forbidden('비밀번호가 맞지 않아요. 다시 확인해 주세요');
   }
   await clearLoginFailures(key);
   return null;
@@ -100,7 +100,7 @@ async function onPut(request: Request) {
     if (!result.ok) {
       if (result.reason === 'gone') return gone();
       if (result.reason === 'reserved') return conflict(RESERVED_NICKNAME_MESSAGE);
-      return conflict('이미 사용 중인 닉네임입니다');
+      return conflict('이미 누가 쓰고 있는 닉네임이에요. 다른 닉네임을 골라 주세요');
     }
     user = result.user;
   }
@@ -136,7 +136,7 @@ async function onDelete(request: Request) {
   if (!status) return gone();
   if (status.isAdmin) {
     return forbidden(
-      '관리자 계정은 탈퇴할 수 없습니다. 설정(ADMIN_PASSWORD)에서 계정을 정리해 주세요',
+      '관리자 계정은 여기서 탈퇴할 수 없어요. 서버 설정에서 정리해 주세요',
     );
   }
 

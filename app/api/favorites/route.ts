@@ -45,14 +45,14 @@ async function onPut(request: Request) {
   if (!body.ok) return body.response;
 
   const arcadeId = parseId((body.value as { arcadeId?: unknown } | null)?.arcadeId);
-  if (arcadeId === null) return fail(400, 'arcadeId 가 필요합니다');
+  if (arcadeId === null) return fail(400, '어느 오락실인지 알 수 없어요. 새로고침한 뒤 다시 시도해 주세요');
 
   try {
     await addFavorite(playerId, arcadeId);
   } catch (err) {
     // 없는 오락실이면 FK 위반이다. 존재 확인을 따로 하면 그 사이에 지워지는
     // 틈이 남으므로 DB 제약을 그대로 답으로 옮긴다.
-    if (isForeignKeyViolation(err)) return notFound('오락실을 찾을 수 없습니다');
+    if (isForeignKeyViolation(err)) return notFound('오락실을 찾을 수 없어요. 지워졌을 수 있어요');
     throw err;
   }
 
@@ -70,7 +70,7 @@ async function onDelete(request: Request) {
   if (playerId === null) return needLogin();
 
   const arcadeId = parseId(new URL(request.url).searchParams.get('arcadeId'));
-  if (arcadeId === null) return fail(400, 'arcadeId 가 필요합니다');
+  if (arcadeId === null) return fail(400, '어느 오락실인지 알 수 없어요. 새로고침한 뒤 다시 시도해 주세요');
 
   await removeFavorite(playerId, arcadeId);
   return NextResponse.json({ arcadeIds: await listFavoriteIds(playerId) });

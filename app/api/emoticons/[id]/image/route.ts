@@ -22,11 +22,11 @@ async function onGet(_request: Request, ctx: { params: Promise<{ id: string }> }
   if (id === null) return badId();
 
   const file = await getEmoticonFile(id);
-  if (!file) return notFound('이모티콘을 찾을 수 없습니다');
+  if (!file) return notFound('이모티콘을 찾을 수 없어요');
 
   // 행은 있는데 파일이 사라진 경우 — 500 이 아니라 404 가 맞습니다.
   const total = await size(file.storageKey);
-  if (total === null) return notFound('이모티콘 파일이 없습니다');
+  if (total === null) return notFound('이모티콘 그림을 찾을 수 없어요');
 
   return new NextResponse(readRange(file.storageKey), {
     status: 200,

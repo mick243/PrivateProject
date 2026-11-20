@@ -2,8 +2,8 @@ import { Suspense } from 'react';
 import VerifyEmailPanel from '@/components/VerifyEmailPanel';
 
 export const metadata = {
-  title: '이메일 확인 — 오락실 파인더',
-  description: '가입할 때 적은 이메일 주소의 주인이 맞는지 확인합니다',
+  title: '이메일 확인',
+  description: '가입할 때 적은 이메일 주소가 내 것인지 확인해요',
 };
 
 export default function Page() {

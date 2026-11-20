@@ -26,9 +26,9 @@ export default function GlobalError({
         }}
       >
         <main style={{ maxWidth: 360, padding: 24, textAlign: 'center' }}>
-          <h1 style={{ fontSize: 18, margin: '0 0 8px' }}>오락실 파인더를 불러오지 못했습니다</h1>
+          <h1 style={{ fontSize: 18, margin: '0 0 8px' }}>오락실 파인더를 불러오지 못했어요</h1>
           <p style={{ fontSize: 14, opacity: 0.75, margin: '0 0 16px' }}>
-            잠시 뒤 다시 시도해 주세요.
+            조금 뒤에 다시 시도해 주세요.
             {error.digest ? ` (오류 번호 ${error.digest})` : ''}
           </p>
           <button
@@ -44,7 +44,7 @@ export default function GlobalError({
               cursor: 'pointer',
             }}
           >
-            다시 시도
+            다시 시도하기
           </button>
         </main>
       </body>

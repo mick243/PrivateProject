@@ -135,7 +135,9 @@ export default function RichTextEditor({
 
     const room = MAX_ATTACHMENTS_PER_POST - attachmentCount(editor);
     if (room <= 0) {
-      setError(`첨부는 사진·동영상 합쳐 ${MAX_ATTACHMENTS_PER_POST}개까지 붙일 수 있습니다`);
+      setError(
+        `사진·동영상을 ${MAX_ATTACHMENTS_PER_POST}개 다 붙였어요. 더 넣으려면 본문에서 하나를 빼 주세요`,
+      );
       return;
     }
 
@@ -156,15 +158,17 @@ export default function RichTextEditor({
           if (isVideo(saved.mime)) editor.chain().focus().setPostVideo(saved.id).run();
           else editor.chain().focus().setPostImage(saved.id).run();
         } else {
-          failed.push(`${file.name}: ${data.error ?? '업로드 실패'}`);
+          failed.push(`${file.name}: ${data.error ?? '올리지 못했어요. 다시 시도해 주세요'}`);
         }
       } catch {
-        failed.push(`${file.name}: 네트워크 오류`);
+        failed.push(`${file.name}: 연결이 잠깐 끊겼어요. 다시 시도해 주세요`);
       }
     }
 
     if (files.length > room) {
-      failed.push(`${MAX_ATTACHMENTS_PER_POST}개 제한으로 ${files.length - room}개는 건너뜀`);
+      failed.push(
+        `${MAX_ATTACHMENTS_PER_POST}개까지만 붙일 수 있어서 ${files.length - room}개는 넣지 못했어요`,
+      );
     }
     setError(failed.length ? failed.join(' · ') : null);
     setUploading(false);
@@ -200,7 +204,9 @@ export default function RichTextEditor({
     if (ask === 'youtube') {
       const id = youtubeId(raw);
       if (!id) {
-        setError('유튜브 주소를 알아볼 수 없습니다 (youtu.be/… 또는 youtube.com/watch?v=…)');
+        setError(
+          '유튜브 주소를 알아보지 못했어요. 영상 주소를 그대로 붙여 넣어 주세요 (예: youtu.be/… 또는 youtube.com/watch?v=…)',
+        );
         return;
       }
       editor.chain().focus().setYoutube(id).run();
@@ -237,8 +243,9 @@ export default function RichTextEditor({
             type="url"
             autoFocus
             value={askValue}
+            aria-label={ask === 'link' ? '링크 주소' : '유튜브 주소'}
             placeholder={
-              ask === 'link' ? 'https://… (비우고 확인하면 링크 해제)' : '유튜브 주소'
+              ask === 'link' ? 'https://… (비워 두면 링크를 풀어요)' : '유튜브 주소 (예: youtu.be/…)'
             }
             onChange={(e) => setAskValue(e.target.value)}
             onKeyDown={(e) => {
@@ -249,10 +256,11 @@ export default function RichTextEditor({
               if (e.key === 'Escape') setAsk(null);
             }}
           />
+          {/* 주 버튼은 누르면 무엇이 되는지를 말한다 — '확인' 단독은 쓰지 않는다 (DESIGN-GUIDE §2-7) */}
           <button type="button" className="btn btn-sm btn-primary" onClick={submitAsk}>
-            확인
+            {ask === 'link' ? '링크 넣기' : '영상 넣기'}
           </button>
-          <button type="button" className="btn btn-sm" onClick={() => setAsk(null)}>
+          <button type="button" className="btn-link" onClick={() => setAsk(null)}>
             취소
           </button>
         </div>
@@ -284,7 +292,7 @@ export default function RichTextEditor({
         {uploading
           ? '올리는 중…'
           : `첨부 ${attachmentCount(editor)}/${MAX_ATTACHMENTS_PER_POST} · 동영상은 MP4 · MOV`}
-        {!playerId && ' · 로그인하면 첨부를 넣을 수 있습니다'}
+        {!playerId && ' · 로그인하면 사진과 동영상을 넣을 수 있어요'}
       </div>
 
       {error && <p className="warn small">{error}</p>}
@@ -562,16 +570,16 @@ function Toolbar({ editor, disabled, uploading, onPick, onAsk }: ToolbarProps) {
             행 추가
           </button>
           <button type="button" className="rt-btn rt-wide" disabled={off} onClick={() => chain().deleteRow().run()}>
-            행 삭제
+            행 지우기
           </button>
           <button type="button" className="rt-btn rt-wide" disabled={off} onClick={() => chain().addColumnAfter().run()}>
             열 추가
           </button>
           <button type="button" className="rt-btn rt-wide" disabled={off} onClick={() => chain().deleteColumn().run()}>
-            열 삭제
+            열 지우기
           </button>
           <button type="button" className="rt-btn rt-wide" disabled={off} onClick={() => chain().deleteTable().run()}>
-            표 삭제
+            표 지우기
           </button>
         </div>
       )}
@@ -611,6 +619,8 @@ function Swatches({ label, swatches, current, disabled, onPick }: SwatchesProps)
         className="rt-btn"
         disabled={disabled}
         title={label}
+        // 글자가 '가' · '밑' 한 자라 그대로는 무슨 단추인지 읽히지 않는다 (DESIGN-GUIDE §3-6)
+        aria-label={label}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >

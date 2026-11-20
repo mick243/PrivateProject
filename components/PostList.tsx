@@ -24,7 +24,7 @@ interface Props {
   /** '전체' 탭에서만 게임 뱃지를 보여준다 */
   showGame: boolean;
   /**
-   * 인기글 필터가 걸린 상태. 목록이 비었을 때 "첫 글을 남겨 보세요" 라고 하면
+   * 인기글 필터가 걸린 상태. 목록이 비었을 때 "첫 글을 올려 주세요" 라고 하면
    * 거짓말이 된다 — 글은 있고, 추천 기준을 넘은 게 없을 뿐이다.
    */
   popularOnly: boolean;
@@ -149,15 +149,16 @@ function PostRow({ post: p, showGame, notice = false, onOpen, onPrefetch }: RowP
 
 /**
  * 목록이 비었을 때 뭐라고 할지. 걸린 조건마다 이유가 다르므로 문구도 달라야
- * 한다 — 어느 경우든 "아직 글이 없습니다" 로 뭉치면, 사용자는 조건을 풀어 보는
+ * 한다 — 어느 경우든 "아직 글이 없어요" 로 뭉치면, 사용자는 조건을 풀어 보는
  * 대신 게시판이 비었다고 믿고 나간다.
  */
 function emptyMessage(searching: boolean, popularOnly: boolean): string {
   if (searching && popularOnly)
-    return `추천 ${POPULAR_MIN_LIKES}개 이상 받은 글 중에는 검색 결과가 없습니다.`;
-  if (searching) return '검색 결과가 없습니다.';
-  if (popularOnly) return `추천 ${POPULAR_MIN_LIKES}개 이상 받은 글이 아직 없습니다.`;
-  return '아직 글이 없습니다. 이 게시판의 첫 글을 남겨 보세요.';
+    return `추천 ${POPULAR_MIN_LIKES}개 이상 받은 글 중에는 찾는 글이 없어요. '인기글' 을 끄고 다시 찾아보세요.`;
+  if (searching) return '찾는 글이 없어요. 다른 검색어로 찾아보세요.';
+  if (popularOnly)
+    return `추천 ${POPULAR_MIN_LIKES}개 이상 받은 글이 아직 없어요. '인기글' 을 끄면 모든 글을 볼 수 있어요.`;
+  return '아직 글이 없어요. 이 게시판의 첫 글을 올려 주세요.';
 }
 
 export default function PostList({

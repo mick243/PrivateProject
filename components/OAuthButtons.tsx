@@ -16,10 +16,13 @@ import { ENABLED_OAUTH_PROVIDERS, OAUTH_LABELS, type OAuthProviderId } from '@/l
  * 로그인/가입 두 화면이 같은 줄을 씁니다. 소셜은 "가입" 과 "로그인" 이 같은
  * 동작이라(처음이면 계정이 생기고, 아니면 그 계정으로 들어옵니다) 버튼도 하나면
  * 충분합니다 — 대신 문구를 화면마다 `verb` 로 바꿉니다.
+ *
+ * 문구는 "Google로 로그인하기" 처럼 **누르면 무엇이 되는지**를 씁니다
+ * (docs/DESIGN-GUIDE.md §2-7). 세 제공자 이름이 모두 받침 없음·ㄹ받침이라 조사는 '로' 하나입니다.
  */
 export default function OAuthButtons({
   next,
-  verb = '로그인',
+  verb = '로그인하기',
 }: {
   /** 끝나고 돌아갈 앱 안쪽 경로 */
   next: string;
@@ -41,8 +44,7 @@ export default function OAuthButtons({
           >
             <ProviderIcon id={id} />
             <span>
-              {OAUTH_LABELS[id]}
-              {verb ? ` ${verb}` : ''}
+              {OAUTH_LABELS[id]}로 {verb}
             </span>
           </a>
         ))}

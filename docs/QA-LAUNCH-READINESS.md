@@ -12,7 +12,7 @@
 |---|---|---|
 | B1 | PostgreSQL 경로도 기동 시 스키마 그룹 → 마이그레이션 → 뷰를 **`pg_advisory_lock` 안에서** 적용. 비파괴 CLI `npm run db:migrate`(`--dry-run` 지원) 추가. SQL 목록을 `scripts/db-files.mjs` 한 곳으로 | `lib/db.ts` · `scripts/migrate.mjs` · `scripts/db-files.mjs` · `GUIDELINES.md` §3 |
 | B2 | 폴백 기본값을 **운영에서는 off**. `/api/health` 는 폴백 중 **503** (프록시가 그 인스턴스를 뺌). `start:cluster` 가 `DB_FALLBACK=off` 주입 | `lib/db.ts` · `app/api/health/route.ts` · `scripts/start-cluster.mjs` |
-| B3 | systemd unit + 백업 스크립트·타이머 + 복구 절차·출시 체크리스트. `SIGHUP` 무중단 재기동(인스턴스 순차 교체), 내부 포트 루프백 바인딩, GitHub Actions CI(`typecheck → test → build`). 실 DB 를 건드리던 테스트 3건 격리 → 스위트가 DATABASE_URL 없이 631/631 | `deploy/` · `../.github/workflows/ci.yml` · `scripts/start-cluster.mjs` · `tests/` |
+| B3 | systemd unit + 백업 스크립트·타이머 + 복구 절차·출시 체크리스트. `SIGHUP` 무중단 재기동(인스턴스 순차 교체 — **2026-10-06 정정: 문서와 unit 만 들어가고 start-cluster.mjs 의 SIGHUP 처리는 빠져 있어서 reload 가 런처를 죽였습니다. 이날 넣음, deploy/README.md §2**), 내부 포트 루프백 바인딩, GitHub Actions CI(`typecheck → test → build`). 실 DB 를 건드리던 테스트 3건 격리 → 스위트가 DATABASE_URL 없이 631/631 | `deploy/` · `../.github/workflows/ci.yml` · `scripts/start-cluster.mjs` · `tests/` |
 | B4 | `/api/chat` 로그인 필수 + 사람당 하루 40회 + 전체 하루 2,000회 (`rate_counters`, migrate-054) | `app/api/chat/route.ts` · `lib/rate-limit.ts` |
 | B5 | 있어요/없어졌어요 임계값에 **가입 24시간 미만 계정은 세지 않음**. 운영 필수 env 에 `TRUSTED_PROXY_HOPS≥1` 포함(없으면 기동 거부) | `lib/reports.ts` · `lib/env-check.ts` |
 | B6 | 제보 10분 창 제한(로그인 30 · 신뢰 IP 15 · IP 모르면 오락실당 익명 20), 메모 300자 상한(화면·서버 동일 상수), 챗봇 도구 응답에서 메모를 200자로 잘라 `[사용자 메모]` 표시 | `app/api/arcades/[id]/reports/route.ts` · `lib/validation.ts` · `lib/chat-tools.ts` |

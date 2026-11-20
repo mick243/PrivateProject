@@ -31,7 +31,7 @@ export interface ReviewSummary {
 export const REVIEW_SUMMARY_KEYS: { key: keyof ReviewSummary; label: string }[] = [
   { key: 'good', label: '좋은 점' },
   { key: 'bad', label: '아쉬운 점' },
-  { key: 'condition', label: '기체 상태' },
+  { key: 'condition', label: '기계 상태' },
 ];
 
 /** GET /api/arcades/:id/reviews/summary 가 돌려주는 모양 */

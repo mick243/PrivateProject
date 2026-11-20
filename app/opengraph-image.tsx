@@ -45,7 +45,7 @@ export default function OpenGraphImage() {
         </div>
         <div style={{ fontSize: 92, fontWeight: 700, marginTop: 40, lineHeight: 1.1 }}>오락실 파인더</div>
         <div style={{ fontSize: 40, marginTop: 28, color: '#b8bfd0' }}>
-          내 주변 오락실 지도 · 보유 기종 · 실시간 제보 · 리듬게임 서열표
+          내 주변 오락실 지도 · 있는 게임 · 실시간 제보 · 리듬게임 서열표
         </div>
       </div>
     ),

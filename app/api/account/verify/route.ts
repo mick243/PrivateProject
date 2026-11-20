@@ -32,11 +32,11 @@ async function onPost(request: Request) {
   const key = accountCheckKey(session.playerId);
   const lockedMs = await takeLoginAttempt(key);
   if (lockedMs > 0) {
-    return tooMany(`시도가 너무 많습니다. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 해 주세요`, lockedMs);
+    return tooMany(`여러 번 틀려서 잠깐 잠갔어요. ${Math.ceil(lockedMs / 60000)}분 뒤에 다시 시도해 주세요`, lockedMs);
   }
 
   if (!(await verifyPlayerPassword(session.playerId, body.value.password))) {
-    return forbidden('비밀번호가 올바르지 않습니다');
+    return forbidden('비밀번호가 맞지 않아요. 다시 확인해 주세요');
   }
 
   await clearLoginFailures(key);

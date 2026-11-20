@@ -29,7 +29,7 @@ async function onDelete(request: Request, ctx: Ctx) {
   const id = parseId((await ctx.params).id);
   if (id === null) return badId();
 
-  if (!(await deleteEmoticon(id))) return notFound('이모티콘을 찾을 수 없습니다');
+  if (!(await deleteEmoticon(id))) return notFound('이모티콘을 찾을 수 없어요');
   return NextResponse.json({ ok: true });
 }
 
@@ -55,14 +55,14 @@ async function onPatch(request: Request, ctx: Ctx) {
 
   try {
     if (body.restore === true) {
-      if (!(await restoreEmoticon(id))) return notFound('되살릴 이모티콘이 없습니다');
+      if (!(await restoreEmoticon(id))) return notFound('되살릴 이모티콘이 없어요');
       return NextResponse.json({ ok: true });
     }
 
     if (body.name !== undefined) {
       const name = normalizeName(body.name);
       if (name === '') return fail(400, '이모티콘 이름을 입력해 주세요');
-      if (!(await renameEmoticon(id, name))) return notFound('이모티콘을 찾을 수 없습니다');
+      if (!(await renameEmoticon(id, name))) return notFound('이모티콘을 찾을 수 없어요');
       return NextResponse.json({ ok: true, name });
     }
   } catch (err) {
@@ -70,7 +70,7 @@ async function onPatch(request: Request, ctx: Ctx) {
     throw err;
   }
 
-  return fail(400, 'name 또는 restore 가 필요합니다');
+  return fail(400, '바꿀 이름을 넣어 주세요');
 }
 
 export const DELETE = handle(onDelete);

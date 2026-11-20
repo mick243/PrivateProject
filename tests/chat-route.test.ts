@@ -317,7 +317,7 @@ describe('POST /api/chat', () => {
     const { status, json } = await post([{ role: 'user', text: '...' }]);
 
     expect(status).toBe(200);
-    expect(json.text).toBe('이 질문에는 답할 수 없습니다.');
+    expect(json.text).toBe('이 질문에는 답할 수 없어요. 다른 말로 다시 물어봐 주세요.');
   });
 
   /**

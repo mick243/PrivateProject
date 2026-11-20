@@ -114,7 +114,7 @@ export function loadNaverMaps(): Promise<typeof naver> {
       if (authFailure) return;
       const e = new NaverMapsLoadError(
         '네이버 지도 인증 실패 — 키가 유효한지, NCP 콘솔 Web 서비스 URL 에 현재 도메인이 등록됐는지 확인하세요',
-        '지도 서비스 인증에 실패했습니다. 잠시 뒤 다시 시도해 주세요.',
+        '지도를 불러오지 못했어요. 조금 뒤에 다시 시도해 주세요',
       );
       authFailure = e;
       done(() => reject(e));
@@ -124,7 +124,7 @@ export function loadNaverMaps(): Promise<typeof naver> {
     };
 
     const timer = setTimeout(
-      () => fail(`네이버 지도 SDK 가 ${LOAD_TIMEOUT_MS / 1000}초 안에 뜨지 않았습니다`, '지도를 불러오는 데 시간이 너무 걸립니다.'),
+      () => fail(`네이버 지도 SDK 가 ${LOAD_TIMEOUT_MS / 1000}초 안에 뜨지 않았습니다`, '지도를 불러오는 데 시간이 오래 걸리고 있어요. 새로고침해 주세요'),
       LOAD_TIMEOUT_MS,
     );
 
@@ -136,13 +136,13 @@ export function loadNaverMaps(): Promise<typeof naver> {
       setTimeout(() => {
         if (settled) return;
         if (window.naver?.maps) done(() => resolve(window.naver));
-        else fail('SDK 는 로드됐지만 naver.maps 를 찾을 수 없습니다', '지도를 불러오지 못했습니다.');
+        else fail('SDK 는 로드됐지만 naver.maps 를 찾을 수 없습니다', '지도를 불러오지 못했어요. 새로고침해 주세요');
       }, 0);
     };
     script.onerror = () =>
       fail(
         '네이버 지도 SDK 로드 실패 — 네트워크 또는 차단 확장',
-        '지도 스크립트를 불러오지 못했습니다. 네트워크나 광고 차단 확장을 확인해 주세요.',
+        '지도를 불러오지 못했어요. 인터넷 연결이나 광고 차단 기능을 확인해 주세요',
       );
     document.head.appendChild(script);
   });
@@ -152,5 +152,5 @@ export function loadNaverMaps(): Promise<typeof naver> {
 
 /** 사용자에게 보여 줄 문구. 로더가 던진 것이 아니면 일반 문구 */
 export function mapErrorMessage(e: unknown): string {
-  return e instanceof NaverMapsLoadError ? e.userMessage : '지도를 불러오지 못했습니다.';
+  return e instanceof NaverMapsLoadError ? e.userMessage : '지도를 불러오지 못했어요. 새로고침해 주세요';
 }

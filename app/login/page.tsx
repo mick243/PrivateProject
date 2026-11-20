@@ -3,7 +3,7 @@ import LoginForm from '@/components/LoginForm';
 
 export const metadata = {
   title: '로그인',
-  description: '관리자 로그인',
+  description: '아이디와 비밀번호, 또는 소셜 계정으로 로그인해요',
 };
 
 export default function Page() {

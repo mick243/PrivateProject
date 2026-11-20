@@ -18,7 +18,7 @@ async function onGet(request: Request, ctx: { params: Promise<{ id: string }> })
   if (id === null) return badId();
 
   const chart = await getChartDetail(id, await sessionPlayerId(request));
-  return chart ? NextResponse.json({ chart }) : notFound('채보를 찾을 수 없습니다');
+  return chart ? NextResponse.json({ chart }) : notFound('채보를 찾을 수 없어요');
 }
 
 export const GET = handle(onGet);

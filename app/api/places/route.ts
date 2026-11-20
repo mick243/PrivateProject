@@ -19,7 +19,7 @@ export const dynamic = 'force-dynamic';
  */
 async function onGet(request: Request) {
   const q = new URL(request.url).searchParams.get('q') ?? '';
-  if (!isPlaceQuery(q)) return fail(400, '검색어는 2~60자여야 합니다');
+  if (!isPlaceQuery(q)) return fail(400, '검색어는 2~60자로 써 주세요');
 
   try {
     const items = await searchLocal(q.trim(), { display: 5 });
@@ -27,10 +27,10 @@ async function onGet(request: Request) {
   } catch (err) {
     if (err instanceof NaverLocalError && err.status === 0) {
       // 자격증명 미설정 — 배포 환경 문제지 사용자의 검색어 문제가 아닙니다.
-      return unavailable('지역 검색이 설정되지 않았습니다');
+      return unavailable('지금은 지역 검색을 쓸 수 없어요. 오락실 이름으로 찾아 주세요');
     }
     console.error('[places] 지역 검색 실패', err);
-    return fail(502, '지역 검색에 실패했습니다');
+    return fail(502, '지역을 찾지 못했어요. 조금 뒤에 다시 시도해 주세요');
   }
 }
 

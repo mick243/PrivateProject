@@ -35,7 +35,7 @@ async function onPost(request: Request, ctx: Ctx) {
   if (!body.ok) return body.response;
 
   // 채보 존재 확인 겸, 갱신된 상세를 그대로 돌려주기 위해 먼저 읽는다.
-  if (!(await getChartDetail(chartId, null))) return notFound('채보를 찾을 수 없습니다');
+  if (!(await getChartDetail(chartId, null))) return notFound('채보를 찾을 수 없어요');
 
   await upsertComment({ ...body.value, chartId, playerId: guard.playerId });
   const chart = await getChartDetail(chartId, guard.playerId);
@@ -51,7 +51,7 @@ async function onDelete(request: Request, ctx: Ctx) {
   if (!guard.ok) return guard.response;
 
   const deleted = await deleteComment(chartId, guard.playerId);
-  if (!deleted) return notFound('삭제할 평가가 없습니다');
+  if (!deleted) return notFound('지울 평가가 없어요');
 
   return NextResponse.json({ chart: await getChartDetail(chartId, guard.playerId) });
 }

@@ -10,7 +10,7 @@
 | 하려는 일 | 명령 |
 |---|---|
 | 처음 설치 | 아래 §1 |
-| 코드 배포 (무중단) | `git pull && npm ci && npm run build && npm run db:migrate:prisma && systemctl reload arcade-finder` |
+| 코드 배포 (재기동만 무중단 — §2) | `git pull && npm ci && npm run build && npm run db:migrate:prisma && systemctl reload arcade-finder` |
 | 스키마만 미리 적용 | `npm run db:migrate:prisma` (= `prisma migrate deploy`; 상태는 `npx prisma migrate status`) |
 | 기존 DB 를 Prisma 이력에 처음 얹기 (한 번) | `npm run db:prisma:baseline -- --dry-run` → `npm run db:prisma:baseline` |
 | 백업 | `deploy/backup.sh` (systemd timer 가 매일 04:00) |
@@ -86,7 +86,7 @@ curl -s localhost:3000/api/health
 앞에 TLS 종단(nginx·caddy)을 두고 3000 으로 프록시하세요. 내부 포트 3001·3002 는
 루프백에만 바인딩됩니다(`scripts/start-cluster.mjs`).
 
-## 2. 배포 (무중단)
+## 2. 배포
 
 ```bash
 cd /srv/arcade-finder/app && sudo -u arcade git pull
@@ -95,11 +95,36 @@ sudo -u arcade npm ci
 sudo -u arcade npm run build
 sudo -u arcade npm run db:migrate:prisma   # 새 마이그레이션이 있으면 **반드시** 여기서 적용
 sudo systemctl reload arcade-finder        # SIGHUP → 인스턴스를 하나씩 교체
+journalctl -u arcade-finder -f             # "교체 끝" 줄이 나오면 끝
 ```
 
-`reload` 는 인스턴스 하나를 프록시에서 빼고 → 끄고 → 새 코드로 띄우고 → `/api/health`
-200 을 확인한 뒤 다음으로 넘어갑니다. 그동안 다른 인스턴스가 트래픽을 받습니다.
-90초 안에 돌아오지 않으면 교체를 멈추고 나머지는 옛 코드로 계속 돕니다(로그 확인).
+`reload` 는 인스턴스 하나를 프록시에서 빼고 → 그 인스턴스로 간 요청이 끝나길 기다리고(최대 30초) →
+끄고 → 새 코드로 띄우고 → `/api/health` 200 을 확인한 뒤 다음으로 넘어갑니다
+(`scripts/start-cluster.mjs` 의 `rollingRestart`). 그동안 다른 인스턴스가 트래픽을 받습니다.
+90초 안에 돌아오지 않으면 교체를 멈추고 나머지는 옛 코드로 계속 돕니다(로그에 `✗ … 교체를 멈춥니다`).
+교체 도중 reload 가 또 오면 끝난 뒤 한 바퀴 더 돕니다.
+
+- **`systemctl reload` 는 신호만 보내고 바로 돌아옵니다** — 저널의 `Reloaded` 도 교체 전에 찍힙니다.
+  끝났는지는 `교체 끝` 줄로 보세요. 인스턴스 2개면 2초 안팎입니다.
+- **무중단은 인스턴스가 2개 이상일 때만입니다.** NCP Micro(1GB)는 `deploy/ncp/bootstrap.sh` 의 drop-in 이
+  `INSTANCES=1` 로 두므로, reload 해도 새 인스턴스가 준비될 때까지 프록시가 503(+Retry-After)을
+  돌려줍니다. restart 보다 짧을 뿐 0 은 아닙니다. NCP 재배포는 어차피 `install-release.sh` 가
+  stop → 교체 → start 합니다.
+- **같은 디렉터리에서 `npm ci` · `npm run build` 를 하는 동안은 무중단이 아닙니다.** `next build` 는
+  시작하자마자 `.next/` 를 비우고 다시 쓰는데, 옛 인스턴스는 거기서 정적 파일(`/_next/static/…`)을
+  읽습니다. 그 사이 그 요청은 500 입니다. 코드가 바뀌었다면 빌드가 끝난 뒤 reload 전까지 옛 HTML 이
+  가리키는 청크 이름이 없어져 404 가 됩니다. `npm ci` 도 `node_modules` 를 지웠다 다시 깝니다(이쪽은
+  미측정). 끊김 없는 배포까지 가려면 다른 디렉터리에서 빌드한 뒤 갈아 끼우는 방식이 필요한데, 아직 없습니다.
+
+실측 (2026-10-06 · 이 PC 의 Docker. Ubuntu 24.04 + systemd 255 컨테이너에 이 unit 을 그대로 넣고
+`/api/health` · `/` · `/finder` 를 동시 4개로 쉬지 않고 요청):
+
+| | reload 동안 실패 | 비고 |
+|---|---|---|
+| 고치기 전 (SIGHUP 처리 없음) · 인스턴스 2 | **5.5초** (연결 거부 3.2초 → 503 2.2초) | 런처가 죽고 `Restart=always` 가 RestartSec=3 뒤 다시 띄움 · NRestarts 1 |
+| 지금 · 인스턴스 2 | **0건** / 15,560 | MainPID 그대로 · 교체 1.6초 |
+| 지금 · 인스턴스 1 | **0.7초** 동안 503 | 1 vCPU 서버에서는 더 깁니다(미측정) |
+| 지금 · 인스턴스 2 · 같은 디렉터리에서 빌드 → reload | 빌드 중 정적 청크 500 **1.0초**(658건) · reload 중 0건 | 캐시가 따뜻한 4초짜리 빌드 — 처음 빌드면 훨씬 깁니다 |
 
 ⚠ **`db:migrate:prisma` 는 빼먹으면 안 됩니다.** 2026-09-22 부터 앱은 기동하면서 마이그레이션을
 적용하지 않습니다(Prisma — lib/prisma.ts). 빠진 것이 있으면 기동 로그에 경고가 찍히고, 새

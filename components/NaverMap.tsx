@@ -1032,7 +1032,7 @@ export default function NaverMap({
       position: new naver.maps.LatLng(pickedCoord.lat, pickedCoord.lng),
       map,
       zIndex: 300,
-      content: '<div class="mk mk-pin mk-pick"><span class="mk-dot"></span><span class="mk-label">신규 위치</span></div>',
+      content: '<div class="mk mk-pin mk-pick"><span class="mk-dot"></span><span class="mk-label">새 위치</span></div>',
       anchor: new naver.maps.Point(0, 0),
     });
   }, [pickedCoord, ready]);
@@ -1040,7 +1040,7 @@ export default function NaverMap({
   if (error) {
     return (
       <div className="map-error">
-        <strong>네이버 지도를 불러오지 못했습니다</strong>
+        <strong>지도를 불러오지 못했어요</strong>
         <p>{error}</p>
       </div>
     );
@@ -1049,7 +1049,7 @@ export default function NaverMap({
   return (
     <div className="map-wrap">
       <div ref={containerRef} className="map-canvas" />
-      {picking && <div className="map-hint">지도를 클릭해 오락실 위치를 지정하세요</div>}
+      {picking && <div className="map-hint">지도를 눌러 오락실 위치를 골라 주세요</div>}
     </div>
   );
 }

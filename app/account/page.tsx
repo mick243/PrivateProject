@@ -2,8 +2,8 @@ import { Suspense } from 'react';
 import AccountForm from '@/components/AccountForm';
 
 export const metadata = {
-  title: '개인정보 수정',
-  description: '닉네임과 비밀번호를 확인하고 바꿉니다',
+  title: '내 정보',
+  description: '닉네임과 비밀번호를 확인하고 바꿔요',
 };
 
 export default function Page() {

@@ -90,13 +90,13 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.details?.[0] ?? data.error ?? '저장에 실패했습니다');
+        setError(data.details?.[0] ?? data.error ?? '평가를 저장하지 못했어요. 다시 시도해 주세요');
         return;
       }
       onChanged(data.chart as ChartDetail);
       setEditing(false);
     } catch {
-      setError('네트워크 오류');
+      setError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     } finally {
       setBusy(false);
     }
@@ -104,17 +104,24 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
 
   const remove = async () => {
     if (!playerId) return;
+    // 되돌릴 수 없는 일은 한 번 묻고, 실패하면 이유를 보여 줍니다 (예전에는 조용히 끝났습니다)
+    if (!window.confirm('내 평가를 지울까요? 되돌릴 수 없어요.')) return;
     setBusy(true);
+    setError(null);
     try {
       const res = await fetch(`/api/charts/${chart.id}/comments`, {
         method: 'DELETE',
       });
       const data = await res.json();
-      if (res.ok) {
-        onChanged(data.chart as ChartDetail);
-        setBody('');
-        setTags([]);
+      if (!res.ok) {
+        setError(data.error ?? '평가를 지우지 못했어요. 다시 시도해 주세요');
+        return;
       }
+      onChanged(data.chart as ChartDetail);
+      setBody('');
+      setTags([]);
+    } catch {
+      setError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     } finally {
       setBusy(false);
     }
@@ -130,7 +137,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
 
       {!playerId ? (
         <p className="muted small">
-          <Link href="/login?next=%2Ftier">로그인</Link>하면 평가를 남길 수 있습니다.
+          <Link href="/login?next=%2Ftier">로그인</Link>하면 평가를 남길 수 있어요.
         </p>
       ) : showForm ? (
         <div className="comment-form">
@@ -159,7 +166,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
           <textarea
             rows={3}
             maxLength={1000}
-            placeholder="어디가 어떻게 어려운지 (예: 후반 폭타에서 체력이 빠진다)"
+            placeholder="어디가 어떻게 어려웠나요? (예: 후반 폭타에서 체력이 빠져요)"
             value={body}
             onChange={(e) => setBody(e.target.value)}
           />
@@ -170,13 +177,14 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
               disabled={busy || body.trim().length < 2}
               onClick={save}
             >
-              {mine ? '수정' : '등록'}
+              {mine ? '고친 평가 저장하기' : '평가 남기기'}
             </button>
             <EmoticonPicker disabled={busy} onPick={addEmoticon} />
+            {/* 취소는 주 버튼과 같은 무게로 두지 않는다 — 글자 링크 (DESIGN-GUIDE §1-2) */}
             {mine && (
               <button
                 type="button"
-                className="btn btn-sm"
+                className="btn-link"
                 disabled={busy}
                 onClick={() => setEditing(false)}
               >
@@ -186,8 +194,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
           </div>
           {error && <p className="warn">{error}</p>}
           <p className="hint">
-            클리어하지 않아도 남길 수 있습니다 — 막힌 지점도 정보입니다. 목록에는 클리어 여부가 함께
-            표시됩니다.
+            클리어하지 않았어도 막힌 지점을 남겨 주세요. 목록에는 클리어했는지가 함께 보여요.
           </p>
         </div>
       ) : (
@@ -198,7 +205,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
             내 평가 수정
           </button>
           <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={remove}>
-            삭제
+            지우기
           </button>
         </div>
       )}
@@ -207,7 +214,9 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
         <p className="muted small blocked-note">차단한 사용자의 평가 {hiddenCount}개를 가렸어요.</p>
       )}
       {visible.length === 0 ? (
-        chart.comments.length === 0 && <p className="muted small">아직 평가가 없습니다.</p>
+        chart.comments.length === 0 && (
+          <p className="muted small">아직 평가가 없어요. 어디가 어려웠는지 첫 평가를 남겨 주세요.</p>
+        )
       ) : (
         <>
           <ul className="comment-list">

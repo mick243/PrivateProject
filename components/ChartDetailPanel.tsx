@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
   UNDECIDED_CODE,
@@ -73,6 +74,15 @@ function tierLabel(chart: ChartDetail): string {
   return isSpecialChart(chart, chart.settings) ? `특수패턴 / ${grade}` : grade;
 }
 
+/**
+ * 숫자 뒤에 붙는 '으로' / '로' — 투표 버튼 문구(`0.40으로 투표하기`)에 쓴다.
+ * 마지막 숫자를 읽는 소리로 가른다: 0(영) · 3(삼) · 6(육) 은 받침이 있어 '으로',
+ * 나머지는 받침이 없거나 ㄹ 받침(1 일 · 7 칠 · 8 팔)이라 '로'.
+ */
+function withRo(num: string): string {
+  return /[036]$/.test(num) ? `${num}으로` : `${num}로`;
+}
+
 export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }: Props) {
   const { settings } = chart;
   // 눈금은 tier_step(등급 간격)이 아니라 vote_step 을 따른다. 등급 판정은
@@ -107,12 +117,12 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? '요청에 실패했습니다');
+        setError(data.error ?? '저장하지 못했어요. 다시 시도해 주세요');
         return;
       }
       onChanged(data.chart as ChartDetail);
     } catch {
-      setError('네트워크 오류');
+      setError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     } finally {
       setBusy(false);
     }
@@ -124,6 +134,11 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
   const videoUrl = youtubeWatchUrl(chart.videoUrl);
   // 등록된 영상이 없으면 검색으로 보냅니다 — 빈 자리를 두는 것보다 낫습니다.
   const searchUrl = chartVideoSearchUrl(chart);
+  // 안내문에 넣을 "몇 표 · 몇 명 더" (DESIGN-GUIDE §2-8). '미정' 은 투표 수가
+  // min_votes 미만일 때라(recalc_chart_stats) 남은 표는 늘 1 이상이다.
+  const votesLeft = Math.max(1, settings.minVotes - chart.voteCount);
+  const specialLeft = Math.max(0, settings.specialMin - chart.specialCount);
+  const draftLabel = draft.toFixed(2);
 
   return (
     <div className="detail">
@@ -133,7 +148,7 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
           <p className="muted small">
             {/* modeLabel 이 null 이면 난이도 미표기라 레벨만 붙인다 (migrate-047).
                 difficultyLabel 은 난이도 축이 있는 게임에서만 있다 (migrate-059). */}
-            {chart.artist ?? '아티스트 미상'} · {chart.machineName}{' '}
+            {chart.artist ?? '아티스트 모름'} · {chart.machineName}{' '}
             {chart.modeLabel === null ? '' : `${chart.modeLabel} `}
             {chart.difficultyLabel === null ? '' : `${chart.difficultyLabel} `}
             {/* 난이도 미상이면 숫자가 없다 (migrate-059) */}
@@ -184,27 +199,28 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
           <span>투표 수</span>
           <strong>{chart.voteCount}</strong>
         </div>
-        <div className="stat">
-          <span>수렴도</span>
+        <div className="stat" title="1에 가까울수록 투표가 한데 모였어요">
+          <span>의견 일치도</span>
           <strong>{chart.convergence === null ? '—' : chart.convergence.toFixed(2)}</strong>
         </div>
       </div>
 
       {chart.tierCode === 'undecided' && (
         <p className="hint">
-          투표가 {settings.minVotes}건 미만이라 아직 등급이 정해지지 않았습니다.
+          투표가 {votesLeft}표 더 모이면 등급이 정해져요 (지금 {chart.voteCount}표).
         </p>
       )}
       {chart.tierCode === 'unique' && (
         <p className="hint">
-          수렴도가 {settings.minConvergence} 미만 — 사람마다 체감이 크게 갈리는 채보입니다.
+          의견이 크게 갈리는 채보예요. 의견 일치도가 {settings.minConvergence}보다 낮으면
+          &lsquo;개인차&rsquo; 칸에 놓여요.
         </p>
       )}
 
       <div className="section">
         <h3>투표 분포</h3>
         {chart.votes.length === 0 ? (
-          <p className="muted small">아직 투표가 없습니다.</p>
+          <p className="muted small">아직 투표가 없어요. 클리어했다면 아래에서 첫 투표를 남겨 주세요.</p>
         ) : (
           <div className="histogram">
             {buckets.map((b) => (
@@ -228,7 +244,10 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
         <h3>내 기록</h3>
 
         {!playerId ? (
-          <p className="muted small">로그인하면 내 기록을 남길 수 있습니다.</p>
+          <p className="muted small">
+            <Link href="/login?next=%2Ftier">로그인</Link>하면 클리어 기록과 체감 난이도를 남길 수
+            있어요.
+          </p>
         ) : (
           <>
             <label className="check">
@@ -240,20 +259,20 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
                   send(`/api/charts/${chart.id}/clear`, e.target.checked ? 'PUT' : 'DELETE')
                 }
               />
-              <span>이 채보를 클리어했습니다</span>
+              <span>이 채보를 클리어했어요</span>
             </label>
 
             {!chart.myClear ? (
               <p className="hint">
-                클리어 기록이 있어야 체감 난이도에 투표할 수 있습니다. 클리어를 해제하면
-                남긴 투표도 함께 삭제됩니다.
+                클리어한 채보만 체감 난이도에 투표할 수 있어요. 나중에 체크를 풀면 남긴 투표도
+                함께 지워져요.
               </p>
             ) : (
               <div className="vote-box">
                 <div className="vote-head">
                   <span className="muted small">체감 난이도</span>
                   <strong>
-                    {draft.toFixed(2)}
+                    {draftLabel}
                     <em className="vote-grade">{gradeLabelFor(chart, draft)}</em>
                   </strong>
                 </div>
@@ -273,22 +292,29 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
                 </div>
 
                 <div className="form-actions vote-actions">
+                  {/* 버튼에 고른 값을 담는다 — 누르기 전에 무엇이 저장될지 보인다 (DESIGN-GUIDE §1-3).
+                      지금 투표와 같은 값이면 버튼이 꺼지므로 그때는 상태를 말한다. */}
                   <button
                     type="button"
                     className="btn btn-primary btn-sm"
                     disabled={busy || draft === chart.myVote}
                     onClick={() => send(`/api/charts/${chart.id}/vote`, 'PUT', { value: draft })}
                   >
-                    {chart.myVote === null ? '투표' : '수정'}
+                    {chart.myVote === null
+                      ? `${withRo(draftLabel)} 투표하기`
+                      : draft === chart.myVote
+                        ? `${draftLabel}에 투표했어요`
+                        : `${withRo(draftLabel)} 바꾸기`}
                   </button>
+                  {/* 다시 투표할 수 있는 일이라 주 버튼과 같은 무게로 두지 않고 글자 링크로 낮춘다 */}
                   {chart.myVote !== null && (
                     <button
                       type="button"
-                      className="btn btn-sm btn-danger"
+                      className="btn-link"
                       disabled={busy}
                       onClick={() => send(`/api/charts/${chart.id}/vote`, 'DELETE')}
                     >
-                      투표 취소
+                      내 투표 지우기
                     </button>
                   )}
                 </div>
@@ -303,7 +329,7 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
       <div className="section">
         <h3>특수 패턴</h3>
         {!playerId ? (
-          <p className="muted small">로그인하면 특수 패턴으로 표시할 수 있습니다.</p>
+          <p className="muted small">로그인하면 특수 패턴으로 표시할 수 있어요.</p>
         ) : (
           <>
             <label className="check">
@@ -315,16 +341,22 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
                   send(`/api/charts/${chart.id}/special`, e.target.checked ? 'PUT' : 'DELETE')
                 }
               />
-              <span>특수 패턴 채보입니다</span>
+              <span>특수 패턴 채보예요</span>
             </label>
+            {/* 두 문장까지 (DESIGN-GUIDE §1-1). 몇 명이 더 표시하면 옮겨지는지를 숫자로 말한다. */}
             <p className="hint">
-              기믹·연출로 난이도가 정해지는 채보는 체감 난이도로 줄 세우기 어렵습니다.{' '}
-              <strong>
-                {settings.specialMin}명 이상
-              </strong>
-              이 표시하면 서열표의 &lsquo;특수패턴&rsquo; 칸으로 옮겨집니다 (지금{' '}
-              {chart.specialCount}명). 투표 등급은 그대로 계산되고, 표시가 줄면 원래 등급으로
-              돌아갑니다.
+              기믹·연출로 난이도가 정해지는 채보라면 표시해 주세요.{' '}
+              {specialLeft > 0 ? (
+                <>
+                  <strong>{specialLeft}명</strong>이 더 표시하면 &lsquo;특수패턴&rsquo; 칸으로
+                  옮겨지고, 투표 등급은 그대로 남아요.
+                </>
+              ) : (
+                <>
+                  <strong>{chart.specialCount}명</strong>이 표시해 &lsquo;특수패턴&rsquo; 칸에
+                  있고, {settings.specialMin}명 아래로 줄면 원래 등급으로 돌아가요.
+                </>
+              )}
             </p>
           </>
         )}

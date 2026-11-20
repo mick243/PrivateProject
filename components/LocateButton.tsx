@@ -30,11 +30,13 @@ export default function LocateButton({
   const locating = following && status === 'locating';
   const tracking = following && status === 'tracking';
 
+  // 누르면 일어날 일을 적는다 (docs/DESIGN-GUIDE.md §3-6). 찾는 중에도 누르면 멈추지만,
+  // 그때는 "아직 찾는 중" 이라는 사실이 먼저라 앞에 둔다.
   const label = locating
-    ? '위치 확인 중'
+    ? '내 위치 찾는 중 — 누르면 멈춰요'
     : tracking
-      ? '내 위치 추적 중 — 눌러서 위치 해제'
-      : '내 위치 추적';
+      ? '내 위치 따라가는 중 — 누르면 위치를 지워요'
+      : '내 위치 따라가기';
 
   return (
     <button

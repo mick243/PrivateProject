@@ -27,9 +27,9 @@ export default function Error({
   return (
     <main className="login-page">
       <section className="login-card" role="alert">
-        <h1>화면을 그리지 못했습니다</h1>
+        <h1>화면을 불러오지 못했어요</h1>
         <p className="muted small">
-          잠깐의 네트워크 문제거나 서버가 배포 중일 수 있어요. 다시 시도해도 같으면 잠시 뒤에
+          연결이 잠깐 끊겼거나 새 버전을 올리는 중일 수 있어요. 다시 시도해도 같으면 조금 뒤에
           들어와 주세요.
         </p>
         {error.digest && (
@@ -37,12 +37,12 @@ export default function Error({
             오류 번호 <code>{error.digest}</code>
           </p>
         )}
-        <div className="form-actions">
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => reset()}>
-            다시 시도
-          </button>
-          <a className="btn btn-sm" href="/">
-            처음으로
+        <button type="button" className="btn btn-primary btn-block" onClick={() => reset()}>
+          다시 시도하기
+        </button>
+        <div className="link-row">
+          <a className="btn-link" href="/">
+            홈으로 가기
           </a>
         </div>
       </section>

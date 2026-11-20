@@ -19,7 +19,7 @@ describe('reportInputSchema — 종류마다 필수 칸이 다르다', () => {
   it('대기 제보는 인원이 있어야 한다', () => {
     const r = report({ kind: 'queue', waitCount: null });
     expect(r.success).toBe(false);
-    if (!r.success) expect(formatIssues(r.error)).toContain('waitCount: 대기 인원을 입력해 주세요');
+    if (!r.success) expect(formatIssues(r.error)).toContain('대기 인원을 골라 주세요');
   });
 
   it('컨디션 제보는 값과 기체가 둘 다 있어야 한다', () => {
@@ -29,7 +29,7 @@ describe('reportInputSchema — 종류마다 필수 칸이 다르다', () => {
     const noCabinet = report({ kind: 'condition', waitCount: null, condition: 4 });
     expect(noCabinet.success).toBe(false);
     if (!noCabinet.success) {
-      expect(formatIssues(noCabinet.error)).toContain('cabinetId: 어느 기체인지 골라 주세요');
+      expect(formatIssues(noCabinet.error)).toContain('어느 기계인지 골라 주세요');
     }
   });
 
@@ -139,7 +139,7 @@ describe('postInputSchema — 게임은 공지에서만 생략할 수 있다', (
   it('일반 글은 게임이 없으면 막는다', () => {
     const r = post({ machineId: null });
     expect(r.success).toBe(false);
-    if (!r.success) expect(formatIssues(r.error).join()).toContain('게임을 선택해 주세요');
+    if (!r.success) expect(formatIssues(r.error).join()).toContain('게임을 골라 주세요');
   });
 
   it('아예 보내지 않아도 같은 판단이다 (기본값 null)', () => {
@@ -291,7 +291,7 @@ describe('signupInputSchema — 값을 처음 정하는 자리라 깐깐하게 �
   it('비밀번호 확인은 서버에서도 본다 — 브라우저를 거치지 않는 요청이 있다', () => {
     const r = signup({ passwordConfirm: '다른값입니다' });
     expect(r.success).toBe(false);
-    if (!r.success) expect(formatIssues(r.error)).toContain('passwordConfirm: 비밀번호가 서로 다릅니다');
+    if (!r.success) expect(formatIssues(r.error)).toContain('두 비밀번호가 달라요. 다시 확인해 주세요');
   });
 
   it('짧은 비밀번호는 막는다', () => {
@@ -309,7 +309,7 @@ describe('signupInputSchema — 값을 처음 정하는 자리라 깐깐하게 �
       // 칸이 통째로 빠진 경우까지 우리 문장으로 답해야 한다 — zod 기본 메시지는
       // 영문이라 그대로 화면에 나가면 읽을 수 없다.
       if (!r.success) {
-        expect(formatIssues(r.error), String(bad)).toContain('email: 이메일을 입력해 주세요');
+        expect(formatIssues(r.error), String(bad)).toContain('이메일을 입력해 주세요');
       }
     }
   });
@@ -344,7 +344,7 @@ describe('nicknameInputSchema — 소셜로 들어온 사람이 이름을 처음
   it('부르는 말만 다르다 — 안내 문구는 아이디가 아니라 닉네임이라고 한다', () => {
     const r = claim('ㄱ');
     expect(r.success).toBe(false);
-    if (!r.success) expect(formatIssues(r.error)).toContain('nickname: 닉네임은 2자 이상이어야 합니다');
+    if (!r.success) expect(formatIssues(r.error)).toContain('닉네임은 2자 이상으로 써 주세요');
   });
 
   it('앞뒤 공백은 잘라내고 받는다 — 겉보기 같은 이름이 둘 생기지 않도록', () => {

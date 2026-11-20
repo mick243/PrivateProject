@@ -230,13 +230,15 @@ export async function sendVerificationMail(
   const sent = await sendMail({
     to: issued.email,
     subject: '[오락실 파인더] 이메일 주소를 확인해 주세요',
+    // 텍스트판과 HTML판(verificationHtml)은 같은 내용입니다 — 한쪽만 고치지 마세요.
     text: [
-      '오락실 파인더 가입을 환영합니다.',
+      '오락실 파인더 가입을 환영해요.',
       '',
-      '아래 주소를 열면 이메일 확인이 끝납니다. 24시간 동안 유효합니다.',
+      '아래 주소를 열면 이메일 확인이 끝나요.',
       link,
       '',
-      '본인이 가입한 것이 아니라면 이 메일을 버리시면 됩니다 — 확인하지 않은 주소로는 아무 일도 일어나지 않습니다.',
+      '링크는 24시간 동안 열려 있어요.',
+      '직접 가입한 적이 없다면 이 메일은 무시해도 돼요. 확인하지 않은 주소로는 아무 일도 일어나지 않아요.',
     ].join('\n'),
     html: verificationHtml(link),
   });
@@ -254,13 +256,13 @@ export async function sendVerificationMail(
 function verificationHtml(link: string): string {
   return `<div style="font-family:-apple-system,'Malgun Gothic',sans-serif;line-height:1.7;color:#1a172a;max-width:520px">
   <h2 style="font-size:20px;margin:0 0 16px">이메일 주소를 확인해 주세요</h2>
-  <p style="margin:0 0 20px">오락실 파인더 가입을 환영합니다. 아래 버튼을 누르면 확인이 끝납니다.</p>
+  <p style="margin:0 0 20px">오락실 파인더 가입을 환영해요. 아래 버튼을 누르면 이메일 확인이 끝나요.</p>
   <p style="margin:0 0 20px">
     <a href="${link}" style="display:inline-block;background:#5b3fd9;color:#fff;text-decoration:none;padding:11px 20px;border-radius:4px;font-weight:700">이메일 확인하기</a>
   </p>
   <p style="margin:0 0 8px;font-size:13px;color:#4a4560">버튼이 눌리지 않으면 아래 주소를 복사해 주소창에 붙여 넣어 주세요.</p>
   <p style="margin:0 0 20px;font-size:13px;word-break:break-all"><a href="${link}" style="color:#5b3fd9">${link}</a></p>
-  <p style="margin:0;font-size:13px;color:#6e687f">링크는 24시간 동안 유효합니다. 본인이 가입한 것이 아니라면 이 메일을 버리시면 됩니다 — 확인하지 않은 주소로는 아무 일도 일어나지 않습니다.</p>
+  <p style="margin:0;font-size:13px;color:#6e687f">링크는 24시간 동안 열려 있어요. 직접 가입한 적이 없다면 이 메일은 무시해도 돼요. 확인하지 않은 주소로는 아무 일도 일어나지 않아요.</p>
 </div>`;
 }
 

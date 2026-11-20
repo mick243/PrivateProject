@@ -85,7 +85,7 @@ describe('표준 실패 응답', () => {
     const res = invalid(parsed.error);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; details: string[] };
-    expect(body.error).toBe('입력값이 올바르지 않습니다');
+    expect(body.error).toBe('입력한 내용을 다시 확인해 주세요');
     expect(Array.isArray(body.details)).toBe(true);
     expect(body.details.length).toBeGreaterThan(0);
   });
@@ -137,8 +137,11 @@ describe('parseBody — 본문 읽기 + 스키마 검증', () => {
     if (parsed.ok) throw new Error('실패해야 함');
     const body = (await parsed.response.json()) as { error: string; details: string[] };
     expect(parsed.response.status).toBe(400);
-    expect(body.error).toBe('입력값이 올바르지 않습니다');
-    expect(body.details[0]).toMatch(/^value: /);
+    // 문구는 UX 라이팅 지침(docs/DESIGN-GUIDE.md)대로. details 는 화면에 그대로 뜨므로 내부 필드 이름(`value:`)을
+    // 앞에 붙이지 않는다 (lib/validation.ts formatIssues — 2026-11-20 rdb-latest 병합으로 바뀜)
+    expect(body.error).toBe('입력한 내용을 다시 확인해 주세요');
+    expect(body.details.length).toBeGreaterThan(0);
+    expect(body.details[0]).not.toMatch(/^value: /);
   });
 });
 

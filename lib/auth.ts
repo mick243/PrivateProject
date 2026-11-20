@@ -336,7 +336,7 @@ export async function requirePlayer(request: Request): Promise<PlayerGuard> {
   if (playerId === null) {
     return {
       ok: false,
-      response: NextResponse.json({ error: '로그인이 필요합니다' }, { status: 401 }),
+      response: NextResponse.json({ error: '로그인한 뒤 다시 시도해 주세요' }, { status: 401 }),
     };
   }
   return { ok: true, playerId };
@@ -361,13 +361,13 @@ export async function requireAdmin(request: Request): Promise<AdminGuard> {
   if (!user) {
     return {
       ok: false,
-      response: NextResponse.json({ error: '관리자 로그인이 필요합니다' }, { status: 401 }),
+      response: NextResponse.json({ error: '관리자로 로그인해 주세요' }, { status: 401 }),
     };
   }
   if (!user.isAdmin) {
     return {
       ok: false,
-      response: NextResponse.json({ error: '관리자 권한이 없습니다' }, { status: 403 }),
+      response: NextResponse.json({ error: '관리자만 할 수 있어요' }, { status: 403 }),
     };
   }
   return { ok: true, user };

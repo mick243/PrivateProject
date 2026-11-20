@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start -p 3000",
     "start:cluster": "node scripts/start-cluster.mjs",
+    "traffic:summary": "node scripts/caddy-traffic.mjs --summary",
     "pwa:icons": "node scripts/make-pwa-icons.mjs",
     "db:init": "node scripts/init-db.mjs",
     "db:reset": "node scripts/init-db.mjs --reset",

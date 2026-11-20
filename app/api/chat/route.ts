@@ -94,6 +94,8 @@ const buildSystem = (
 
 답변 규칙:
 - 한국어로, 짧고 구체적으로 답합니다. 서론 없이 바로 답부터 씁니다.
+- 사용자에게 답할 때는 친근한 해요체로, 짧게 씁니다 (예: "~있어요", "~할까요?"). "~합니다" 체는 쓰지 않습니다.
+- 화면과 같은 쉬운 말을 씁니다: '기종' 대신 '게임', '기체'·'컨디션' 대신 '기계'·'상태', '반경' 대신 '거리'. 도구가 돌려주는 필드 이름(condition 등)을 답에 그대로 쓰지 않습니다.
 - 이 앱 안의 데이터를 먼저 봅니다: search_arcades(등록된 오락실·보유 기종·컨디션·기준점에서의 거리), search_reports(실시간 제보 피드), search_posts(커뮤니티 게시판).
 - "내 근처 · 가까운 · 주변" 을 물으면 search_arcades 에 radiusKm 을 줍니다. 결과의 order 가 '가까운 순' 일 때만 가깝다고 말하고, distance 가 없으면 거리를 지어내지 마세요.
 - 가는 길을 물으면 search_arcades 로 그 오락실을 찾고, **이름을 도구가 준 그대로** 적습니다. 그러면 앱이 답변 아래에 그 오락실의 길찾기 링크를 붙입니다. 지도 주소(URL)를 직접 쓰지 말고, 소요 시간·노선을 지어내지 마세요 — "아래 길찾기 링크를 누르면 지도 앱에서 경로를 볼 수 있다"고 안내합니다.
@@ -259,17 +261,30 @@ async function runCalls(calls: FunctionCall[], ctx: ChatToolContext): Promise<Pa
 const CHAT_DAILY_LIMIT_PER_PLAYER = limitFromEnv('CHAT_DAILY_LIMIT', 40);
 const CHAT_DAILY_LIMIT_GLOBAL = limitFromEnv('CHAT_GLOBAL_DAILY_LIMIT', 2000);
 
+/**
+ * 사용자에게 나가는 공통 문구 (docs/DESIGN-GUIDE.md §4).
+ *
+ * 키 · 모델 이름 같은 내부 사정은 화면에 내지 않습니다 — 사용자가 고칠 수 있는 게
+ * 아니고, 원인은 서버 로그에 남깁니다. 개발자에게 필요한 안내는 개발 모드에서만 줍니다.
+ */
+const CANNOT_ANSWER = '지금은 답을 만들 수 없어요. 조금 뒤에 다시 시도해 주세요';
+const ANSWER_FAILED = '답을 만들지 못했어요. 조금 뒤에 다시 시도해 주세요';
+const isDev = process.env.NODE_ENV !== 'production';
+
 async function onPost(request: Request) {
   const guard = await requirePlayer(request);
   if (!guard.ok) {
-    return fail(401, '챗봇은 로그인한 뒤 쓸 수 있어요. 오락실 탐색("오락실 찾아줘")은 로그인 없이도 됩니다.');
+    return fail(401, "로그인하면 챗봇에게 물어볼 수 있어요. '오락실 찾아줘' 는 로그인 없이도 바로 돼요.");
   }
 
   // 키가 없으면 이 경로만 죽습니다. 우선순위 탐색은 클라이언트에서 끝나므로
   // 키 없이도 앱의 본체는 그대로 돌아갑니다.
   if (!process.env.GEMINI_API_KEY) {
+    if (!isDev) console.error('[chat] GEMINI_API_KEY 가 설정되지 않았습니다');
     return unavailable(
-      '챗봇이 아직 연결되지 않았습니다 (.env.local 에 GEMINI_API_KEY 를 넣어 주세요). 오락실 탐색은 키 없이도 됩니다 — "오락실 찾아줘" 라고 해 보세요.',
+      isDev
+        ? "챗봇이 아직 연결되지 않았어요 (.env.local 에 GEMINI_API_KEY 를 넣어 주세요). 오락실 찾기는 키 없이도 돼요 — '오락실 찾아줘' 라고 해 보세요."
+        : "지금은 챗봇이 답할 수 없어요. '오락실 찾아줘' 는 지금 바로 돼요.",
     );
   }
 
@@ -280,14 +295,17 @@ async function onPost(request: Request) {
   const mine = await consume(`chat:player:${guard.playerId}`, CHAT_DAILY_LIMIT_PER_PLAYER, DAY_MS);
   if (!mine.allowed) {
     return tooMany(
-      `오늘 챗봇 질문 한도(${mine.limit}회)를 다 썼어요. ${retryAfterLabel(mine.retryAfterMs)} 뒤에 다시 열려요.`,
+      `오늘 챗봇 질문 ${mine.limit}번을 다 썼어요. ${retryAfterLabel(mine.retryAfterMs)} 뒤에 다시 열려요.`,
       mine.retryAfterMs,
     );
   }
   const all = await consume('chat:global', CHAT_DAILY_LIMIT_GLOBAL, DAY_MS);
   if (!all.allowed) {
     console.warn(`[chat] 전체 일일 한도 ${all.limit} 도달 — ${retryAfterLabel(all.retryAfterMs)} 뒤 해제`);
-    return unavailable('오늘은 챗봇 이용이 많아 잠시 쉬고 있어요. 내일 다시 시도해 주세요.', all.retryAfterMs);
+    return unavailable(
+      "오늘은 질문이 많아 챗봇이 잠깐 쉬고 있어요. 자유 질문은 내일 다시 열리고, '오락실 찾아줘' 는 지금도 돼요.",
+      all.retryAfterMs,
+    );
   }
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -304,7 +322,7 @@ async function onPost(request: Request) {
     system = buildSystem(rhythmGames);
   } catch (e) {
     console.error('[chat] machines', e);
-    return fail(500, '답변을 만들지 못했습니다');
+    return fail(500, ANSWER_FAILED);
   }
 
   // 대화는 최근 것부터 상한(lib/chat-budget.ts HISTORY_CHAR_BUDGET)까지만 싣습니다 — 매 왕복마다
@@ -380,11 +398,11 @@ async function onPost(request: Request) {
         `${history.dropped ? ` · 앞 ${history.dropped}턴 생략` : ''})`,
     );
 
-    if (!response) return fail(500, '답변을 만들지 못했습니다');
+    if (!response) return fail(500, ANSWER_FAILED);
 
     const finishReason = response.candidates?.[0]?.finishReason;
     if (response.promptFeedback?.blockReason || (finishReason && BLOCKED.has(finishReason))) {
-      return NextResponse.json({ text: '이 질문에는 답할 수 없습니다.' });
+      return NextResponse.json({ text: '이 질문에는 답할 수 없어요. 다른 말로 다시 물어봐 주세요.' });
     }
 
     const text = (response.text ?? '').trim();
@@ -392,30 +410,34 @@ async function onPost(request: Request) {
     const places = placesInAnswer(text, toolContext.places?.values() ?? []);
 
     return NextResponse.json({
-      text: text || '답을 만들지 못했습니다. 질문을 조금 더 구체적으로 적어 주세요.',
+      text: text || '답을 만들지 못했어요. 질문을 조금 더 구체적으로 적어 주세요.',
       sources: sources.size ? [...sources.values()] : undefined,
       places: places.length ? places : undefined,
     });
   } catch (e) {
-    // 키가 틀렸는지, 한도를 넘겼는지, 그냥 느린 건지를 구분해 줘야 다음에
-    // 뭘 해야 할지 알 수 있습니다.
+    // 키가 틀렸는지, 한도를 넘겼는지, 그냥 느린 건지를 구분해 둬야 다음에
+    // 뭘 해야 할지 알 수 있습니다. 그 구분은 상태 코드와 서버 로그에 남기고,
+    // 사용자에게는 할 일만 말합니다 (키 · 모델 이름은 화면에 내지 않습니다).
     if (e instanceof ApiError) {
       if (e.status === 401 || e.status === 403) {
-        return fail(502, 'API 키가 올바르지 않습니다');
+        console.error(`[chat] Gemini 가 키를 거절했습니다 (${e.status}) — GEMINI_API_KEY 를 확인하세요`, e.message);
+        return fail(502, CANNOT_ANSWER);
       }
       if (e.status === 429) {
-        return tooMany('요청이 몰렸습니다. 잠시 뒤 다시 시도해 주세요');
+        return tooMany('지금 질문이 몰려 있어요. 조금 뒤에 다시 시도해 주세요');
       }
       if (e.status === 404) {
-        return fail(502, `이 키로는 ${MODEL} 을 쓸 수 없습니다`);
+        console.error(`[chat] 이 키로는 ${MODEL} 을 쓸 수 없습니다 (404)`, e.message);
+        return fail(502, CANNOT_ANSWER);
       }
     }
     // SDK 는 네트워크 실패를 전용 오류로 감싸지 않고 fetch 의 것을 그대로 던집니다.
     if (e instanceof TypeError) {
-      return fail(504, '네트워크에 연결하지 못했습니다');
+      console.error('[chat] Gemini 에 연결하지 못했습니다', e.message);
+      return fail(504, '연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     }
     console.error('[chat]', e);
-    return fail(500, '답변을 만들지 못했습니다');
+    return fail(500, ANSWER_FAILED);
   }
 }
 

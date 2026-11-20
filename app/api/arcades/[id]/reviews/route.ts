@@ -44,7 +44,7 @@ async function onPost(request: Request, ctx: Ctx) {
   const body = await parseBody(request, reviewInputSchema);
   if (!body.ok) return body.response;
 
-  if (!(await getArcade(arcadeId))) return notFound('오락실을 찾을 수 없습니다');
+  if (!(await getArcade(arcadeId))) return notFound('오락실을 찾을 수 없어요. 지워졌을 수 있어요');
 
   const review = await upsertReview({ ...body.value, arcadeId, playerId: guard.playerId });
   return NextResponse.json(
@@ -73,13 +73,13 @@ async function onDelete(request: Request, ctx: Ctx) {
     if (!admin.ok) return admin.response;
 
     const deleted = await deleteReviewById(arcadeId, reviewId);
-    if (!deleted) return notFound('삭제할 리뷰가 없습니다');
+    if (!deleted) return notFound('지울 리뷰가 없어요');
   } else {
     const guard = await requirePlayer(request);
     if (!guard.ok) return guard.response;
 
     const deleted = await deleteReview(arcadeId, guard.playerId);
-    if (!deleted) return notFound('삭제할 리뷰가 없습니다');
+    if (!deleted) return notFound('지울 리뷰가 없어요');
   }
 
   return NextResponse.json({

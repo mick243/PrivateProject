@@ -2,6 +2,8 @@
 #
 #   systemctl start|stop|status arcade-finder
 #   systemctl reload arcade-finder     ← 무중단 재기동 (SIGHUP → 인스턴스를 하나씩 교체)
+#                                         신호만 보내고 바로 돌아옵니다. 끝은 로그의 "교체 끝" 줄로 확인.
+#                                         무중단은 INSTANCES 가 2 이상일 때만 — 1 이면 새로 뜰 때까지 503.
 #   journalctl -u arcade-finder -f     ← 로그 (journald 가 로테이션·보존을 맡습니다)
 #
 # start-cluster 가 인스턴스 2개(3001·3002, 루프백)를 띄우고 3000 에 프록시를 둡니다.
@@ -25,6 +27,8 @@ Environment=PORT=3000
 Environment=INSTANCES=2
 Environment=PG_POOL_MAX=10
 ExecStart=/usr/bin/node scripts/start-cluster.mjs
+# SIGHUP 은 start-cluster.mjs 의 rollingRestart 가 받습니다. 그 처리기가 없으면 Node 기본 동작대로
+# 런처가 죽고 아래 Restart=always 가 다시 띄우는 "전체 재시작" 이 됩니다 (2026-10-06 전까지 실제로 그랬음).
 ExecReload=/bin/kill -HUP $MAINPID
 KillSignal=SIGTERM
 TimeoutStopSec=20

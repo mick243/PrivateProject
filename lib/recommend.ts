@@ -29,9 +29,9 @@ export type FactorKey = 'condition' | 'wait' | 'distance';
 export type Weights = Record<FactorKey, number>;
 
 export const FACTORS: { key: FactorKey; label: string; hint: string }[] = [
-  { key: 'condition', label: '기체 컨디션', hint: '발판·버튼 상태 (등록값 + 제보 종합)' },
-  { key: 'wait', label: '대기 인원', hint: '지금 줄 서 있는 사람 수 제보' },
-  { key: 'distance', label: '거리', hint: '현재 기준점에서의 직선 거리' },
+  { key: 'condition', label: '기계 상태', hint: '발판·버튼 상태 (처음 적힌 값과 알려 준 상태를 합쳐서)' },
+  { key: 'wait', label: '대기 인원', hint: '지금 줄 서 있다고 알려 준 사람 수' },
+  { key: 'distance', label: '거리', hint: '지금 기준 위치에서 잰 직선 거리' },
 ];
 
 /** 셋을 똑같이 봅니다 — 어느 하나를 기본값으로 밀어 줄 근거가 없습니다 */
@@ -86,7 +86,7 @@ export function weightsFromOrder(order: PriorityOrder): Weights {
   return weights;
 }
 
-/** '거리 → 기체 컨디션 → 대기 인원' — 확인 문구용 */
+/** '1순위 거리 · 2순위 기계 상태 · 3순위 대기 인원' — 확인 문구용 */
 export function describeOrder(order: PriorityOrder): string {
   return order
     .map((key, i) => `${i + 1}순위 ${FACTORS.find((f) => f.key === key)!.label}`)
@@ -174,7 +174,7 @@ function scoreCondition(machines: ArcadeMachine[]): FactorScore {
   const values = machines.map(machineCondition).filter((v): v is number => v !== null);
 
   if (values.length === 0) {
-    return { score: NEUTRAL, known: false, label: '컨디션 정보 없음' };
+    return { score: NEUTRAL, known: false, label: '상태 정보 없음' };
   }
 
   // 관심 기종이 여러 개면 **평균**입니다. 셋 중 하나만 좋은 곳보다 셋 다
@@ -185,7 +185,7 @@ function scoreCondition(machines: ArcadeMachine[]): FactorScore {
     // 1~5 눈금을 0~1 로. 최저값 1 이 0점이어야 5칸이 고르게 벌어집니다.
     score: clamp01((avg - 1) / 4),
     known: true,
-    label: `컨디션 ${avg.toFixed(1)}/5`,
+    label: `상태 ${avg.toFixed(1)}/5`,
   };
 }
 
@@ -231,7 +231,7 @@ function scoreWait(machines: ArcadeMachine[]): FactorScore {
 
 function scoreDistance(km: number | null, radiusKm: number): FactorScore {
   if (km === null) {
-    return { score: NEUTRAL, known: false, label: '기준점 없음' };
+    return { score: NEUTRAL, known: false, label: '기준 위치 없음' };
   }
   // 반경 안에서만 줄을 세웁니다. "10km 대비 몇 %" 같은 고정 기준을 쓰면
   // 반경 1km 로 좁혀 놨을 때 후보들의 거리 점수가 전부 0.9 대로 뭉쳐
@@ -322,9 +322,9 @@ export function rankArcades({
 
 /** "가까워서 1위" — 순위의 근거를 한 마디로. 근거가 없으면 그렇다고 말합니다 */
 export function rankReason(scored: ScoredArcade): string {
-  if (scored.topFactor === null) return '비교할 정보가 아직 없습니다';
+  if (scored.topFactor === null) return '비교할 정보가 아직 없어요';
   const reason: Record<FactorKey, string> = {
-    condition: '기체 상태가 좋아서',
+    condition: '기계 상태가 좋아서',
     wait: '지금 바로 할 수 있어서',
     distance: '가까워서',
   };

@@ -114,7 +114,9 @@ export default function ChatBot() {
                   ...m,
                   pending: false,
                   failed: !res.ok,
-                  text: res.ok ? data.text : (data.error ?? '답변을 만들지 못했습니다'),
+                  text: res.ok
+                    ? data.text
+                    : (data.error ?? '답을 만들지 못했어요. 조금 뒤에 다시 시도해 주세요'),
                   sources: data.sources,
                   places: res.ok ? data.places : undefined,
                 }
@@ -125,7 +127,7 @@ export default function ChatBot() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === pendingId
-              ? { ...m, pending: false, failed: true, text: '연결에 실패했습니다' }
+              ? { ...m, pending: false, failed: true, text: '연결이 잠깐 끊겼어요. 다시 시도해 주세요' }
               : m,
           ),
         );
@@ -208,7 +210,7 @@ export default function ChatBot() {
           ...found,
           name: found.name.replace(/\s+/g, '') === query.replace(/\s+/g, '') ? found.name : `${query}(${found.name})`,
         };
-        if (!place) note = `'${query}' 를 지역으로 찾지 못해 지금 기준점으로 찾았습니다.`;
+        if (!place) note = `'${query}' 를 지역으로 찾지 못해서 지금 기준 위치로 찾았어요.`;
       }
       const saved = searchRef.current?.initialOrder ?? [];
       const order = isCompleteOrder(saved) ? saved : DEFAULT_ORDER;
@@ -272,7 +274,7 @@ export default function ChatBot() {
           {
             id: nextId(),
             role: 'assistant',
-            text: '오락실 찾기는 파인더 화면에서 해 드려요. 아래 링크로 가시면 이어서 찾아 드립니다.',
+            text: '오락실 찾기는 파인더 화면에서 해 드려요. 아래 단추를 누르면 거기서 이어서 찾아 드려요.',
             goFinder: text,
           },
         ]);
@@ -306,8 +308,8 @@ export default function ChatBot() {
           id: nextId(),
           role: 'assistant',
           text: search
-            ? '자유 질문은 로그인한 뒤에 답해 드릴 수 있어요. 오락실은 로그인 없이 찾아 드려요 — "홍대 사볼" 처럼 지역과 기종을 적어 주세요.'
-            : '자유 질문은 로그인한 뒤에 답해 드릴 수 있어요. 오락실을 찾으려던 거라면 아래 단추로 파인더에서 이어서 찾아 드릴게요.',
+            ? "자유 질문은 로그인하면 답해 드려요. 오락실은 로그인 없이 바로 찾아 드려요 — '홍대 사볼' 처럼 지역과 게임을 적어 주세요."
+            : '자유 질문은 로그인하면 답해 드려요. 오락실을 찾으려던 거라면 아래 단추로 파인더에서 이어서 찾아 드릴게요.',
           failed: true,
           goFinder: search ? undefined : text,
         },
@@ -335,7 +337,7 @@ export default function ChatBot() {
    *
    * 그쪽 챗봇은 탐색을 못 해서 `/finder?ask=…` 링크로 보냅니다(위 goFinder). 여기서
    * 그 문장을 집어 **그대로 다시 넣어** 탐색까지 이어 갑니다 — 안 그러면 "이어서 찾아
-   * 드립니다" 라고 해 놓고 빈 입력창을 보여 주게 됩니다.
+   * 드려요" 라고 해 놓고 빈 입력창을 보여 주게 됩니다.
    *
    * 한 번만 돕니다. submitText 는 대화가 바뀔 때마다 정체가 달라지므로 그대로 두면
    * 같은 질문이 반복해서 들어갑니다. 주소에서도 지웁니다 — 새로고침이 곧 재질문이
@@ -384,6 +386,7 @@ export default function ChatBot() {
         className={`chat-fab ${open ? 'is-open' : ''}`}
         onClick={() => setOpen((v) => !v)}
         aria-label={open ? '도우미 닫기' : '도우미 열기'}
+        title={open ? '도우미 닫기' : '도우미 열기'}
         aria-expanded={open}
       >
         {/* 그림 글자(이모지)는 기기마다 모양이 달라서 선 아이콘으로 그립니다 */}
@@ -505,7 +508,7 @@ export default function ChatBot() {
                           onChange={(e) => toggleConstraint(m.id, !e.target.checked)}
                         />
                         <span>
-                          {m.constraints.arcade.name} 기준 · 결과에서 제외
+                          &apos;{m.constraints.arcade.name}&apos; 주변에서 찾고 그곳은 빼기
                         </span>
                       </label>
                     )}
@@ -535,8 +538,8 @@ export default function ChatBot() {
               자유 질문은{' '}
               <Link href="/login?next=%2Ffinder" onClick={() => setOpen(false)}>
                 로그인
-              </Link>{' '}
-              후에 답해 드려요. <strong>오락실 찾기</strong>는 로그인 없이도 됩니다.
+              </Link>
+              하면 답해 드려요. <strong>오락실 찾기</strong>는 지금 바로 돼요.
             </p>
           )}
 
@@ -626,7 +629,7 @@ function PriorityForm({
         disabled={done || !complete}
         onClick={() => complete && onSubmit(order)}
       >
-        {done ? '탐색 완료' : '이 순서로 탐색'}
+        {done ? '이 순서로 찾았어요' : '이 순서로 찾기'}
       </button>
     </div>
   );

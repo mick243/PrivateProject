@@ -34,7 +34,7 @@ import PostDetailView from './PostDetailView';
 */
 const PostForm = dynamic(() => import('./PostForm'), {
   ssr: false,
-  loading: () => <p className="muted pad">글쓰기 준비 중…</p>,
+  loading: () => <p className="muted pad">글쓰기 화면을 여는 중…</p>,
 });
 import PostList from './PostList';
 
@@ -303,7 +303,7 @@ export default function CommunityView() {
       const data = await res.json().catch(() => ({}));
       if (seq !== loadSeq.current) return;
       if (!res.ok) {
-        setLoadError(data.error ?? `글 목록을 불러오지 못했습니다 (${res.status})`);
+        setLoadError(data.error ?? '글 목록을 불러오지 못했어요.');
         return;
       }
       setLoadError(null);
@@ -325,7 +325,7 @@ export default function CommunityView() {
       setPosts(list);
       setTotal(count);
     } catch {
-      if (seq === loadSeq.current) setLoadError('네트워크에 연결하지 못했습니다');
+      if (seq === loadSeq.current) setLoadError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
@@ -446,9 +446,7 @@ export default function CommunityView() {
       <header className="board-head">
         <div>
           <h1>커뮤니티</h1>
-          <p className="muted small">
-            리듬게임별 게시판입니다. 오락실 정보 · 공략 · 질문을 게임 단위로 모읍니다.
-          </p>
+          <p className="muted small">오락실 정보 · 공략 · 질문을 게임별로 모아 봐요.</p>
         </div>
         {/*
           비로그인에는 **비활성 버튼 대신 로그인 링크**를 둔다. 예전에는 회색으로
@@ -496,16 +494,24 @@ export default function CommunityView() {
           className="search"
           type="search"
           aria-label="글 검색"
-          placeholder="제목 · 본문 검색"
+          placeholder="제목 · 본문에서 찾기"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
+        {/* 이 화면의 주 버튼은 '글쓰기' 하나다 — 검색은 같은 무게의 보조 단추 (DESIGN-GUIDE §1-2).
+            /live 도 같은 모양으로 맞춘다 (app/globals.css .list-search — 두 화면의 검색 줄은 같아야 한다). */}
         <button type="submit" className="btn btn-sm">
           검색
         </button>
         {/* 값이 없을 때 감추지 않고 끄는 이유는 아래 건수 칸과 같다 — 나타나고
             사라지면 그 칸이 밀려서 글자를 치는 중에 줄이 흔들린다. */}
-        <button type="button" className="btn btn-sm" disabled={q === ''} onClick={clearSearch}>
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={q === ''}
+          aria-label="검색어 지우기"
+          onClick={clearSearch}
+        >
           지우기
         </button>
         {/* 몇 건인지는 검색 중에만 뜻이 있다 — 평소의 전체 글 수는 페이지
@@ -558,12 +564,17 @@ export default function CommunityView() {
         {/* 인기글은 말머리와 다른 축(정렬)이라 같은 줄 오른쪽 끝에 따로 세운다.
             누르면 인기순, 다시 누르면 기본값인 최신순 — 정렬 버튼이 이것뿐이므로
             최신순으로 돌아갈 길도 이 버튼이 겸한다.
-            기준(추천 N개)은 눌러 보기 전에는 알 수 없으므로 title 로 미리 알린다. */}
+            기준(추천 N개)은 눌러 보기 전에는 알 수 없으므로 title 로 미리 알린다.
+            title 은 지금 상태가 아니라 누르면 일어날 일을 적는다 (DESIGN-GUIDE §3-6). */}
         <button
           type="button"
           className={sort === 'popular' ? 'board-sort is-on' : 'board-sort'}
           aria-pressed={sort === 'popular'}
-          title={`추천 ${POPULAR_MIN_LIKES}개 이상 받은 글만`}
+          title={
+            sort === 'popular'
+              ? '모든 글을 최신순으로 보기'
+              : `추천 ${POPULAR_MIN_LIKES}개 이상 받은 글만 보기`
+          }
           onClick={() => {
             setSort(sort === 'popular' ? 'recent' : 'popular');
             resetPaging();
@@ -574,9 +585,13 @@ export default function CommunityView() {
       </div>
 
       <div ref={listTopRef} />
+      {/* 막힌 화면에는 풀어 줄 단추를 둔다 (DESIGN-GUIDE §1-3 · 서열표의 같은 줄) */}
       {loadError && (
         <p className="warn pad" role="alert">
-          {loadError}
+          {loadError}{' '}
+          <button type="button" className="btn btn-sm" onClick={() => void loadPosts()}>
+            다시 불러오기
+          </button>
         </p>
       )}
       <PostList
@@ -587,7 +602,7 @@ export default function CommunityView() {
         /* '전체' 탭에서만 어느 게임 글인지 보여준다 — 게임 탭에서는 전부 같은 값이라 잡음이다 */
         showGame={machineId === null}
         popularOnly={sort === 'popular'}
-        /* 목록이 비었을 때 "첫 글을 남겨 보세요" 가 아니라 "검색 결과가 없습니다"
+        /* 목록이 비었을 때 "첫 글을 올려 주세요" 가 아니라 "찾는 글이 없어요"
            라고 해야 한다 — 글은 있고, 찾는 말이 없을 뿐이다 */
         searching={term !== ''}
         onOpen={openPost}

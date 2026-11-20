@@ -66,7 +66,7 @@ async function apply(request: Request, ctx: Ctx, liked: boolean): Promise<NextRe
     ? await offsetFromBody(request)
     : offsetOf(new URL(request.url).searchParams.get('commentOffset'));
 
-  if (!(await getPost(postId, null))) return notFound('글을 찾을 수 없습니다');
+  if (!(await getPost(postId, null))) return notFound('글을 찾을 수 없어요. 지워졌을 수 있어요');
 
   const result = await setLike(postId, playerId, liked);
   return NextResponse.json({

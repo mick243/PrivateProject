@@ -48,13 +48,13 @@ export interface LiveLocation {
 function messageFor(err: GeolocationPositionError): string {
   switch (err.code) {
     case err.PERMISSION_DENIED:
-      return '위치 권한이 거부되었습니다. 브라우저 주소창의 자물쇠에서 허용해 주세요.';
+      return '위치 사용이 막혀 있어요. 주소창의 자물쇠를 눌러 위치를 허용해 주세요';
     case err.POSITION_UNAVAILABLE:
-      return '위치를 확인할 수 없습니다. 실내라면 창가나 실외에서 다시 시도해 주세요.';
+      return '지금은 위치를 찾을 수 없어요. 실내라면 창가나 밖에서 다시 시도해 주세요';
     case err.TIMEOUT:
-      return '위치 확인이 지연되고 있습니다. 계속 시도합니다…';
+      return '위치를 찾는 데 시간이 걸리고 있어요. 계속 찾는 중…';
     default:
-      return '위치를 가져오지 못했습니다.';
+      return '위치를 찾지 못했어요. 다시 시도해 주세요';
   }
 }
 
@@ -84,7 +84,8 @@ export function useLiveLocation(): LiveLocation {
 
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setStatus('error');
-      setError('이 브라우저는 위치 기능을 지원하지 않습니다');
+      // 안 된다는 말만 하지 않고 대신 할 수 있는 길(지역 검색)을 함께 준다
+      setError('이 브라우저에서는 위치를 쓸 수 없어요. 동네나 역 이름으로 찾아 보세요');
       return;
     }
 

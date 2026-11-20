@@ -24,11 +24,15 @@ import OAuthButtons from './OAuthButtons';
  * 채보 평가)은 로그인이 있어야 합니다 — 그 이름의 근거가 세션뿐이기 때문입니다
  * (lib/use-player.ts).
  *
- * 화면 안내문도 이 경계를 그대로 말합니다. 예전에는 "제보·글쓰기는 로그인 없이도
- * 됩니다" 라고 적혀 있었는데 글쓰기는 로그인이 필요합니다(app/api/posts requirePlayer) —
- * 커뮤니티는 "로그인하고 글쓰기", 리뷰·챗봇도 로그인을 요구해 화면끼리 말이
- * 어긋났습니다 (2026-10-22 첫 사용자 점검). 경계를 바꾸면 여기와 README "빠른 실행" 을
- * 같이 고치세요.
+ * 화면의 할 일은 **로그인 하나**입니다 (docs/DESIGN-GUIDE.md §1-2). 예전에는
+ * 로그인 · 회원가입 · 취소 세 버튼이 같은 무게로 나란히 섰습니다. 가입과
+ * 돌아가기는 주 버튼 아래 글자 링크로 낮췄습니다.
+ *
+ * 안내문은 로그인이 필요한 경계 한 가지만 두 문장으로 말합니다. 예전에는 "제보·글쓰기는
+ * 로그인 없이도 됩니다" 라고 적혀 있었는데 글쓰기는 로그인이 필요합니다(app/api/posts
+ * requirePlayer) — 커뮤니티는 "로그인하고 글쓰기", 리뷰·챗봇도 로그인을 요구해 화면끼리
+ * 말이 어긋났습니다 (2026-10-22 첫 사용자 점검). 경계를 바꾸면 여기와 README "빠른 실행" 을
+ * 같이 고치세요. 관리자만 하는 일은 적지 않습니다(할 수 없는 일은 보여 주지 않는다 §1-1).
  */
 
 
@@ -60,7 +64,7 @@ export default function LoginForm() {
       if (!res.ok) {
         // 잠금(429)·미설정(503)처럼 다음에 뭘 해야 하는지가 담긴 문구는
         // 서버 것을 그대로 씁니다. 여기서 뭉뚱그리면 그 정보가 사라집니다.
-        setError(data.error ?? '로그인에 실패했습니다');
+        setError(data.error ?? '로그인하지 못했어요. 다시 시도해 주세요');
         return;
       }
 
@@ -72,7 +76,7 @@ export default function LoginForm() {
       // 화면이 떠서 무엇을 한 건지 헷갈린다.
       router.replace(next);
     } catch {
-      setError('네트워크 오류');
+      setError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     } finally {
       setBusy(false);
     }
@@ -96,17 +100,18 @@ export default function LoginForm() {
     return (
       <main className="login-page">
         <section className="login-card">
-          <h1>이미 로그인되어 있습니다</h1>
+          <h1>이미 로그인했어요</h1>
           <p className="login-who">
             {user.isAdmin && <em className="admin-tag">{ADMIN_LABEL}</em>}
             {(!user.isAdmin || user.nickname !== ADMIN_LABEL) && user.nickname}
           </p>
-          <div className="form-actions">
-            <Link className="btn btn-primary btn-sm" href={next}>
-              돌아가기
-            </Link>
-            <button type="button" className="btn btn-sm" disabled={busy} onClick={logout}>
-              로그아웃
+          <Link className="btn btn-primary btn-block" href={next}>
+            보던 화면으로 돌아가기
+          </Link>
+          {/* 계정을 바꾸러 온 사람을 위한 길 — 주 행동이 아니라 링크로 낮춥니다 */}
+          <div className="link-row">
+            <button type="button" className="btn-link" disabled={busy} onClick={logout}>
+              {busy ? '로그아웃하는 중…' : '다른 계정으로 로그인하려면 로그아웃'}
             </button>
           </div>
         </section>
@@ -119,10 +124,9 @@ export default function LoginForm() {
       <form className="login-card" onSubmit={submit}>
         <h1>로그인</h1>
         <p className="muted small">
-          둘러보기 · 오락실 찾기 · 제보는 로그인 없이 됩니다. 글 · 댓글 ·
-          리뷰 · 서열표 투표 · 즐겨찾기 · 도우미 자유 질문은 로그인한 뒤에 할 수 있고,
-          로그인하고 남긴 제보만 보유 기종 자동 반영에 셉니다. 오락실 정보 수정·삭제는
-          관리자만 합니다.
+          둘러보기 · 오락실 찾기 · 제보는 로그인 없이 돼요. 글 · 댓글 · 리뷰 · 서열표 투표 ·
+          즐겨찾기 · 도우미 자유 질문은 로그인하면 할 수 있고, 로그인하고 남긴 제보만 있는 게임
+          자동 반영에 들어가요.
         </p>
 
         <label className="field">
@@ -132,7 +136,6 @@ export default function LoginForm() {
             type="text"
             value={nickname}
             maxLength={100}
-            placeholder="아이디"
             autoComplete="username"
             onChange={(e) => setNickname(e.target.value)}
           />
@@ -148,23 +151,27 @@ export default function LoginForm() {
           />
         </label>
 
-        {shownError && <p className="warn">{shownError}</p>}
+        {shownError && (
+          <p className="warn" role="alert">
+            {shownError}
+          </p>
+        )}
 
-        <div className="form-actions">
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={busy || !nickname.trim() || !password}
-          >
-            {busy ? '확인 중…' : '로그인'}
-          </button>
+        <button
+          type="submit"
+          className="btn btn-primary btn-block"
+          disabled={busy || !nickname.trim() || !password}
+        >
+          {busy ? '로그인하는 중…' : '로그인하기'}
+        </button>
+        <div className="link-row">
           {/* 돌아갈 곳(next)을 가입 화면까지 들고 갑니다 — 가입이 끝나면 로그인을
               거치지 않고 곧장 보던 화면으로 돌아갑니다. */}
-          <Link className="btn" href={`/signup?next=${encodeURIComponent(next)}`}>
-            회원가입
+          <Link className="btn-link" href={`/signup?next=${encodeURIComponent(next)}`}>
+            처음이라면 가입하기
           </Link>
-          <Link className="btn" href={next}>
-            취소
+          <Link className="btn-link" href={next}>
+            로그인 없이 둘러보기
           </Link>
         </div>
 

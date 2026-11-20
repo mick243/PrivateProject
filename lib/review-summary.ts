@@ -168,12 +168,16 @@ export async function lookupReviewSummary(arcadeId: number): Promise<SummaryLook
  */
 export async function buildReviewSummary(arcadeId: number): Promise<ReviewSummaryView> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) throw new ReviewSummaryUnavailable('GEMINI_API_KEY 가 없어 요약할 수 없습니다');
+  if (!apiKey) {
+    // 원인은 로그에, 화면에는 사람이 읽을 말만 (docs/DESIGN-GUIDE.md §6)
+    console.warn('[review-summary] GEMINI_API_KEY 가 없어 요약하지 않습니다');
+    throw new ReviewSummaryUnavailable('지금은 AI 요약을 만들 수 없어요');
+  }
 
   const prisma = await getPrismaClient();
   const total = await prisma.arcade_reviews.count({ where: { arcade_id: arcadeId } });
   if (total < REVIEW_SUMMARY_MIN) {
-    throw new NotEnoughReviews(`리뷰가 ${REVIEW_SUMMARY_MIN}개 이상이어야 요약합니다`);
+    throw new NotEnoughReviews(`리뷰가 ${REVIEW_SUMMARY_MIN}개 모이면 요약해 드려요`);
   }
   // 최근 것부터 상한만큼 — 전부 읽어 오지 않습니다.
   const reviews = selectReviewsForSummary(await listReviews(arcadeId, { limit: REVIEW_SUMMARY_MAX_REVIEWS }));

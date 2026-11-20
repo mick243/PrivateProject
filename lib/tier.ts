@@ -414,7 +414,7 @@ export async function setSpecial(
 
 export class NotClearedError extends Error {
   constructor() {
-    super('이 채보를 클리어한 기록이 있어야 투표할 수 있습니다');
+    super('클리어했다고 표시하면 투표할 수 있어요');
   }
 }
 
