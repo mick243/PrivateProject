@@ -147,7 +147,13 @@ for i in $(seq 1 45); do
   code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/health || true)"
   if [[ "$code" == "200" ]]; then
     echo "✔ /api/health 200 (${i}×2초) — $(cat "$APP/RELEASE" 2>/dev/null)"
-    curl -s http://127.0.0.1:3000/api/health; echo
+    health="$(curl -s http://127.0.0.1:3000/api/health)"; echo "$health"
+    # 떠 있는 것이 **방금 깐 판**인지 — 옛 프로세스가 포트를 쥐고 있으면 200 이어도 옛 코드다.
+    # VERSION 은 build-release.sh 가 묶음에 적는다 (옛 묶음에는 없어 건너뛴다).
+    want="$(cat "$APP/VERSION" 2>/dev/null || true)"
+    if [[ -n "$want" ]] && ! grep -q "\"version\":\"$want\"" <<<"$health"; then
+      echo "⚠ 응답한 판이 묶음($want)과 다릅니다 — 옛 프로세스가 남아 있는지 보세요: systemctl restart arcade-finder" >&2
+    fi
     break
   fi
   sleep 2

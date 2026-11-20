@@ -31,9 +31,24 @@ docker info >/dev/null 2>&1 || { echo "Docker 가 꺼져 있습니다 — Docker
 REPO="$APP_DIR"
 if [[ -e "$APP_DIR/.git" ]] && git -C "$APP_DIR/.." rev-parse --git-dir >/dev/null 2>&1; then REPO="$APP_DIR/.."; fi
 REV="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo nogit)"
-# 커밋 안 된 수정이 앱 폴더 안에 있으면 표시한다 (추적하지 않는 새 파일은 세지 않는다)
-DIRTY="$(git -C "$REPO" status --porcelain --untracked-files=no -- "$(cd "$APP_DIR" && pwd)" 2>/dev/null | head -1 || true)"
-[[ -n "$DIRTY" ]] && REV="$REV-dirty"
+# 커밋 안 된 것이 앱 폴더 안에 있으면 **멈춘다** (ALLOW_DIRTY=1 이면 이름에 -dirty 를 붙이고 계속).
+#
+# 예전에는 표시만 하고 묶었다. 그래서 11-11 묶음 de6e558-dirty 는 어느 커밋으로도 다시 만들 수 없었고,
+# 서버에 무엇이 깔렸는지 코드로 되짚을 길이 없었다. 추적하지 않는 새 파일도 센다 — 묶음에는 들어가는데
+# 커밋에는 없으니 똑같이 재현이 안 된다(.gitignore 로 거른 것은 세지 않는다).
+# 줄바꿈(CRLF)만 다른 파일은 세지 않는다 — Windows 체크아웃에서 내용이 같아도 status 에 'M' 으로 뜨는
+# 파일이 있다(app/globals.css 등). 빌드 결과가 같으니 막을 이유가 없다.
+APP_ABS="$(cd "$APP_DIR" && pwd)"
+DIRTY="$( { git -C "$REPO" diff --ignore-cr-at-eol --name-only HEAD -- "$APP_ABS"; git -C "$REPO" ls-files --others --exclude-standard -- "$APP_ABS"; } 2>/dev/null | head -5 || true)"
+if [[ -n "$DIRTY" ]]; then
+  if [[ "${ALLOW_DIRTY:-}" != "1" ]]; then
+    echo "✗ 커밋하지 않은 변경이 있어 멈춥니다 — 커밋한 뒤 다시 하거나, 시험용이면 ALLOW_DIRTY=1 을 붙이세요:" >&2
+    echo "$DIRTY" >&2
+    exit 3
+  fi
+  echo "⚠ ALLOW_DIRTY=1 — 커밋하지 않은 변경을 담습니다. 이 묶음은 커밋으로 다시 만들 수 없습니다" >&2
+  REV="$REV-dirty"
+fi
 NAME="release-$(date +%Y%m%d-%H%M)-$REV.tgz"
 mkdir -p "$OUT_DIR"
 
@@ -62,7 +77,7 @@ docker run --rm --platform linux/amd64 \
   -v "$(to_host "$OUT_DIR"):/out" \
   -v "$(to_host "$SECRETS_FILE"):/secrets.txt:ro" \
   --env-file "$(to_host "$BUILD_ENV")" \
-  -e NAME="$NAME" -e DB_FALLBACK=off -e NEXT_TELEMETRY_DISABLED=1 \
+  -e NAME="$NAME" -e REV="$REV" -e DB_FALLBACK=off -e NEXT_TELEMETRY_DISABLED=1 \
   "$IMAGE" bash -euo pipefail -c '
     mkdir /app
     # ./uploads 처럼 **앞에 ./ 를 붙여** 최상위만 거른다. 그냥 uploads 로 적으면
@@ -95,6 +110,9 @@ docker run --rm --platform linux/amd64 \
     npm run build
     rm -rf .next/cache .pglite
     echo "$NAME" > RELEASE
+    # 묶음에는 .git 이 없어 서버의 start-cluster 가 git 으로 커밋을 못 읽는다(예전엔 /api/health 의
+    # version 이 'unknown'). 커밋을 파일로 남겨 두면 start-cluster 가 읽어 APP_VERSION 으로 넘긴다.
+    echo "$REV" > VERSION
     tar -czf "/out/$NAME" .
   '
 
