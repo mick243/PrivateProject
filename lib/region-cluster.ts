@@ -141,6 +141,24 @@ const SIDO_ALIASES: Readonly<Record<string, string>> = {
   제주도: '제주특별자치도',
 };
 
+/**
+ * 검색어 한 낱말이 시·도 이름이면, 주소에 실제로 적힌 **정식 이름**을 돌려줍니다 (아니면 null).
+ *
+ * 주소는 정식 이름("충청남도 천안시 …" · "전남광주통합특별시 여수시 …")으로만 저장돼 있어서,
+ * 사람이 흔히 치는 "충남" · "전라남도" · "광주광역시" · "강원도" 는 부분 일치에 걸리지 않았습니다
+ * (2026-11-20: 충남 · 경남 · 충북 · 전라남도 · 강원도 · 제주도 · 부산시 모두 0곳). 검색은 원래 말과
+ * 이 이름 **둘 중 하나**만 맞으면 찾습니다(lib/arcades.ts searchTokens) — 원래 말로 걸리던
+ * 결과("경북대점" · 경기도 광주시)는 그대로 남습니다.
+ *
+ * 정식 이름 안에 이미 들어 있는 말("전남" · "광주" · "서울")은 원래 말만으로 걸리므로 null 입니다.
+ */
+export function canonicalSidoFor(word: string): string | null {
+  const w = word.trim();
+  const sido = SIDO_ALIASES[w];
+  if (!sido || sido.includes(w)) return null;
+  return sido;
+}
+
 /** 지도에 찍을 짧은 시·도 이름. 없는 이름은 꼬리('…도' · '…광역시')만 떼어 쓴다 */
 const SIDO_SHORT: Readonly<Record<string, string>> = {
   서울특별시: '서울',

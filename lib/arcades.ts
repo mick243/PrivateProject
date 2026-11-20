@@ -1,4 +1,5 @@
 import { cacheReference } from './cache';
+import { canonicalSidoFor } from './region-cluster';
 import { arcadeSearchPage, arcadesWithMachines } from './typed-sql';
 import { getPrismaClient, num, TX_OPTIONS, type PrismaTx } from './prisma';
 import type { Arcade, ArcadeInput, ArcadeMachine, Machine, MachineGuess } from './types';
@@ -117,8 +118,20 @@ export interface ListArcadesParams {
 export function searchTokens(q: string | null | undefined): string[] | null {
   if (!q) return null;
   const tokens = q.replace(/\p{Cc}/gu, ' ').trim().split(/\s+/).filter(Boolean).slice(0, 8);
-  return tokens.length ? tokens : null;
+  if (!tokens.length) return null;
+  // 시·도 이름은 정식 이름도 함께 — "충남" 이 "충청남도 …" 주소에, "전라남도" 가 "전남광주통합특별시 …"
+  // 에 걸리게 (lib/region-cluster.ts canonicalSidoFor). 한 낱말 안의 대안은 SQL 이 OR 로 봅니다.
+  return tokens.map((t) => {
+    const sido = canonicalSidoFor(t);
+    return sido ? `${t}${ALT_SEPARATOR}${sido}` : t;
+  });
 }
+
+/**
+ * 한 낱말 안의 대안을 가르는 글자 — SQL 쪽의 `string_to_array(t, chr(31))` 와 짝입니다.
+ * 제어 문자(U+001F)라 사람이 친 검색어에는 나올 수 없습니다(위에서 공백으로 바꿉니다).
+ */
+export const ALT_SEPARATOR = '\u001f';
 
 function filtersOf(params: ListArcadesParams) {
   const { q = null, machineIds = null, lat = null, lng = null, radiusKm = null } = params;
