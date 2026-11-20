@@ -29,6 +29,7 @@ import {
   type MentionedPlace,
 } from '@/lib/query-constraints';
 import { isCityQuery, isPlaceQuery, type Place } from '@/lib/place-search';
+import { provinceOf } from '@/lib/region-cluster';
 import type { Arcade, Machine } from '@/lib/types';
 import { useFavorites } from '@/lib/use-favorites';
 import { useIsAdmin } from '@/lib/use-session';
@@ -82,6 +83,13 @@ const SCORE_RADIUS_FALLBACK_KM = 5;
  * 훑으러 온 사람에게 필요한 건 동네 전체다.
  */
 const SPOT_ZOOM = 18;
+
+/**
+ * 시·도 이름으로 엔터를 눌렀을 때의 줌 (jumpToPlace).
+ * 도는 200km 남짓이라 8 이면 한 화면에 들고, 서울 · 광역시 · 세종은 도시 하나라 11 이면 구 단위가 보인다.
+ */
+const PROVINCE_ZOOM = 8;
+const METRO_ZOOM = 11;
 
 /**
  * 기준점이 이만큼 움직였을 때만 목록을 다시 받아옵니다 (km).
@@ -965,6 +973,28 @@ export default function ArcadeFinder() {
   const jumpToPlace = async () => {
     const query = q.trim();
     if (!isPlaceQuery(query) || placeBusy) return;
+
+    // 시·도 이름("전남" · "충청남도" · "서울")은 지역 검색에 묻지 않고 그 시·도의 한가운데로, 도 전체가
+    // 보이는 줌으로 옮긴다 (lib/region-cluster.ts provinceOf). 지역 검색은 "전남" 에 가게 하나를 돌려준다.
+    const province = provinceOf(query);
+    if (province) {
+      setFollow(false);
+      live.stop();
+      setFixedCenter({ lat: province.lat, lng: province.lng });
+      setRadiusKm(RADIUS_NONE);
+      setQ('');
+      setSelectedId(null);
+      closeDetail();
+      setFocusPoint((prev) => ({
+        lat: province.lat,
+        lng: province.lng,
+        zoom: province.isCity ? METRO_ZOOM : PROVINCE_ZOOM,
+        nonce: (prev?.nonce ?? 0) + 1,
+      }));
+      setPlaceNotice(`'${province.label}' 지역을 보는 중 — 지도를 끌거나 당겨 동네를 고르세요.`);
+      return;
+    }
+
     setPlaceBusy(true);
     try {
       const res = await fetch(`/api/places?q=${encodeURIComponent(query)}`);
@@ -1348,7 +1378,9 @@ export default function ArcadeFinder() {
                     ? '지역 찾는 중…'
                     : topMatch
                       ? `'${topMatch.name}' 위치로 이동`
-                      : `'${q.trim()}' 주변으로 지도 이동`}
+                      : provinceOf(q)
+                        ? `'${provinceOf(q)!.label}' 지역으로 지도 이동`
+                        : `'${q.trim()}' 주변으로 지도 이동`}
                 </button>
               )}
               {placeNotice && <p className="notice">{placeNotice}</p>}
