@@ -60,6 +60,7 @@ export const OAUTH_ERRORS = {
   state: '로그인 요청이 만료되었습니다. 다시 시도해 주세요',
   denied: '소셜 로그인이 취소되었습니다',
   provider: '소셜 로그인 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요',
+  suspended: '이용이 정지된 계정입니다. 문의는 개인정보처리방침의 연락처로 보내 주세요',
 } as const;
 
 export type OAuthErrorCode = keyof typeof OAUTH_ERRORS;

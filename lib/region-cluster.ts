@@ -12,7 +12,9 @@
  * (2026-09-30 개발 DB 926곳 전부).
  */
 
-import { distanceKm, type Coord, type LatLngBox } from './geo';
+// 확장자를 붙이는 이유: scripts/import-namu-machines.ts 가 lib/namu-machines.ts 를 거쳐 이 파일을
+// Node 로 직접 실행합니다(순수 ESM 해석 — 확장자 생략 불가). lib/naver-local.ts 와 같은 사정입니다.
+import { distanceKm, type Coord, type LatLngBox } from './geo.ts';
 
 // ─── 줌 → 묶는 단위 ───────────────────────────────────────────
 

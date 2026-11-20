@@ -8,6 +8,7 @@ import {
   POSTS_PAGE_SIZE,
 } from './board-types';
 import { CHART_TAGS, REPORT_COMMENT_MAX } from './community-types';
+import { REPORT_DETAIL_MAX, REPORT_REASONS, REPORT_TARGETS } from './moderation-types';
 import { isKnownPushEndpoint } from './ops-alert-input';
 import { normalizeDoc, toPlainText } from './rich-text';
 
@@ -491,6 +492,16 @@ export const chatInputSchema = z.object({
     .refine((t) => t[t.length - 1]?.role === 'user', {
       message: '마지막 메시지는 사용자 차례여야 합니다',
     }),
+  /**
+   * 사용자의 기준점 — 파인더가 떠 있을 때만 옵니다 (내 위치 또는 지도 기준점).
+   * 오락실 도구가 거리를 재는 데만 쓰고, 저장하지도 모델에 보내지도 않습니다 (lib/chat-tools.ts).
+   */
+  near: z
+    .object({
+      lat: z.number().min(-90).max(90),
+      lng: z.number().min(-180).max(180),
+    })
+    .nullish(),
 });
 
 /** zod 이슈를 "필드: 메시지" 문자열 배열로 평탄화 */
@@ -566,3 +577,34 @@ export const pushSubscriptionSchema = z.object({
   }),
 });
 export type PushSubscriptionInput = z.output<typeof pushSubscriptionSchema>;
+
+// ─── 신고 · 차단 · 관리 (db/migrate-083) ─────────────────────
+const reportTarget = z.enum(REPORT_TARGETS);
+const positiveInt = z.number().int().positive().max(2_147_483_647);
+
+/** POST /api/content-reports — 글 · 댓글 · 리뷰 · 채보 평가 신고 */
+export const contentReportInputSchema = z.object({
+  targetType: reportTarget,
+  targetId: positiveInt,
+  reason: z.enum(REPORT_REASONS),
+  detail: z.string().trim().max(REPORT_DETAIL_MAX, `설명은 ${REPORT_DETAIL_MAX}자까지 쓸 수 있습니다`).nullish(),
+});
+
+/** PUT /api/blocks — 차단할 사람 */
+export const blockInputSchema = z.object({ playerId: positiveInt });
+
+/** PUT /api/admin/reports — 한 대상에 모인 신고 처리 */
+export const reportResolveSchema = z.object({
+  targetType: reportTarget,
+  targetId: positiveInt,
+  action: z.enum(['delete', 'dismiss']),
+});
+
+/** PUT /api/admin/players/:id/suspension — days 가 null 이면 무기한 */
+export const suspendInputSchema = z.object({
+  days: z.number().int().min(1).max(3650).nullable(),
+  reason: z.string().trim().max(200, '사유는 200자까지 쓸 수 있습니다').nullish(),
+});
+
+/** PUT /api/admin/guesses — 승인할 AI 추정 */
+export const guessKeySchema = z.object({ arcadeId: positiveInt, machineId: positiveInt });

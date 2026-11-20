@@ -9,6 +9,7 @@ import {
   type PostThumbnail,
 } from '@/lib/board-types';
 import { timeAgo } from '@/lib/community-types';
+import { useBlockedIds } from '@/lib/use-blocks';
 
 interface Props {
   posts: PostSummary[];
@@ -170,6 +171,11 @@ export default function PostList({
   onOpen,
   onPrefetch,
 }: Props) {
+  // 내가 차단한 사람의 글은 목록에서 가린다 (lib/use-blocks.ts). 공지는 운영자 글이라 거르지 않는다.
+  const blockedIds = useBlockedIds();
+  const shown = posts.filter((p) => !blockedIds.has(p.playerId));
+  const hiddenCount = posts.length - shown.length;
+
   if (loading && posts.length === 0 && notices.length === 0)
     return <p className="muted pad">불러오는 중…</p>;
 
@@ -202,7 +208,10 @@ export default function PostList({
         <p className="muted pad">{emptyMessage(searching, popularOnly)}</p>
       ) : (
         <ul className="post-list">
-          {posts.map((p) => (
+          {hiddenCount > 0 && (
+            <li className="muted small blocked-note">차단한 사용자의 글 {hiddenCount}개를 가렸어요.</li>
+          )}
+          {shown.map((p) => (
             <PostRow
               key={p.id}
               post={p}

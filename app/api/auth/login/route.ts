@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { fail, handle, parseBody, tooMany, unavailable } from '@/lib/api-errors';
+import { fail, forbidden, handle, parseBody, tooMany, unavailable } from '@/lib/api-errors';
 import {
   authenticate,
   clearLoginFailures,
@@ -8,6 +8,7 @@ import {
   configuredAdminPassword,
   ensureAdminAccount,
   setSessionCookie,
+  suspensionMessage,
   takeLoginAttempt,
 } from '@/lib/auth';
 import { loginInputSchema } from '@/lib/validation';
@@ -59,6 +60,9 @@ async function onPost(request: Request) {
   if (!user) return fail(401, '아이디 또는 비밀번호가 올바르지 않습니다');
 
   await Promise.all(keys.map(clearLoginFailures));
+  // 비밀번호가 맞은 **뒤에** 정지를 알립니다 — 먼저 알리면 남의 아이디가 정지됐는지 캐 볼 수 있습니다.
+  const suspended = await suspensionMessage(user.playerId);
+  if (suspended) return forbidden(suspended);
   return setSessionCookie(NextResponse.json({ user }), user.playerId);
 }
 

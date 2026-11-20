@@ -12,11 +12,13 @@ import {
 } from '@/lib/review-summary-types';
 import { totalPagesOf } from '@/lib/board-types';
 import type { Arcade } from '@/lib/types';
+import { useBlockedIds } from '@/lib/use-blocks';
 import { usePlayerId } from '@/lib/use-player';
 import { useIsAdmin } from '@/lib/use-session';
 import EmoticonPicker from './EmoticonPicker';
 import EmoticonText from './EmoticonText';
 import Pagination from './Pagination';
+import ReportMenu from './ReportMenu';
 import StarRating from './StarRating';
 
 interface Props {
@@ -98,9 +100,13 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
 
   // 오락실이나 플레이어가 바뀌면 내가 이미 쓴 리뷰를 폼에 채워 "수정" 이 되게 한다.
   const mine = playerId ? reviews.find((r) => r.playerId === playerId) : undefined;
-  const totalPages = totalPagesOf(reviews.length, REVIEWS_PAGE_SIZE);
+  // 내가 차단한 사람의 리뷰는 가린다 (lib/use-blocks.ts). 평점 · 요약은 그대로 둔다 — 모두에게 같은 값이다.
+  const blockedIds = useBlockedIds();
+  const visible = reviews.filter((r) => !blockedIds.has(r.playerId));
+  const hiddenCount = reviews.length - visible.length;
+  const totalPages = totalPagesOf(visible.length, REVIEWS_PAGE_SIZE);
   const currentPage = Math.min(page, totalPages);
-  const pageItems = reviews.slice(
+  const pageItems = visible.slice(
     (currentPage - 1) * REVIEWS_PAGE_SIZE,
     currentPage * REVIEWS_PAGE_SIZE,
   );
@@ -273,8 +279,11 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
         </section>
       )}
 
-      {reviews.length === 0 ? (
-        <p className="muted small">아직 리뷰가 없습니다.</p>
+      {hiddenCount > 0 && (
+        <p className="muted small blocked-note">차단한 사용자의 리뷰 {hiddenCount}개를 가렸어요.</p>
+      )}
+      {visible.length === 0 ? (
+        reviews.length === 0 && <p className="muted small">아직 리뷰가 없습니다.</p>
       ) : (
         <>
           <ul className="review-list">
@@ -295,6 +304,13 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
                       삭제
                     </button>
                   )}
+                  {!isAdmin && (
+                    <ReportMenu
+                      targetType="arcade_review"
+                      targetId={r.id}
+                      author={{ playerId: r.playerId, nickname: r.nickname }}
+                    />
+                  )}
                 </div>
                 {r.body && (
                   <p className="review-body">
@@ -306,7 +322,7 @@ export default function ArcadeReviews({ arcade, onArcadeChanged }: Props) {
           </ul>
           <Pagination
             page={currentPage}
-            total={reviews.length}
+            total={visible.length}
             pageSize={REVIEWS_PAGE_SIZE}
             onChange={setPage}
           />

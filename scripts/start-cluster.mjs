@@ -37,6 +37,7 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -48,8 +49,20 @@ const INSTANCES = Number(process.env.INSTANCES) || 2;
 const POOL_MAX = Number(process.env.PG_POOL_MAX) || 10;
 const PORT_BASE = Number(process.env.INSTANCE_PORT_BASE) || 3001;
 
-/** 빌드된 커밋. `.next/BUILD_ID` 는 빌드마다 바뀌는 난수라 로그 대조에는 git 해시가 낫습니다 */
+/**
+ * 빌드된 커밋. `.next/BUILD_ID` 는 빌드마다 바뀌는 난수라 로그 대조에는 git 해시가 낫습니다.
+ *
+ * 서버에 깔린 배포 묶음에는 .git 이 없어 git 으로는 못 읽습니다 — 그래서 예전에는 운영의
+ * /api/health version 이 늘 'unknown' 이었고, 무엇이 깔렸는지 알 길이 없었습니다. 묶음을 만들 때
+ * build-release.sh 가 커밋을 VERSION 파일에 적어 두므로 그것을 먼저 봅니다.
+ */
 const APP_VERSION = (() => {
+  try {
+    const fromFile = readFileSync(resolve(appDir, 'VERSION'), 'utf8').trim();
+    if (/^[0-9a-f]{7,40}(-dirty)?$/.test(fromFile)) return fromFile;
+  } catch {
+    // 개발 체크아웃에는 VERSION 이 없다 — git 으로
+  }
   try {
     return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: appDir, stdio: ['ignore', 'pipe', 'ignore'] })
       .toString()

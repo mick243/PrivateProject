@@ -7,7 +7,10 @@ import { CHART_COMMENTS_PAGE_SIZE, chartTagsFor, timeAgo } from '@/lib/community
 import { totalPagesOf } from '@/lib/board-types';
 import EmoticonPicker from './EmoticonPicker';
 import EmoticonText from './EmoticonText';
+import { useBlockedIds } from '@/lib/use-blocks';
+import { useIsAdmin } from '@/lib/use-session';
 import Pagination from './Pagination';
+import ReportMenu from './ReportMenu';
 import ScrollStrip from './ScrollStrip';
 import type { ChartDetail } from '@/lib/tier-types';
 
@@ -41,9 +44,14 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
   useEffect(() => {
     setPage(1);
   }, [chart.id]);
-  const totalPages = totalPagesOf(chart.comments.length, CHART_COMMENTS_PAGE_SIZE);
+  // 내가 차단한 사람의 평가는 가린다 (lib/use-blocks.ts)
+  const blockedIds = useBlockedIds();
+  const isAdmin = useIsAdmin();
+  const visible = chart.comments.filter((c) => !blockedIds.has(c.playerId));
+  const hiddenCount = chart.comments.length - visible.length;
+  const totalPages = totalPagesOf(visible.length, CHART_COMMENTS_PAGE_SIZE);
   const currentPage = Math.min(page, totalPages);
-  const pageItems = chart.comments.slice(
+  const pageItems = visible.slice(
     (currentPage - 1) * CHART_COMMENTS_PAGE_SIZE,
     currentPage * CHART_COMMENTS_PAGE_SIZE,
   );
@@ -195,8 +203,11 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
         </div>
       )}
 
-      {chart.comments.length === 0 ? (
-        <p className="muted small">아직 평가가 없습니다.</p>
+      {hiddenCount > 0 && (
+        <p className="muted small blocked-note">차단한 사용자의 평가 {hiddenCount}개를 가렸어요.</p>
+      )}
+      {visible.length === 0 ? (
+        chart.comments.length === 0 && <p className="muted small">아직 평가가 없습니다.</p>
       ) : (
         <>
           <ul className="comment-list">
@@ -210,6 +221,13 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
                     <span className="tag tag-noclear">미클리어</span>
                   )}
                   <span className="muted small">{timeAgo(c.updatedAt)}</span>
+                  {!isAdmin && (
+                    <ReportMenu
+                      targetType="chart_comment"
+                      targetId={c.id}
+                      author={{ playerId: c.playerId, nickname: c.nickname }}
+                    />
+                  )}
                 </div>
                 {c.tags.length > 0 && (
                   <div className="tag-row">
@@ -228,7 +246,7 @@ export default function ChartComments({ chart, playerId, onChanged }: Props) {
           </ul>
           <Pagination
             page={currentPage}
-            total={chart.comments.length}
+            total={visible.length}
             pageSize={CHART_COMMENTS_PAGE_SIZE}
             onChange={setPage}
           />

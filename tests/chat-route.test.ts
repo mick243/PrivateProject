@@ -110,13 +110,17 @@ function callCandidate(name: string, args: Record<string, unknown>) {
 
 const cookie = `${SESSION_COOKIE}=${createSessionToken(42, 0)}`;
 
-async function post(turns: { role: string; text: string }[], signedIn = true) {
+async function post(
+  turns: { role: string; text: string }[],
+  signedIn = true,
+  extra: Record<string, unknown> = {},
+) {
   received = [];
   const res = await POST(
     new Request('http://localhost/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(signedIn ? { cookie } : {}) },
-      body: JSON.stringify({ turns }),
+      body: JSON.stringify({ turns, ...extra }),
     }),
   );
   return { status: res.status, json: (await res.json()) as any };
@@ -364,6 +368,75 @@ describe('POST /api/chat', () => {
     await post([{ role: 'user', text: '안녕' }]);
     const decls = received[0].tools.flatMap((t: any) => t.functionDeclarations ?? []);
     for (const d of decls) expect(d.parametersJsonSchema.properties.page.type).toBe('integer');
+  });
+
+  /**
+   * 기준점과 길찾기 (2026-11-17). 둘 다 **모델을 거치지 않는** 값입니다 — 기준점은 도구까지만
+   * 가고, 길찾기 링크는 도구가 모은 것을 라우트가 응답에 답니다 (lib/chat-tools.ts ChatToolContext).
+   */
+  it('기준점은 도구에만 넘기고 모델로 가는 요청에는 싣지 않는다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    const tools = await import('@/lib/chat-tools');
+    queue = [callCandidate('search_arcades', { machine: '사볼', radiusKm: 5 }), textCandidate('답')];
+
+    await post([{ role: 'user', text: '내 근처 사볼 있는 곳' }], true, {
+      near: { lat: 37.123456, lng: 127.654321 },
+    });
+
+    const [args, ctx] = vi.mocked(tools.searchArcades).mock.calls.at(-1)!;
+    expect(args).toEqual({ machine: '사볼', radiusKm: 5 });
+    expect(ctx?.near).toEqual({ lat: 37.123456, lng: 127.654321 });
+
+    // 두 번의 요청 본문 어디에도 좌표가 없다 (시스템 프롬프트 · 대화 · 도구 결과)
+    const sent = JSON.stringify(received);
+    expect(sent).not.toContain('37.123456');
+    expect(sent).not.toContain('127.654321');
+  });
+
+  it('도구가 돌려준 오락실 중 답변에 나온 곳의 길찾기 링크만 응답에 단다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    const tools = await import('@/lib/chat-tools');
+    vi.mocked(tools.searchArcades).mockImplementationOnce(async (_args, ctx) => {
+      ctx?.places?.set('홍대 펀시티', { name: '홍대 펀시티', distance: '850m', directions: 'https://map.kakao.com/link/to/a' });
+      ctx?.places?.set('신촌 게임파크', { name: '신촌 게임파크', distance: '2.3km', directions: 'https://map.kakao.com/link/to/b' });
+      return { arcades: [{ name: '홍대 펀시티' }, { name: '신촌 게임파크' }] };
+    });
+    queue = [callCandidate('search_arcades', { radiusKm: 5 }), textCandidate('가장 가까운 곳은 홍대 펀시티입니다.')];
+
+    const { json } = await post([{ role: 'user', text: '가까운 데 어떻게 가?' }]);
+
+    expect(json.places).toEqual([
+      { name: '홍대 펀시티', distance: '850m', directions: 'https://map.kakao.com/link/to/a' },
+    ]);
+  });
+
+  it('오락실 도구를 부르지 않은 답에는 길찾기 링크가 없다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    queue = [textCandidate('홍대 펀시티는 모르는 곳입니다.')];
+    const { json } = await post([{ role: 'user', text: '홍대 펀시티 어때?' }]);
+    expect(json.places).toBeUndefined();
+  });
+
+  it('가는 길은 도구의 오락실 이름으로 안내하고 주소를 지어내지 않게 한다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    queue = [textCandidate('답')];
+    await post([{ role: 'user', text: '거기 어떻게 가?' }]);
+
+    const text = systemText();
+    expect(text).toMatch(/이름을 도구가 준 그대로/);
+    expect(text).toMatch(/지도 주소\(URL\)를 직접 쓰지 말고/);
+    expect(text).toMatch(/radiusKm/);
+    const arcadeTool = received[0].tools
+      .flatMap((t: any) => t.functionDeclarations ?? [])
+      .find((d: any) => d.name === 'search_arcades');
+    expect(arcadeTool.parametersJsonSchema.properties.radiusKm.type).toBe('number');
+  });
+
+  it('기준점이 좌표 범위를 벗어나면 400 으로 막는다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    const { status } = await post([{ role: 'user', text: '안녕' }], true, { near: { lat: 999, lng: 0 } });
+    expect(status).toBe(400);
+    expect(received).toEqual([]);
   });
 
   it('입력이 규칙에 맞지 않으면 400 으로 막는다', async () => {

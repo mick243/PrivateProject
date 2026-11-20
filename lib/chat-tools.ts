@@ -1,6 +1,9 @@
 /**
  * 챗봇이 쓰는 **앱 안쪽 도구들**.
  *
+ * 2026-11-17: 오락실 도구가 사용자의 기준점을 받아 가까운 순으로 찾고(ChatToolContext.near),
+ * 돌려준 오락실의 길찾기 링크를 따로 모읍니다(places). 둘 다 모델을 거치지 않습니다.
+ *
  * 모델에게 이 앱의 DB 를 통째로 열어 주는 대신, 화면이 이미 쓰고 있는 조회
  * 함수(lib/arcades.ts · lib/reports.ts · lib/board.ts)를 그대로 감싸 세 개만
  * 내줍니다. 같은 함수를 쓰므로 **챗봇이 말하는 값과 화면에 뜨는 값이 어긋날
@@ -22,6 +25,10 @@
 
 import { listMachines, pageArcades } from './arcades';
 import { listPosts } from './board';
+import type { ChatPlace } from './chat-types';
+import { formatDistance, type Coord } from './geo';
+import { resolveMachines } from './machine-aliases';
+import { placeLinks } from './place-links';
 import { listReports } from './reports';
 import type { ReportKind } from './community-types';
 import type { Arcade } from './types';
@@ -55,18 +62,13 @@ const clip = (s: string | null | undefined, max = NOTE_CHARS) =>
 /**
  * "펌프" · "Pump It Up" · "PIU" 중 무엇으로 물어도 같은 기종을 찾습니다.
  * 모델이 기종 id 를 알 리 없으므로 이름으로 받고 여기서 옮깁니다.
+ *
+ * 2026-11-17 까지 이 주석은 사실이 아니었습니다 — 이름과 축약명만 대조해서 축약명이 '펌프' 인
+ * 기종을 'PIU' 로 물으면 "기종을 찾지 못했습니다" 가 돌아갔습니다. 별칭은 lib/machine-aliases.ts.
  */
 async function resolveMachineIds(name: string | null | undefined): Promise<number[]> {
   if (!name || !name.trim()) return [];
-  const needle = name.trim().toLowerCase();
-  const machines = await listMachines();
-  const hit = machines.filter(
-    (m) =>
-      m.name.toLowerCase().includes(needle) ||
-      m.shortName.toLowerCase().includes(needle) ||
-      needle.includes(m.shortName.toLowerCase()),
-  );
-  return hit.map((m) => m.id);
+  return resolveMachines(name, await listMachines()).map((m) => m.id);
 }
 
 function hoursOf(a: Arcade): string {
@@ -80,6 +82,8 @@ export function summarizeArcade(a: Arcade) {
   return {
     name: a.name,
     address: a.address,
+    // 기준점이 있을 때만. 좌표는 싣지 않습니다 — 모델이 받는 것은 "얼마나 먼가" 뿐입니다.
+    distance: a.distanceKm === null ? undefined : formatDistance(a.distanceKm),
     hours: hoursOf(a),
     rating: a.ratingAvg === null ? undefined : `${a.ratingAvg.toFixed(1)} (${a.reviewCount}건)`,
     machines: a.machines.map((m) => {
@@ -103,23 +107,83 @@ export function summarizeArcade(a: Arcade) {
 export interface ArcadeSearchArgs {
   query?: string | null;
   machine?: string | null;
+  /** 기준점에서 이 거리(km) 안만 — "내 근처" */
+  radiusKm?: number | null;
   page?: number | null;
 }
 
-export async function searchArcades(args: ArcadeSearchArgs): Promise<unknown> {
+/** 모델이 준 반경의 상한(km). 이보다 넓으면 "근처" 가 아니라 전국입니다 */
+export const MAX_RADIUS_KM = 50;
+
+/** 모델이 준 radiusKm 를 0 초과 … MAX_RADIUS_KM 로. 숫자가 아니거나 0 이하면 null(자르지 않음) */
+export function radiusOf(raw: unknown): number | null {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, MAX_RADIUS_KM) : null;
+}
+
+/**
+ * 도구가 **모델 몰래** 받고 내놓는 것.
+ *
+ * 모델이 주는 인자(ArcadeSearchArgs)와 갈라 둡니다. 여기 있는 것은 모델이 정할 수도, 읽을 수도
+ * 없어야 하는 값입니다.
+ */
+export interface ChatToolContext {
+  /**
+   * 사용자의 기준점 (파인더의 내 위치 또는 지도 기준점). 거리 계산에만 쓰고 **모델에는 보내지
+   * 않습니다** — 개인정보처리방침이 위치를 "주변 오락실 검색 요청의 기준 좌표로만" 쓴다고 적습니다.
+   */
+  near?: Coord | null;
+  /**
+   * 도구가 돌려준 오락실의 길찾기 링크를 여기 모읍니다 (이름 → 링크). 라우트가 답변에 나온
+   * 곳만 골라 말풍선 아래에 답니다. 링크를 모델에게 주고 받아 적게 하지 않는 이유는 출처와
+   * 같습니다 — 모델은 긴 주소를 옮기다 틀리고, 틀린 주소도 링크처럼 보입니다.
+   */
+  places?: Map<string, ChatPlace>;
+}
+
+export async function searchArcades(
+  args: ArcadeSearchArgs,
+  ctx: ChatToolContext = {},
+): Promise<unknown> {
   const machineIds = await resolveMachineIds(args.machine);
   if (args.machine && machineIds.length === 0) {
     return { error: `'${args.machine}' 이라는 기종을 찾지 못했습니다`, arcades: [] };
   }
   const page = pageOf(args.page);
+  const near = ctx.near ?? null;
+  const radiusKm = radiusOf(args.radiusKm);
   const { arcades, total } = await pageArcades(
-    { q: args.query ?? null, machineIds: machineIds.length ? machineIds : null },
+    {
+      q: args.query ?? null,
+      machineIds: machineIds.length ? machineIds : null,
+      lat: near?.lat ?? null,
+      lng: near?.lng ?? null,
+      // 기준점이 없으면 반경도 뜻이 없습니다 (SQL 도 좌표가 없으면 반경을 무시합니다).
+      radiusKm: near ? radiusKm : null,
+    },
     { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE },
   );
 
+  for (const a of arcades) {
+    // 같은 이름을 쓰는 오락실이 많습니다(GUIDELINES.md 4-4). 답변에는 이름만 나오므로 어느
+    // 지점인지 가를 수 없어, 먼저 나온 곳(가까운 순이면 더 가까운 곳)을 남깁니다.
+    if (!ctx.places || ctx.places.has(a.name)) continue;
+    ctx.places.set(a.name, {
+      name: a.name,
+      distance: a.distanceKm === null ? undefined : formatDistance(a.distanceKm),
+      directions: placeLinks(a).directions,
+    });
+  }
+
   return {
+    // 순서가 무엇인지 모델이 알아야 "가장 가까운 곳" 이라고 말할 수 있습니다.
+    order: near ? '기준점에서 가까운 순' : '이름순 (기준점이 없어 거리를 모릅니다)',
+    ...(radiusKm !== null && !near
+      ? {
+          note: '사용자의 기준점을 받지 못해 반경으로 좁히지 못했습니다. 파인더 화면에서 내 위치를 켜거나 지도를 옮긴 뒤 다시 물으면 가까운 순으로 찾을 수 있다고 안내하세요.',
+        }
+      : {}),
     ...pageInfo(page, total !== null && page * PAGE_SIZE < total, total),
-    // 좌표 기준 조회가 아니므로 거리는 없습니다 — 순위는 지도 화면이 냅니다.
     arcades: arcades.map(summarizeArcade),
   };
 }

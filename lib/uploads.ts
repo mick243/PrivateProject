@@ -197,3 +197,34 @@ export function readRange(
   const nodeStream = createReadStream(resolveKey(storageKey), range);
   return Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
 }
+
+/**
+ * 파일 하나를 지웁니다. 없으면 조용히 넘어갑니다.
+ *
+ * ⚠ 파일 이름이 **내용 해시**라 같은 그림을 두 사람이 올리면 행 둘이 파일 하나를 같이 씁니다
+ *   (save 의 "이미 있으면 다시 쓰지 않는다"). 그래서 이 함수를 부르기 전에 그 키를 가리키는
+ *   행이 더 없는지 확인해야 합니다 — lib/upload-housekeeping.ts 가 그렇게 부릅니다.
+ */
+export async function remove(storageKey: string): Promise<void> {
+  try {
+    await fs.unlink(resolveKey(storageKey));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+}
+
+/** 저장소에 있는 파일과 마지막 수정 시각 — 고아 파일 쓸기(scripts/purge-uploads.ts)가 씁니다 */
+export async function listStored(): Promise<{ storageKey: string; mtimeMs: number }[]> {
+  let names: string[];
+  try {
+    names = await fs.readdir(ROOT);
+  } catch {
+    return [];
+  }
+  const out: { storageKey: string; mtimeMs: number }[] = [];
+  for (const name of names) {
+    const stat = await fs.stat(path.join(ROOT, name)).catch(() => null);
+    if (stat?.isFile()) out.push({ storageKey: name, mtimeMs: stat.mtimeMs });
+  }
+  return out;
+}

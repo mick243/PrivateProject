@@ -192,7 +192,9 @@ POST와 동일 스키마 + `noticeGuard` 재실행("일반 글로 쓰고 말머�
 ### `POST /api/uploads`
 multipart: `file`(레거시 별칭 `image` 허용). 로그인 필요 — **본문을 읽기 전에** `401` 로 막습니다(비로그인이 50MB 를 올려 두고 거절당하지 않게).
 선언된 `file.size`를 **버퍼링 전에** 검사(500MB 업로드를 메모리에 다 읽고 거부하는 사고 방지) → `413`. 저장은 **매직 바이트 판정**(확장자·Content-Type은 클라이언트 통제물) + 타입별 상한(이미지 5MB · 영상 50MB).
-`201 {file, image}` · 미지원 형식 `415` · 초과 `413`. 알려진 부채: 초안 이탈 시 `post_id IS NULL` 고아 행 — 정리 배치 없음(부분 인덱스는 준비됨).
+`201 {file, image}` · 미지원 형식 `415` · 초과 `413`.
+2026-11-20 상한: `Content-Length` 가 없으면 `411`(본문을 읽지 않음) · 한 프로세스 동시 업로드 `UPLOAD_MAX_CONCURRENT`(기본 2)개를 넘으면 `503` + `Retry-After` · 사람마다 한 시간 `UPLOAD_HOURLY_LIMIT`(30)회 · 24시간 `UPLOAD_DAILY_MB`(300)MB 를 넘으면 `429`. 횟수 · 총량은 본문을 받기 전에 봅니다.
+고아 첨부(`post_id IS NULL` 24시간)는 업로드마다 덤으로 20개씩 치우고, 글 삭제로 행만 사라진 파일은 `npm run uploads:purge` 가 쓸어 냅니다(lib/upload-housekeeping.ts).
 
 ### `GET /api/uploads/[id]`
 원본 서빙. 파일은 `public/` 밖 — 향후 비공개 게시판 규칙이 생겨도 자리가 한 곳.
@@ -264,6 +266,30 @@ multipart: `file`(레거시 별칭 `image` 허용). 로그인 필요 — **본�
 | `502` | 키 무효(401/403) 또는 모델 미제공(404) |
 | `504` | SDK fetch 오류(TypeError) |
 | `500` | 그 외 |
+
+---
+
+## 13. 신고 · 차단 · 관리 (2026-11-20, db/migrate-083)
+
+### `POST /api/content-reports` — 로그인 필요
+`{targetType: post|post_comment|arcade_review|chart_comment, targetId, reason: spam|abuse|privacy|false_info|other, detail?(≤500)}`.
+`201` 접수 · `200 {duplicate: true}` 같은 대상을 다시 신고(새 줄 없음) · `400` 내 글 · `404` 대상 없음 · `429` 하루 `CONTENT_REPORT_DAILY_LIMIT`(20)건 초과.
+기종 제보(`/api/reports`)와는 다른 것입니다.
+
+### `GET /api/blocks` · `PUT /api/blocks {playerId}` · `DELETE /api/blocks?playerId=` — 로그인 필요
+내 화면에서만 가립니다(상대에게 알리지 않음). 가리기는 화면이 작성자 id 로 합니다(lib/use-blocks.ts). 나 자신 · 없는 사람은 `404`.
+
+### `GET /api/admin/reports?status=open|actioned|dismissed` · `PUT /api/admin/reports {targetType, targetId, action: delete|dismiss}` — 관리자 전용
+대상마다 묶은 신고(`groups`). PUT 은 그 대상의 처리 전 신고를 한꺼번에 처리하고 `{resolved, deleted}` — 두 번 보내도 결과가 같습니다.
+
+### `GET /api/admin/players?q=` — 관리자 전용
+q 가 없으면 처리 전 신고가 들어온 사람 · 정지 중인 사람. 최대 50명.
+
+### `PUT /api/admin/players/[id]/suspension {days: 1~3650|null, reason?}` · `DELETE …/suspension` — 관리자 전용
+`days=null` 은 무기한. 정지하면 세대 번호를 올리고 `getSession` 이 그 계정을 비로그인으로 봅니다(즉시). 로그인 · 소셜 로그인은 비밀번호가 맞은 뒤 `403` + 정지 문구. 관리자 계정은 `400`.
+
+### `GET /api/admin/guesses` · `PUT /api/admin/guesses {arcadeId, machineId}` · `DELETE /api/admin/guesses?arcadeId=&machineId=` — 관리자 전용
+AI 보유 기종 추정 검수. PUT 은 보유 기종에 넣고(기체 1대, 이미 있으면 기체는 그대로) 추정을 지움. 없으면 `404`.
 
 ---
 

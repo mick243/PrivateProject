@@ -19,6 +19,20 @@ export interface ChatSource {
   url: string;
 }
 
+/**
+ * 답변에 나온 오락실의 길찾기 링크 — 답변 아래에 답니다.
+ *
+ * 출처(ChatSource)와 같은 규칙입니다: 모델이 본문에 적은 주소가 아니라 **도구가 실제로 돌려준
+ * 오락실**에서 서버가 만듭니다 (lib/chat-tools.ts ChatToolContext.places · lib/place-links.ts).
+ */
+export interface ChatPlace {
+  name: string;
+  /** 기준점에서의 거리 ('850m' · '1.2km'). 기준점이 없었으면 없습니다 */
+  distance?: string;
+  /** 카카오맵 길찾기 — 목적지가 이 오락실로 잡힌 채 열립니다 */
+  directions: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatRole;
@@ -62,6 +76,7 @@ export interface ChatMessage {
     canClear: boolean;
   };
   sources?: ChatSource[];
+  places?: ChatPlace[];
   /** 답을 기다리는 중 (…) */
   pending?: boolean;
   /** 실패한 답변 — 다시 보내기를 붙입니다 */
@@ -77,6 +92,43 @@ export interface ChatTurn {
 export interface ChatResponse {
   text: string;
   sources?: ChatSource[];
+  places?: ChatPlace[];
+}
+
+/** 답변 아래에 다는 길찾기 링크의 상한 — 도구 한 쪽(5건)과 같습니다 */
+export const MAX_CHAT_PLACES = 5;
+
+/**
+ * 도구가 돌려준 오락실 중 **답변에 이름이 나온 곳**만 고릅니다 (나온 순서대로).
+ *
+ * 도구는 한 번에 5곳씩, 여러 번 부르면 수십 곳을 돌려줍니다. 전부 달면 답변이 말하지 않은
+ * 곳의 링크가 줄줄이 붙습니다. 이름은 띄어쓰기를 접고 대조합니다 — 모델이 "짱오락실 홍대점" 을
+ * "짱오락실홍대점" 으로 적기도 합니다.
+ *
+ * **긴 이름부터** 찾고 찾은 자리는 가립니다. 답변이 "funny 게임랜드" 라고만 했는데 도구가 준
+ * 목록에 "게임랜드" 도 있으면, 가리지 않을 때 그 안의 글자에 걸려 말하지 않은 곳의 링크가
+ * 붙습니다 (2026-11-17 로컬 확인에서 실제로 붙었습니다).
+ */
+export function placesInAnswer(text: string, places: Iterable<ChatPlace>): ChatPlace[] {
+  let rest = text.replace(/\s+/g, '');
+  const found: { place: ChatPlace; at: number }[] = [];
+  const byLength = [...places]
+    .map((place) => ({ place, key: place.name.replace(/\s+/g, '') }))
+    .filter((x) => x.key !== '')
+    .sort((a, b) => b.key.length - a.key.length);
+
+  for (const { place, key } of byLength) {
+    const at = rest.indexOf(key);
+    if (at < 0) continue;
+    found.push({ place, at });
+    // 같은 길이로 가립니다 — 뒤에 찾는 이름의 자리(나온 순서)가 밀리지 않게.
+    rest = rest.split(key).join('\u0000'.repeat(key.length));
+  }
+
+  return found
+    .sort((a, b) => a.at - b.at)
+    .slice(0, MAX_CHAT_PLACES)
+    .map((x) => x.place);
 }
 
 // ─── 의도 판별 ───────────────────────────────────────────────

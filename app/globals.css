@@ -5820,3 +5820,98 @@ body:has(.ops-panel) .chat-panel {
 .emoticon-error {
   margin: 8px 0 0;
 }
+
+/* ─── 신고 · 차단 (components/ReportMenu.tsx) ────────────────────────
+   글 · 댓글 · 리뷰 머리줄의 오른쪽 끝. 메뉴와 신고 폼은 머리줄 아래로 펼친다 —
+   떠 있는 팝오버로 두면 좁은 상세 패널에서 오른쪽이 잘린다. */
+.report-menu {
+  margin-left: auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 100%;
+}
+.report-menu .btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  min-width: 32px;
+}
+.report-menu-pop {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.report-form {
+  flex-basis: 100%;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  margin-top: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--panel);
+  text-align: left;
+}
+.report-form textarea,
+.report-form select {
+  width: 100%;
+}
+.report-msg {
+  flex-basis: 100%;
+  text-align: right;
+}
+.blocked-note {
+  margin: 6px 0;
+}
+
+/* ─── 관리자 화면 (components/AdminConsole.tsx) ─────────────────── */
+.mod-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 16px;
+}
+.mod-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.mod-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.mod-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mod-card-excerpt {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.mod-card .form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* 신고 폼이 펼쳐지면 메뉴가 줄 전체를 차지하게 — 그대로 두면 키 큰 폼 옆에서 '글 목록' 단추가
+   세로 가운데로 밀려 떠 보인다 (2026-11-20 로컬 확인) */
+.post-detail-nav,
+.review-head,
+.comment-head {
+  flex-wrap: wrap;
+}
+.report-menu:has(.report-form) {
+  flex-basis: 100%;
+}

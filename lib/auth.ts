@@ -215,6 +215,8 @@ export async function getSession(request: Request): Promise<SessionUser | null> 
 
   const row = await playerRow(token.playerId);
   if (!row || row.epoch !== token.epoch) return null;
+  // 정지 중인 계정은 로그인이 아닙니다 (db/migrate-083). 요청마다 DB 를 보므로 정지는 즉시 통합니다.
+  if (row.suspendedUntil !== null && row.suspendedUntil.getTime() > Date.now()) return null;
 
   return { playerId: token.playerId, nickname: row.nickname, isAdmin: row.isAdmin };
 }
@@ -222,14 +224,41 @@ export async function getSession(request: Request): Promise<SessionUser | null> 
 /** 세션 판정에 필요한 players 한 줄. 계정이 없으면 null */
 async function playerRow(
   playerId: number,
-): Promise<{ nickname: string; isAdmin: boolean; epoch: number } | null> {
+): Promise<{ nickname: string; isAdmin: boolean; epoch: number; suspendedUntil: Date | null } | null> {
   const prisma = await getPrismaClient();
   const row = await prisma.players.findUnique({
     where: { id: playerId },
-    select: { nickname: true, is_admin: true, token_epoch: true },
+    select: { nickname: true, is_admin: true, token_epoch: true, suspended_until: true },
   });
   if (!row) return null;
-  return { nickname: row.nickname, isAdmin: !!row.is_admin, epoch: Number(row.token_epoch) };
+  return {
+    nickname: row.nickname,
+    isAdmin: !!row.is_admin,
+    epoch: Number(row.token_epoch),
+    suspendedUntil: row.suspended_until ?? null,
+  };
+}
+
+/**
+ * 정지 중이면 사용자에게 보여 줄 문구, 아니면 null.
+ *
+ * 로그인 · 소셜 로그인이 세션을 내주기 **전에** 부릅니다. getSession 도 정지를 막지만, 그것만 두면
+ * 정지된 사람은 로그인이 "성공" 한 뒤 아무 이유 없이 로그아웃된 것처럼 보입니다.
+ */
+export async function suspensionMessage(playerId: number, now = new Date()): Promise<string | null> {
+  const prisma = await getPrismaClient();
+  const row = await prisma.players.findUnique({
+    where: { id: playerId },
+    select: { suspended_until: true, suspended_reason: true },
+  });
+  const until = row?.suspended_until;
+  if (!until || until.getTime() <= now.getTime()) return null;
+  const when =
+    until.getUTCFullYear() >= 9999
+      ? '무기한'
+      : `${until.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'medium', timeStyle: 'short' })}까지`;
+  const reason = row?.suspended_reason ? ` (사유: ${row.suspended_reason})` : '';
+  return `이용이 정지된 계정입니다 — ${when}${reason}. 문의는 개인정보처리방침의 연락처로 보내 주세요.`;
 }
 
 /**
