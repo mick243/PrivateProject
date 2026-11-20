@@ -118,7 +118,9 @@ sudo systemctl reload arcade-finder        # SIGHUP → 인스턴스를 하나�
 `deploy/backup.sh` 가 매일 04:00(timer) 다음을 `/var/backups/arcade-finder/` 에 둡니다:
 
 - `db-<날짜>.dump` — `pg_dump -Fc` (176MB 급 DB 가 30MB 대로 압축됩니다)
-- `uploads-<날짜>.tar.zst` — 첨부 원본(`uploads/posts/`). **DB 밖 파일**이라 덤프에 없습니다
+- `uploads-<날짜>.tar.zst` — 첨부 원본(`uploads/posts/`). **DB 밖 파일**이라 덤프에 없습니다.
+  첨부가 바뀌지 않아 묶음이 옛것과 바이트까지 같으면 옛것은 지우고 새것만 남깁니다 — 그래서 날짜가
+  빠져 있으면 **그 뒤 첫 묶음이 그날 상태**입니다
 - 7일 지난 것은 지웁니다 (`KEEP_DAYS`, `arcade-finder-backup.service`) — 14일치가 10GB 서버에서 600MB 를 차지해 2026-10-16 에 줄였습니다. 더 오래 둘 것은 PC 로 받아 두세요
 
 다른 장비로 복사하지 않으면 백업이 아닙니다 — 스크립트 끝의 `OFFSITE` 훅에 rclone/scp
