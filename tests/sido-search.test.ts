@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ALT_SEPARATOR, searchTokens } from '@/lib/arcades';
-import { canonicalSidoFor } from '@/lib/region-cluster';
+import { isCityQuery } from '@/lib/place-search';
+import { canonicalSidoFor, provinceOf, regionOf } from '@/lib/region-cluster';
 
 /**
  * 시·도 이름으로 검색하기 (2026-11-20).
@@ -54,5 +55,49 @@ describe('searchTokens — 시·도 낱말에 정식 이름을 대안으로', ()
     expect(searchTokens('홍대 짱')).toEqual(['홍대', '짱']);
     expect(searchTokens('  ')).toBeNull();
     expect(searchTokens(null)).toBeNull();
+  });
+});
+
+describe('provinceOf — 시·도 이름으로 엔터를 누르면 그 지역으로 (2026-11-20)', () => {
+  it('줄임말 · 옛 이름 · 정식 이름 모두 같은 시·도로', () => {
+    for (const w of ['전남', '전라남도', '전남광주', '광주광역시', '전남광주통합특별시', ' 전남 ']) {
+      expect(provinceOf(w)?.key, w).toBe('전남광주통합특별시');
+    }
+    expect(provinceOf('충남')?.label).toBe('충남');
+    expect(provinceOf('충청남도')?.key).toBe('충청남도');
+  });
+
+  it('서울 · 광역시 · 세종은 도시라 더 당겨 보여 준다 (통합특별시는 도처럼)', () => {
+    expect(provinceOf('서울')?.isCity).toBe(true);
+    expect(provinceOf('부산광역시')?.isCity).toBe(true);
+    expect(provinceOf('세종')?.isCity).toBe(true);
+    expect(provinceOf('전남')?.isCity).toBe(false);
+    expect(provinceOf('경기')?.isCity).toBe(false);
+  });
+
+  it('시·도가 아니거나 뒤에 낱말이 더 붙으면 null — "전남 여수" 는 지점 검색이다', () => {
+    for (const w of ['전남 여수', '여수', '홍대', '광산구', '']) expect(provinceOf(w), w).toBeNull();
+  });
+
+  it('isCityQuery 도 시·도 이름을 지역 검색으로 본다 — 첫 매치 한 곳으로 당기지 않게', () => {
+    expect(isCityQuery('전남')).toBe(true);
+    expect(isCityQuery('충청남도')).toBe(true);
+    expect(isCityQuery('청주시')).toBe(true);
+    expect(isCityQuery('전남 여수')).toBe(false);
+    expect(isCityQuery('게임랜드')).toBe(false);
+  });
+});
+
+describe("regionOf — '전남광주' 줄임 표기 (2026-11-20 전에는 시·도로 읽히지 않았다)", () => {
+  it('전남광주 · 전남 · 전라남도 · 정식 이름이 모두 같은 묶음이다', () => {
+    const key = regionOf('전남광주통합특별시 여수시 좌수영로 1')?.province.key;
+    for (const a of ['전남광주 여수시 좌수영로 1', '전남 여수시 좌수영로 1', '전라남도 여수시 좌수영로 1']) {
+      expect(regionOf(a)?.province.key, a).toBe(key);
+    }
+    expect(regionOf('전남광주 광산구 첨단중앙로 1')?.city.label).toBe('광주');
+  });
+
+  it('지도 이름표는 통합 뒤의 줄임 이름 전남광주다', () => {
+    expect(regionOf('전남 여수시 좌수영로 1')?.province.label).toBe('전남광주');
   });
 });

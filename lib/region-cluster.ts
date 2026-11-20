@@ -133,6 +133,9 @@ const SIDO_ALIASES: Readonly<Record<string, string>> = {
   광주: '전남광주통합특별시',
   광주시: '전남광주통합특별시',
   광주광역시: '전남광주통합특별시',
+  // 통합특별시의 줄임 표기. 2026-11-20 전에는 빠져 있어 "전남광주 여수시 …" 로 적힌 주소가 시·도로
+  // 읽히지 않고 묶음 밖 점으로 남았다. '전남' 도 둔다 — 옛 주소 · 사람이 줄여 쓴 주소가 그렇게 온다.
+  전남광주: '전남광주통합특별시',
   전남: '전남광주통합특별시',
   전라남도: '전남광주통합특별시',
   경북: '경상북도',
@@ -221,6 +224,34 @@ const PROVINCE_ANCHORS: Readonly<Record<string, Coord>> = {
 const DIRECT_GU_CITY: Readonly<Record<string, string>> = {
   전남광주통합특별시: '광주',
 };
+
+export interface ProvincePlace {
+  /** 정식 이름 ('전남광주통합특별시') */
+  key: string;
+  /** 짧은 이름 ('전남광주') — 안내 문구에 씁니다 */
+  label: string;
+  lat: number;
+  lng: number;
+  /** 서울 · 광역시 · 세종처럼 시·도가 곧 한 도시인지 — 지도를 더 당겨 보여 줍니다 */
+  isCity: boolean;
+}
+
+/**
+ * 검색어 **전체**가 시·도 이름이면 그 자리(지도 묶음과 같은 한가운데 좌표), 아니면 null.
+ *
+ * 파인더 검색창에서 "전남" · "충청남도" · "서울" 을 치고 엔터를 누르면 그 지역 전체로 지도를 옮기는 데
+ * 씁니다 (components/ArcadeFinder.tsx jumpToPlace). 예전에는 첫 번째로 맞은 오락실 한 곳으로 당겨져
+ * (SPOT_ZOOM 18) 도를 보러 온 사람이 낯선 골목에 떨어졌습니다. 지역 검색 API 도 부르지 않습니다 —
+ * "전남" 을 물으면 '전남대학교' 같은 가게 하나가 돌아옵니다.
+ */
+export function provinceOf(query: string): ProvincePlace | null {
+  const w = query.trim();
+  const key = SIDO_ALIASES[w] ?? (PROVINCE_ANCHORS[w] ? w : null);
+  if (!key) return null;
+  const anchor = PROVINCE_ANCHORS[key];
+  if (!anchor) return null;
+  return { key, label: shortSido(key), lat: anchor.lat, lng: anchor.lng, isCity: isCitySido(key) };
+}
 
 /** 시·도 이름이 그 자체로 한 도시인지 — 서울 · 광역시 · 세종 */
 function isCitySido(sido: string): boolean {

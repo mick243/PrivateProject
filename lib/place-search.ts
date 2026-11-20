@@ -13,6 +13,7 @@
 // 확장자를 붙이는 이유는 naver-local.ts 상단 주석과 같습니다 — 이 계보의
 // 파일은 Node 로 직접 실행되는 스크립트에서도 쓰입니다.
 import { stripTags, toLatLng, type NaverLocalItem } from './naver-local.ts';
+import { provinceOf } from './region-cluster.ts';
 
 export interface Place {
   name: string;
@@ -69,5 +70,6 @@ export function isPlaceQuery(q: string): boolean {
  * 쓸모 있습니다.
  */
 export function isCityQuery(q: string): boolean {
-  return /시$/.test(q.trim());
+  // 시·도 이름("전남" · "충청남도" · "서울")도 그 지역을 보러 온 검색이다 (2026-11-20).
+  return /시$/.test(q.trim()) || provinceOf(q) !== null;
 }
