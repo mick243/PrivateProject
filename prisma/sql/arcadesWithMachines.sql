@@ -57,8 +57,12 @@ WITH scored AS (
          OR (a.lat BETWEEN $1::float8 - $5::float8 / 110.0 AND $1::float8 + $5::float8 / 110.0
              AND a.lng BETWEEN $2::float8 - $5::float8 / (110.0 * GREATEST(cos(radians($1::float8)), 0.01))
                            AND $2::float8 + $5::float8 / (110.0 * GREATEST(cos(radians($1::float8)), 0.01))))
+    -- 낱말마다 이름 · 주소 부분 일치(AND). 한 낱말에 대안이 chr(31) 로 붙어 오면(시 · 도 별칭 — "충남" 에
+    -- "충청남도") 그중 하나만 맞아도 됩니다 (lib/arcades.ts searchTokens).
     AND (cardinality($3::text[]) = 0
-         OR (SELECT bool_and(a.name ILIKE '%' || t || '%' OR a.address ILIKE '%' || t || '%')
+         OR (SELECT bool_and(EXISTS (
+               SELECT 1 FROM unnest(string_to_array(t, chr(31))) AS alt
+               WHERE a.name ILIKE '%' || alt || '%' OR a.address ILIKE '%' || alt || '%'))
              FROM unnest($3::text[]) AS t))
     AND (cardinality($4::int[]) = 0 OR a.id IN (
           SELECT am.arcade_id
