@@ -24,7 +24,7 @@ describe.skipIf(!url)('Prisma 데이터 계층 스모크', () => {
   beforeAll(async () => {
     process.env.DATABASE_URL = url;
 
-    const [arcades, board, tier, reports, reviews, comments, emoticons, favorites, summary, auth] =
+    const [arcades, board, tier, reports, reviews, comments, emoticons, favorites, summary, auth, moderation] =
       await Promise.all([
         import('@/lib/arcades'),
         import('@/lib/board'),
@@ -36,6 +36,7 @@ describe.skipIf(!url)('Prisma 데이터 계층 스모크', () => {
         import('@/lib/favorites'),
         import('@/lib/review-summary'),
         import('@/lib/auth'),
+        import('@/lib/moderation'),
       ]);
 
     /** 읽기 전용이고, 데이터가 없어도 안전한 인자만 씁니다 */
@@ -72,6 +73,14 @@ describe.skipIf(!url)('Prisma 데이터 계층 스모크', () => {
       ['review-summary.lookupReviewSummary(1)', () => summary.lookupReviewSummary(1)],
       ['auth.loginLockRemainingMs', () => auth.loginLockRemainingMs('account:smoke')],
       ['auth.nicknameStatus(1)', () => auth.nicknameStatus(1)],
+      ['auth.suspensionMessage(1)', () => auth.suspensionMessage(1)],
+      // 신고 · 차단 · 정지 · AI 추정 검수 (db/migrate-083) — 읽기만
+      ['moderation.listReportGroups(open)', () => moderation.listReportGroups('open')],
+      ['moderation.listReportGroups(actioned)', () => moderation.listReportGroups('actioned')],
+      ['moderation.listBlocked(1)', () => moderation.listBlocked(1)],
+      ['moderation.listPlayersForAdmin(null)', () => moderation.listPlayersForAdmin(null)],
+      ['moderation.listPlayersForAdmin(q)', () => moderation.listPlayersForAdmin('smoke')],
+      ['moderation.listGuessesForReview', () => moderation.listGuessesForReview()],
     ];
     names = checks.map(([name]) => name);
 
@@ -153,6 +162,9 @@ describe.skipIf(!url)('TypedSQL — 실 DB 에서 한 번씩 (쓰기는 되돌�
       recalcChartStats: [1],
       recalcPostStats: [1],
       tierCharts: [null, null, 1, 'S', 20, false, null],
+      // PR #28 (로그인 시도를 대조 전에 세기). 이 목록에 빠져 있어 DB 를 붙여 돌리면 위 대조에서 실패했다 —
+      // 2026-11-20 CI 에 Postgres 를 붙이면서 처음 드러남. 쓰기지만 아래 트랜잭션이 되돌린다.
+      takeLoginAttempt: ['account:smoke', 10, 8],
     };
     expect(Object.keys(ARGS).sort()).toEqual(queryNames());
 
