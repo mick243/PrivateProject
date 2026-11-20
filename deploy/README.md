@@ -159,6 +159,8 @@ RPO 는 하루(백업 주기)입니다. 더 줄이려면 timer 를 `*:00/6` 같�
 - [ ] `/terms` · `/privacy` 에 자리표시자 경고가 안 보이는지
 - [ ] 히스토리에 노출됐던 키(`83fb7d6`: Gemini 키 · 지도 키 ID) 재발급 확인
 - [ ] `npm run db:purge-demo` — 시드 글·가상 오락실 확인 후 `-- --apply`
+- [ ] 묶음은 **커밋한 뒤** 만든다 — `build-release.sh` 는 커밋하지 않은 변경(추적 안 하는 새 파일 포함)이 있으면 멈춥니다. 시험용만 `ALLOW_DIRTY=1` (이름에 `-dirty`). 묶음에 `VERSION` 이 들어가 `/api/health` 의 `version` 이 커밋 해시가 되고, `install-release.sh` 가 떠 있는 판이 묶음과 다르면 경고합니다 (2026-11-20)
+- [ ] 첨부 청소 — 가끔 `sudo -u arcade -H bash -c "cd <앱 폴더> && npm run uploads:purge"` 로 미리 보고 `-- --write`. 쓰다 만 글의 첨부 · 지운 글의 파일을 치웁니다(업로드 라우트도 덤으로 조금씩 치움)
 - [ ] `npm run data:release -- verify <폴더>` — 외부 원천 데이터가 다 들어갔는지 (종료 코드 0)
 - [ ] `npm run arcades:dedupe` — 중복 오락실 확인 후 `-- --apply`
 - [ ] 복구 리허설 1회 (§4)
