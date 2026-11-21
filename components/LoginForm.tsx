@@ -48,12 +48,15 @@ export default function LoginForm() {
   // 소셜 로그인이 실패하면 `/login?error=…` 로 돌아옵니다. 그 안내는 폼을
   // 건드리기 전까지만 보여 주면 되므로 상태로 옮기지 않고 그때그때 읽습니다.
   const [error, setError] = useState<string | null>(null);
+  /** 아이디·비밀번호가 맞지 않았거나 잠겼다 — 실패 문구 옆에 비밀번호 찾기를 바로 보여 줍니다 (UX 시험 A-3) */
+  const [mismatch, setMismatch] = useState(false);
   const shownError = error ?? oauthErrorMessage(params.get('error'));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setMismatch(false);
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
@@ -65,6 +68,7 @@ export default function LoginForm() {
         // 잠금(429)·미설정(503)처럼 다음에 뭘 해야 하는지가 담긴 문구는
         // 서버 것을 그대로 씁니다. 여기서 뭉뚱그리면 그 정보가 사라집니다.
         setError(data.error ?? '로그인하지 못했어요. 다시 시도해 주세요');
+        setMismatch(res.status === 401 || res.status === 429);
         return;
       }
 
@@ -119,6 +123,11 @@ export default function LoginForm() {
     );
   }
 
+  /** 적던 아이디와 돌아갈 곳을 들고 갑니다 — 다시 치지 않게 */
+  const forgotHref = `/forgot-password?next=${encodeURIComponent(next)}${
+    nickname.trim() ? `&id=${encodeURIComponent(nickname.trim())}` : ''
+  }`;
+
   return (
     <main className="login-page">
       <form className="login-card" onSubmit={submit}>
@@ -154,6 +163,12 @@ export default function LoginForm() {
         {shownError && (
           <p className="warn" role="alert">
             {shownError}
+            {mismatch && (
+              <>
+                {' '}
+                <Link href={forgotHref}>비밀번호를 잊었어요</Link>
+              </>
+            )}
           </p>
         )}
 
@@ -169,6 +184,9 @@ export default function LoginForm() {
               거치지 않고 곧장 보던 화면으로 돌아갑니다. */}
           <Link className="btn-link" href={`/signup?next=${encodeURIComponent(next)}`}>
             처음이라면 가입하기
+          </Link>
+          <Link className="btn-link" href={forgotHref}>
+            비밀번호를 잊었어요
           </Link>
           <Link className="btn-link" href={next}>
             로그인 없이 둘러보기

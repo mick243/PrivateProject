@@ -112,3 +112,19 @@ export interface BlockedPlayer {
   nickname: string;
   createdAt: string;
 }
+/** 정지 기간을 사람 말로 — `7일` · `무기한` */
+export function suspendLabel(days: number | null): string {
+  return days === null ? '무기한' : `${days}일`;
+}
+
+/** 정지 확인 문구 (UX 시험 Ad-2 — 사유 없이 · 확인 없이 정지되던 것) */
+export function suspendConfirmText(nickname: string, days: number | null, reason: string): string {
+  const what = days === null ? '무기한 정지할까요?' : `${days}일 정지할까요?`;
+  return `${nickname} 님을 ${what}\n사유: ${reason}\n\n바로 로그아웃되고, 다시 로그인하면 이 사유를 봐요.`;
+}
+
+/** 정지 풀기 확인 문구 (Ad-3 — 정지 직후 같은 자리 단추로 실수로 풀리던 것) */
+export function unsuspendConfirmText(nickname: string): string {
+  return `${nickname} 님의 정지를 풀까요?\n바로 다시 로그인하고 글을 쓸 수 있어요.`;
+}
+

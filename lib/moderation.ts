@@ -401,8 +401,8 @@ export async function suspendPlayer(input: {
 }): Promise<{ until: string }> {
   const prisma = await getPrismaClient();
   const row = await prisma.players.findUnique({ where: { id: input.playerId }, select: { is_admin: true } });
-  if (!row) throw new SuspendError('그런 계정이 없습니다', 404);
-  if (row.is_admin) throw new SuspendError('관리자 계정은 정지할 수 없습니다', 400);
+  if (!row) throw new SuspendError('그 계정을 찾을 수 없어요. 지워졌을 수 있어요', 404);
+  if (row.is_admin) throw new SuspendError('관리자 계정은 정지할 수 없어요', 400);
 
   const until =
     input.days === null

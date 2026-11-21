@@ -28,7 +28,15 @@ import {
   type ChatConstraints,
   type MentionedPlace,
 } from '@/lib/query-constraints';
-import { isCityQuery, isPlaceQuery, type Place } from '@/lib/place-search';
+import { isPlaceQuery, type Place } from '@/lib/place-search';
+import { detectBaseHint } from '@/lib/chat-intent';
+import {
+  boxCenter,
+  boxOf,
+  chooseSearchAction,
+  favoritesPool,
+  readSearch,
+} from '@/lib/finder-search';
 import { provinceOf } from '@/lib/region-cluster';
 import type { Arcade, Machine } from '@/lib/types';
 import { useFavorites } from '@/lib/use-favorites';
@@ -42,7 +50,6 @@ import {
   savedString,
   useSessionSnapshot,
 } from '@/lib/use-session-snapshot';
-import { useSidebarOpen } from '@/lib/use-sidebar';
 import ScrollStrip from './ScrollStrip';
 import MapPane, { type Coord, type MapView } from './MapPane';
 import ArcadeList from './ArcadeList';
@@ -57,7 +64,7 @@ import { useIsMapFolded, useIsStacked } from '@/lib/use-stacked';
 // 계측 패널은 `/?perf=1` 에서만 쓰는 개발용이라 주 번들에서 떼어 둔다.
 const MapPerfPanel = dynamic(() => import('./MapPerfPanel'), { ssr: false });
 
-const RADIUS_OPTIONS = [1, 3, 5, 10, 30];
+const RADIUS_OPTIONS = [1, 3, 5, 7, 10];
 
 /** 처음 열었을 때 · 위치 추적을 다시 켤 때의 반경(km) */
 const DEFAULT_RADIUS_KM = 5;
@@ -85,7 +92,7 @@ const SCORE_RADIUS_FALLBACK_KM = 5;
 const SPOT_ZOOM = 18;
 
 /**
- * 시·도 이름으로 엔터를 눌렀을 때의 줌 (jumpToPlace).
+ * 시·도 이름으로 엔터를 눌렀을 때의 줌 (submitSearch).
  * 도는 200km 남짓이라 8 이면 한 화면에 들고, 서울 · 광역시 · 세종은 도시 하나라 11 이면 구 단위가 보인다.
  */
 const PROVINCE_ZOOM = 8;
@@ -253,6 +260,24 @@ export default function ArcadeFinder() {
   // 필터
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
+  /**
+   * Enter 로 **해석한** 검색어 (lib/finder-search.ts). 검색칸에는 친 말이 그대로 남지만,
+   * 그 말이 칸에 남아 있는 동안 서버에 보내는 이름 · 주소 검색어는 textQ 다 —
+   * '홍대 사볼' 은 사볼 칩 + 홍대 주변(textQ 없음)으로, '부천 사볼' 은 사볼 칩 + '부천' 으로 찾는다.
+   * 칸의 글자를 고치면(q 가 raw 와 달라지면) 해석은 저절로 풀리고 입력대로 찾는다.
+   */
+  const [interp, setInterp] = useState<{
+    raw: string;
+    textQ: string | null;
+    /** 지명으로 옮겨 왔으면 사용자가 친 그 말 — 목록 머리글에 "'○○' 주변" 으로 쓴다 */
+    placeLabel: string | null;
+  } | null>(null);
+  const interpActive = interp !== null && q.trim() === interp.raw;
+  /** 서버에 보내는 이름 · 주소 검색어. 해석이 살아 있으면 그쪽, 아니면 친 그대로 */
+  const searchText = interpActive ? (interp.textQ ?? '') : debouncedQ.trim();
+  /** '★ 즐겨찾기' 칩 — 담은 곳만, 지도 범위와 상관없이 (F-20) */
+  const [favOnlyRaw, setFavOnly] = useState(false);
+  const favOnly = favOnlyRaw && favorites.canFavorite;
   const [machineIds, setMachineIds] = useState<number[]>([]);
   const [radiusKm, setRadiusKm] = useState<number>(DEFAULT_RADIUS_KM);
 
@@ -395,7 +420,18 @@ export default function ArcadeFinder() {
     return `${window.location.pathname}${qs ? `?${qs}` : ''}`;
   };
 
+  /**
+   * 상세를 연 곳(목록 줄 제목 단추 등). 닫으면 초점을 여기로 돌려준다 (C-3 — 패널 안의 Esc ·
+   * 초점은 ArcadeDetailPanel 이, 닫힌 뒤 돌아갈 자리는 여기가 맡는다). 지도 마커는 초점을 받지
+   * 않으므로 그때는 null 이고, 닫을 때 선택한 줄로 대신 돌아간다.
+   */
+  const openerRef = useRef<HTMLElement | null>(null);
+
   const openDetail = useCallback((id: number) => {
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
+    if (active instanceof HTMLElement && active !== document.body && !active.closest('.detail-pane')) {
+      openerRef.current = active;
+    }
     setSelectedId(id);
     setDetailOpen(true);
     if (pushedRef.current) {
@@ -424,6 +460,25 @@ export default function ArcadeFinder() {
     }
   }, []);
 
+  // 상세가 닫힌 직후 — 초점이 사라진 패널과 함께 body 로 떨어졌으면 연 곳으로 돌려준다.
+  // 다른 칸(검색칸 등)에 가 있으면 건드리지 않는다: 그건 사용자가 옮긴 초점이다.
+  const wasOpenRef = useRef(detailOpen);
+  useEffect(() => {
+    const was = wasOpenRef.current;
+    wasOpenRef.current = detailOpen;
+    if (!was || detailOpen) return;
+    const opener = openerRef.current;
+    openerRef.current = null;
+    const active = document.activeElement;
+    if (active && active !== document.body && !active.closest('.detail-pane')) return;
+    const target =
+      (opener?.isConnected ? opener : null) ??
+      (selectedId !== null
+        ? document.querySelector<HTMLElement>(`#arcade-sidebar [data-arcade-id="${selectedId}"]`)
+        : null);
+    target?.focus({ preventScroll: true });
+  }, [detailOpen, selectedId]);
+
   useEffect(() => {
     const onPop = () => {
       const id = Number(new URLSearchParams(window.location.search).get('arcade')) || null;
@@ -441,8 +496,21 @@ export default function ArcadeFinder() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  // 목록을 접었는지. 접으면 지도가 화면을 다 쓴다 (CSS: .layout.sidebar-off)
-  const { open: sidebarOpen, toggle: toggleSidebar, setOpen: setSidebarOpen } = useSidebarOpen();
+  /**
+   * 목록(검색칸 · 게임 칩 · 목록)이 펼쳐져 있는지. 접으면 지도가 화면을 다 쓴다 (CSS: .layout.sidebar-off)
+   *
+   * **처음엔 펼쳐 둔다** (2026-11-20 사용성 시험 F-1). 접힌 채로 시작하던 때(lib/use-sidebar.ts)는
+   * 검색창 · 게임 칩 · 목록이 글자 없는 작은 손잡이 뒤에 숨어 처음 온 사람 대부분이 찾지 못했다.
+   * 데스크톱은 왼쪽 칸 전부, 휴대폰은 위쪽 절반이 목록이고 아래 절반이 지도다.
+   * SSR 과 첫 렌더가 같아야 하므로 상수로 시작하고, 새로고침이면 아래 되살리기가 덮는다.
+   */
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  /** 손잡이로 펼치면 검색칸으로 초점을 보낸다 — 값이 바뀔 때마다 한 번 (아래 effect) */
+  const [focusSearchNonce, setFocusSearchNonce] = useState(0);
+  const toggleSidebar = useCallback(() => {
+    if (!sidebarOpen) setFocusSearchNonce((n) => n + 1);
+    setSidebarOpen(!sidebarOpen);
+  }, [sidebarOpen]);
   const [picking, setPicking] = useState(false);
   const [pickedCoord, setPickedCoord] = useState<Coord | null>(null);
 
@@ -472,6 +540,12 @@ export default function ArcadeFinder() {
    * 붙잡아 둡니다. 화면 목록이 아니라 이름 대조에만 쓰므로 갱신도 필요 없습니다.
    */
   const fullListRef = useRef<Arcade[] | null>(null);
+  /** 위 전체 목록의 state 판 — 즐겨찾기 모아 보기(F-20)가 그려야 해서 렌더를 부른다 */
+  const [fullList, setFullList] = useState<Arcade[] | null>(null);
+  const keepFullList = useCallback((list: Arcade[]) => {
+    fullListRef.current = list;
+    setFullList(list);
+  }, []);
 
   // ── 목록 조회 ──────────────────────────────────────────────
   const reqSeq = useRef(0);
@@ -480,8 +554,8 @@ export default function ArcadeFinder() {
     setLoading(true);
 
     const params = new URLSearchParams();
-    const searching = debouncedQ.trim() !== '';
-    if (searching) params.set('q', debouncedQ.trim());
+    const searching = searchText !== '';
+    if (searching) params.set('q', searchText);
     if (machineIds.length) params.set('machines', machineIds.join(','));
     // 검색어가 있으면 반경을 보내지 않는다 — 이름·주소 검색은 **전국**이다.
     // 반경으로 자르면 "화면 밖에 있는 그 오락실" 을 찾으려는 검색이 항상
@@ -500,12 +574,14 @@ export default function ArcadeFinder() {
       // 상태 코드(503 등)는 사람에게 할 일을 말해 주지 않으므로 문구에 붙이지 않는다
       if (!res.ok) throw new Error(data.error ?? '오락실 목록을 불러오지 못했어요. 다시 시도해 주세요');
       // 늦게 도착한 이전 요청이 최신 결과를 덮어쓰지 않도록.
+      // 필터 없는 조회는 늦게 왔어도 전체 목록으로는 맞다 — 첫 조회 직후 내 위치가 잡혀
+      // 다음 조회가 앞질러도(F-2 자동 위치) 사전을 잃지 않게 순번 검사 밖에서 붙잡는다.
+      if (!searchText && !machineIds.length && !anchor) {
+        keepFullList((data.arcades as Arcade[]) ?? []);
+      }
       if (seq === reqSeq.current) {
         setArcades((data.arcades as Arcade[]) ?? []);
         setListError(null);
-        if (!debouncedQ.trim() && !machineIds.length && !anchor) {
-          fullListRef.current = (data.arcades as Arcade[]) ?? [];
-        }
       }
     } catch (e) {
       if (seq === reqSeq.current) {
@@ -521,11 +597,32 @@ export default function ArcadeFinder() {
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, [debouncedQ, machineIds, anchor, radiusKm]);
+  }, [searchText, machineIds, anchor, radiusKm, keepFullList]);
 
   useEffect(() => {
     void fetchArcades();
   }, [fetchArcades]);
+
+  // 즐겨찾기 모아 보기를 켰는데 전체 목록이 아직 없으면(처음부터 위치 · 검색으로 좁혀 받은 경우) 한 번 받는다
+  // 실패하면 칩을 다시 켤 때 한 번 더 받는다 (계속 다시 부르지 않게 켤 때마다 한 번)
+  const [fullListBusy, setFullListBusy] = useState(false);
+  const fullListAsked = useRef(false);
+  useEffect(() => {
+    if (!favOnly) {
+      fullListAsked.current = false;
+      return;
+    }
+    if (fullList !== null || fullListAsked.current) return;
+    fullListAsked.current = true;
+    setFullListBusy(true);
+    fetch('/api/arcades')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.arcades) keepFullList(d.arcades as Arcade[]);
+      })
+      .catch(() => {})
+      .finally(() => setFullListBusy(false));
+  }, [favOnly, fullList, keepFullList]);
 
   /**
    * 챗봇 탐색에서 뺀 오락실 ("짱오락실에 대기가 많은데…" 의 그곳).
@@ -547,20 +644,38 @@ export default function ArcadeFinder() {
   // 정규화 기준) — 자르는 값과 눈금을 분리해 눈금만 남긴다.
   const scoreRadiusKm = radiusKm > 0 ? radiusKm : SCORE_RADIUS_FALLBACK_KM;
 
+  /**
+   * 즐겨찾기 모아 보기의 후보 — 담은 곳 전부(켜 둔 게임으로만 좁힌다). 전체 목록에 최근 조회의
+   * 값(제보 반영)을 덮어 쓴다. 지도 범위 · 거리 · 검색어와는 상관없다.
+   */
+  const favPool = useMemo(
+    () =>
+      favOnly
+        ? favoritesPool(mergeById(fullList ?? [], arcades), favorites.ids, machineIds)
+        : [],
+    [favOnly, fullList, arcades, favorites.ids, machineIds],
+  );
+
   const ranked = useMemo(
     () =>
       rankArcades({
-        arcades: excludedId === null ? arcades : arcades.filter((a) => a.id !== excludedId),
+        arcades: favOnly
+          ? favPool
+          : excludedId === null
+            ? arcades
+            : arcades.filter((a) => a.id !== excludedId),
         origin,
         machineIds,
         weights,
         radiusKm: scoreRadiusKm,
       }),
-    [arcades, excludedId, origin, machineIds, weights, scoreRadiusKm],
+    [favOnly, favPool, arcades, excludedId, origin, machineIds, weights, scoreRadiusKm],
   );
 
   /** 이름·주소 검색 중인지 — 켜져 있는 동안 반경·화면 컷을 둘 다 우회한다 */
-  const searching = debouncedQ.trim() !== '';
+  const searching = searchText !== '';
+  /** 반경 · 지도 범위로 자르지 않는 상태 — 이름 · 주소 검색 중이거나 즐겨찾기 모아 보기 */
+  const unbounded = searching || favOnly;
 
   /**
    * 반경 안에 있는 전부. 지도가 그리는 대상이고, 개수 표시의 분모다.
@@ -570,8 +685,8 @@ export default function ArcadeFinder() {
    * 여기서 반경으로 자르면 서버가 준 결과를 화면이 도로 버리는 셈이다.
    */
   const inRadius = useMemo(
-    () => (searching ? ranked : withinRadius(ranked, origin, radiusKm)),
-    [ranked, origin, radiusKm, searching],
+    () => (unbounded ? ranked : withinRadius(ranked, origin, radiusKm)),
+    [ranked, origin, radiusKm, unbounded],
   );
 
   /**
@@ -587,7 +702,7 @@ export default function ArcadeFinder() {
    */
   const inViewport = useMemo(
     () =>
-      mapViewport && !searching
+      mapViewport && !unbounded
         ? // 선택한 곳은 화면 밖이어도 남긴다 — 지도도 그 핀만은 늘 그린다
           // (NaverMap 의 inView). 목록에서 사라지면 지금 열어 둔 상세가 어느
           // 줄인지 짚을 수 없다.
@@ -597,7 +712,7 @@ export default function ArcadeFinder() {
           // 그리로 간다 (handleListSelect → 센터링).
           inRadius.filter((s) => s.arcade.id === selectedId || inBox(mapViewport, s.arcade))
         : inRadius,
-    [inRadius, mapViewport, selectedId, searching],
+    [inRadius, mapViewport, selectedId, unbounded],
   );
 
   /**
@@ -645,7 +760,7 @@ export default function ArcadeFinder() {
   //  1페이지로 튀면 목록을 훑을 수 없다. 넘친 페이지는 아래에서 당겨 준다)
   useEffect(() => {
     setPage(1);
-  }, [debouncedQ, machineIds, radiusKm, anchor, sort]);
+  }, [searchText, machineIds, radiusKm, anchor, sort, favOnly]);
 
   // 결과가 줄어 페이지 수가 지금 페이지보다 적어지면 마지막 페이지로 당긴다.
   // (반경 안 목록은 GPS 가 움직이는 동안에도 줄어든다 — 페이지네이션이 사라진
@@ -736,6 +851,9 @@ export default function ArcadeFinder() {
     ): SearchOutcome => {
       setOrder(next);
       setSort('score');
+      // 도우미 결과는 목록에서 이어 본다 — 접혀 있으면 결과가 지도 숫자로만 남는다 (F-1)
+      setSidebarOpen(true);
+      setFavOnly(false);
       const clear = options.clearConditions === true;
 
       // 문장에 언급된 오락실 = 사용자가 지금 있는 곳. 기준점으로 삼고
@@ -761,7 +879,7 @@ export default function ArcadeFinder() {
       }
       setExcludedId(pivot ? pivot.id : null);
 
-      // 지역을 말했으면 반경 전체 — 검색창의 지역 이동(jumpToPlace)과 같은 규칙이다.
+      // 지역을 말했으면 반경 전체 — 검색창의 지역 이동(submitSearch)과 같은 규칙이다.
       // 다른 동네를 물었는데 예전 기준점의 반경 5km 를 그대로 걸면 엉뚱하게 0곳이 된다.
       // '조건 풀고 다시 찾기' 도 반경을 푼다.
       const searchRadiusKm = place || clear ? RADIUS_NONE : radiusKm;
@@ -787,7 +905,7 @@ export default function ArcadeFinder() {
       // 그 검색 결과라 말과 화면이 같아야 한다. 단, 기준점을 옮기면 검색어를 지우므로
       // (위 setQ) 그때는 전체 목록을 쓴다 — 옮겨 간 동네는 손에 든 목록 밖일 수 있다.
       const source =
-        fullListRef.current && (!debouncedQ.trim() || jump !== null)
+        fullListRef.current && (!searchText || jump !== null)
           ? mergeById(fullListRef.current, arcades)
           : arcades;
       const hasSearchMachine = (a: Arcade) =>
@@ -803,7 +921,7 @@ export default function ArcadeFinder() {
       // 반경 없이 좌표만 보낸 조회는 걸러지지 않은 전체라(fetchArcades) 그것도 쓴다.
       const nationwide =
         fullListRef.current ??
-        (radiusKm === RADIUS_NONE && !debouncedQ.trim() && machineIds.length === 0 ? arcades : null);
+        (radiusKm === RADIUS_NONE && !searchText && machineIds.length === 0 ? arcades : null);
       const machineUnregistered =
         searchMachineIds.length > 0 && nationwide !== null && !nationwide.some(hasSearchMachine);
 
@@ -853,16 +971,16 @@ export default function ArcadeFinder() {
           (clear && fullListRef.current === null) ||
           (jump !== null &&
             fullListRef.current === null &&
-            (debouncedQ.trim() !== '' ||
+            (searchText !== '' ||
               (anchor !== null &&
                 distanceKm(anchor, { lat: jump.lat, lng: jump.lng }) > REFETCH_MOVE_KM))),
       };
     },
-    [arcades, origin, machineIds, radiusKm, machines, setOrder, loading, anchor, debouncedQ],
+    [arcades, origin, machineIds, radiusKm, machines, setOrder, loading, anchor, searchText],
   );
 
   /**
-   * 도우미 문장의 지역 이름을 좌표로 — 검색창의 지역 이동(jumpToPlace)과 같은 API 다.
+   * 도우미 문장의 지역 이름을 좌표로 — 검색창의 지역 이동(submitSearch)과 같은 API 다.
    * 실패는 null 로 접는다: 지역을 못 찾으면 지역 없이 찾을 뿐, 탐색 자체를 막지 않는다.
    */
   const locatePlace = useCallback(async (query: string): Promise<MentionedPlace | null> => {
@@ -921,62 +1039,60 @@ export default function ArcadeFinder() {
     setPlaceNotice(null);
   };
 
-  // ── 지역 검색으로 지도 이동 ────────────────────────────────
+  /**
+   * 위치 권한이 이미 '허용' 이면 처음부터 내 위치 · 가까운 순으로 연다 (2026-11-20 사용성 시험 F-2).
+   *
+   * 전에는 권한을 허용해 둔 사람도 첫 화면이 서울 전체 '평점 높은 순' 이었다 — 평점은 대부분 비어
+   * 있어 순서가 뜻이 없었고, 글자 없는 과녁을 눌러야 '가까운 순' 이 됐다.
+   * 묻지 않고 켜는 건 이미 허용한 사이트일 때(permissions.query → 'granted')뿐이다. 아직 안 물었으면
+   * 첫 화면에서 권한 창을 띄우지 않고, 목록 위 '내 위치로 가까운 곳 보기' 단추가 맡는다.
+   *
+   * 건너뛰는 때 — 오락실 링크(?arcade=)로 왔을 때(거리로 잘려 그 오락실이 목록에서 빠질 수 있다),
+   * 같은 창에서 돌아왔을 때(VIEW_STORE_KEY 되살리기가 위치 추적 여부까지 정한다).
+   */
+  useEffect(() => {
+    if (initialArcadeId !== null) return;
+    try {
+      if (sessionStorage.getItem(VIEW_STORE_KEY)) return;
+    } catch {
+      // 저장소를 못 읽으면 처음 온 것으로 본다
+    }
+    const perms = typeof navigator !== 'undefined' ? navigator.permissions : undefined;
+    if (!perms?.query) return;
+    let cancelled = false;
+    perms
+      .query({ name: 'geolocation' as PermissionName })
+      .then((s) => {
+        if (!cancelled && s.state === 'granted') startFollow();
+      })
+      .catch(() => {
+        // permissions API 를 모르는 브라우저 — 단추로 켜면 된다
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 마운트 때 한 번 — startFollow 는 setState 와 live.start(고정 참조)만 쓴다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── 검색칸 Enter ───────────────────────────────────────────
   /** 지역 이동을 지도에 알리는 신호 (MapPane centerNonce 주석) */
   const [centerNonce, setCenterNonce] = useState(0);
   const [placeBusy, setPlaceBusy] = useState(false);
   /** "'○○' 주변을 보고 있어요" 한 줄. 기준 위치를 지우면 같이 사라진다 */
   const [placeNotice, setPlaceNotice] = useState<string | null>(null);
 
-  /**
-   * 검색어를 지역 이름으로 보고 그 좌표로 기준점을 옮긴다.
-   *
-   * 버튼(과 Enter)으로만 부른다 — 타이핑마다 부르면 부분 입력("강남ㅇ")으로
-   * 지도가 튀고, 지역 검색 API 의 일일 한도도 갉아먹는다 (app/api/places 주석).
-   *
-   * 성공하면 검색어를 지운다: 지역 이름은 오락실 이름·주소 필터로는 대개
-   * 0곳이라, 남겨 두면 방금 이동한 동네가 빈 목록으로 보인다.
-   */
-  /** 지도 이동 신호 — 지점명 검색(줌 포함)과 '내 위치로 이동'(줌 유지)이 쓴다 */
+  /** 지도 이동 신호 — 검색 결과 모두 보기(fitBox) · 시·도 보기 · '내 위치로 가기'(줌 유지)가 쓴다 */
   const [focusPoint, setFocusPoint] = useState<{
     lat: number;
     lng: number;
     zoom?: number;
+    fitBox?: LatLngBox;
     nonce: number;
   } | null>(null);
 
   /**
-   * 검색이 찾아낸 **우리 오락실**로 이동 — 건물이 보이는 수준(SPOT_ZOOM)까지 당긴다.
-   *
-   * 지역 이동(jumpToPlace)과 같은 기계를 탄다: 기준점을 그 지점으로 옮기고
-   * 검색어를 지운다. 검색어를 남겨 두면 목록이 그 한 곳으로 걸러진 채라
-   * **주변 오락실이 안 나온다** — 지점을 찾아간 사람이 다음으로 보는 건
-   * "여기 말고 근처엔 뭐가 있나" 다. 반경 전체 + 화면(뷰포트) 필터가
-   * 거리 줌에서 그 골목 주변 목록을 만들고, 거리순 정렬의 기준도 그 지점이 된다.
-   *
-   * 지역 이동과 다른 점은 둘: 그 지점을 선택해 두고(핀·목록 하이라이트),
-   * 줌을 거리 수준까지 당긴다.
-   */
-  const jumpToArcade = (arcade: Arcade) => {
-    setSelectedId(arcade.id);
-    // 좁은 폭에서 상세가 지도를 밀어내면(≤1180px display:none) 이동이 안 보인다.
-    closeDetail();
-    setFollow(false);
-    live.stop();
-    setFixedCenter({ lat: arcade.lat, lng: arcade.lng });
-    setRadiusKm(RADIUS_NONE);
-    setQ('');
-    setPlaceNotice(aroundNotice(arcade.name));
-    setFocusPoint((prev) => ({
-      lat: arcade.lat,
-      lng: arcade.lng,
-      zoom: SPOT_ZOOM,
-      nonce: (prev?.nonce ?? 0) + 1,
-    }));
-  };
-
-  /**
-   * 상태줄의 '내 위치로 이동' — 추적 중인 좌표로 지도만 되돌린다.
+   * 상태줄의 '내 위치로 가기' — 추적 중인 좌표로 지도만 되돌린다.
    *
    * 추적 중에는 지도가 좌표를 따라가지만(followCenter), 주변을 보러 지도를
    * 끌고 나가면 다음 좌표가 올 때까지 돌아오지 않는다 — 걸음을 멈추고 서
@@ -989,58 +1105,157 @@ export default function ArcadeFinder() {
     setFocusPoint((prev) => ({ lat, lng, nonce: (prev?.nonce ?? 0) + 1 }));
   };
 
-  const jumpToPlace = async () => {
-    const query = q.trim();
-    if (!isPlaceQuery(query) || placeBusy) return;
+  /**
+   * 이름 · 주소로 찾은 곳을 **모두** 지도에 맞춘다 (F-4). 검색어는 남긴다.
+   *
+   * 전에는 Enter 가 첫 결과 한 곳으로 줌 18까지 날아가고 검색어를 지웠다 — '부천' 13곳이
+   * '보라카이 오락실 1곳 · 925곳은 화면 밖' 으로 바뀌어 무엇을 찾았는지 남지 않았다.
+   * 한 곳으로 가는 건 이제 목록에서 그 줄을 누를 때뿐이다.
+   */
+  const fitResults = (raw: string, text: string, matches: readonly Arcade[]) => {
+    setInterp({ raw, textQ: text, placeLabel: null });
+    setPlaceNotice(null);
+    const box = boxOf(matches);
+    if (!box) return;
+    // ≤1180px 에서는 상세가 지도를 가린다 — 맞춘 지도가 보이게 닫는다
+    if (detailOpen) closeDetail();
+    setFocusPoint((prev) => ({
+      ...boxCenter(box),
+      // 한 곳뿐이어도 건물까지(SPOT_ZOOM)는 안 당긴다 — 둘레가 보여야 "어디쯤" 이 읽힌다
+      zoom: SPOT_ZOOM - 2,
+      fitBox: box,
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
+  };
+
+  /**
+   * 검색칸 Enter (와 옆 단추). 친 말을 도우미와 같은 규칙으로 읽는다 (lib/finder-search.ts, F-5).
+   *
+   *  - 게임 이름('사볼' · '투덱')은 게임 칩을 켠다
+   *  - 나머지가 이름 · 주소로 여러 곳이면 그곳들을 모두 지도에 맞춘다 ('부천')
+   *  - 한 곳 이하인데 지명이면 그 위치 주변을 가까운 순으로 ('서울대입구' · '홍대 사볼')
+   *  - 시 · 도 이름은 그 지역 전체가 보이는 줌으로
+   *
+   * 검색어는 지우지 않는다. 기준 위치 이름은 지역 검색이 돌려준 상호가 아니라 **사용자가 친 말**이다
+   * — '홍대 사볼' 이 처음 보는 ''사부작크래프트' 주변' 으로 바뀌던 문제 (F-4).
+   * 지역 검색 API 는 하루 한도가 있어 타이핑마다가 아니라 Enter 에서만 부른다 (app/api/places 주석).
+   */
+  const submitSearch = async (value: string) => {
+    const raw = value.trim();
+    if (!raw || placeBusy) return;
+    setFavOnly(false);
+    const reading = readSearch(raw, machines);
+    if (reading.machineIds.length) setMachineIds(reading.machineIds);
+    const filterIds = reading.machineIds.length ? reading.machineIds : machineIds;
+
+    // '즐겨찾기 사볼' · '내 주변 펌프' — 도우미와 같은 말로 기준을 고른다 (lib/chat-intent.ts)
+    const baseHint = detectBaseHint(raw);
+    if (baseHint === 'favorites' && favorites.canFavorite) {
+      setInterp({ raw, textQ: null, placeLabel: null });
+      setPlaceNotice(null);
+      setFavOnly(true);
+      return;
+    }
+    if (baseHint === 'near' && !reading.placeQuery) {
+      setInterp({ raw, textQ: null, placeLabel: null });
+      setPlaceNotice(null);
+      if (!follow) startFollow();
+      return;
+    }
+
+    // 게임 이름뿐 — 칩만 켜고 보던 지도에서 찾는다
+    if (!reading.textQuery) {
+      setInterp({ raw, textQ: null, placeLabel: null });
+      setPlaceNotice(
+        `${reading.machineNames.join(' · ')} 있는 곳만 보여 드려요. 다른 동네는 지도를 옮기거나 동네 이름을 함께 써 주세요`,
+      );
+      return;
+    }
+    const text = reading.textQuery;
 
     // 시·도 이름("전남" · "충청남도" · "서울")은 지역 검색에 묻지 않고 그 시·도의 한가운데로, 도 전체가
     // 보이는 줌으로 옮긴다 (lib/region-cluster.ts provinceOf). 지역 검색은 "전남" 에 가게 하나를 돌려준다.
-    const province = provinceOf(query);
+    const province = provinceOf(text);
     if (province) {
       setFollow(false);
       live.stop();
       setFixedCenter({ lat: province.lat, lng: province.lng });
       setRadiusKm(RADIUS_NONE);
-      setQ('');
       setSelectedId(null);
-      closeDetail();
+      if (detailOpen) closeDetail();
       setFocusPoint((prev) => ({
         lat: province.lat,
         lng: province.lng,
         zoom: province.isCity ? METRO_ZOOM : PROVINCE_ZOOM,
         nonce: (prev?.nonce ?? 0) + 1,
       }));
-      setPlaceNotice(`'${province.label}' 지역을 보는 중 — 지도를 끌거나 당겨 동네를 고르세요.`);
+      setInterp({ raw, textQ: null, placeLabel: province.label });
+      setPlaceNotice(`'${province.label}' 지역을 보고 있어요. 지도를 끌거나 당겨 동네를 골라 보세요`);
       return;
     }
 
     setPlaceBusy(true);
     try {
-      const res = await fetch(`/api/places?q=${encodeURIComponent(query)}`);
-      const data = (await res.json()) as { place?: Place | null; error?: string };
+      // 1) 이름 · 주소로 몇 곳인지 — 켜진(또는 방금 켠) 게임 칩까지 걸어서
+      const params = new URLSearchParams({ q: text });
+      if (filterIds.length) params.set('machines', filterIds.join(','));
+      const res = await fetch(`/api/arcades?${params}`);
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setPlaceNotice(data.error ?? '지역을 찾지 못했어요. 잠시 뒤 다시 시도해 주세요');
+        setPlaceNotice(data.error ?? '찾지 못했어요. 잠시 뒤 다시 시도해 주세요');
         return;
       }
-      if (!data.place) {
-        setPlaceNotice(`'${query}' 에 맞는 지역을 찾지 못했어요. 동네나 역 이름으로 다시 써 주세요`);
+      const matches = (data.arcades as Arcade[]) ?? [];
+      const placeQuery =
+        reading.placeQuery && isPlaceQuery(reading.placeQuery) ? reading.placeQuery : null;
+      const { action, fallbackFit } = chooseSearchAction({
+        textMatches: matches.length,
+        placeQuery,
+      });
+
+      if (action === 'fit') {
+        fitResults(raw, text, matches);
+        return;
+      }
+      if (action === 'none' || placeQuery === null) {
+        setInterp({ raw, textQ: text, placeLabel: null });
+        setPlaceNotice(`'${raw}' 에 맞는 오락실이나 동네를 찾지 못했어요. 동네나 역 이름으로 다시 써 주세요`);
+        return;
+      }
+
+      // 2) 지명으로 — 그 위치를 기준으로 가까운 순
+      const pres = await fetch(`/api/places?q=${encodeURIComponent(placeQuery)}`);
+      const pdata = (await pres.json().catch(() => ({}))) as { place?: Place | null; error?: string };
+      if (!pres.ok || !pdata.place) {
+        if (fallbackFit) {
+          fitResults(raw, text, matches);
+          return;
+        }
+        setInterp({ raw, textQ: text, placeLabel: null });
+        setPlaceNotice(
+          pres.ok
+            ? `'${placeQuery}' 에 맞는 동네를 찾지 못했어요. 동네나 역 이름으로 다시 써 주세요`
+            : (pdata.error ?? '동네를 찾지 못했어요. 잠시 뒤 다시 시도해 주세요'),
+        );
         return;
       }
       // 기존 기준점 기계를 그대로 탄다 (runSearch 의 pivot 과 같은 방식) —
-      // 재조회·거리 계산·반경 원이 전부 따라온다.
+      // 재조회·거리 계산·지도 이동이 전부 따라온다.
       setFollow(false);
       live.stop();
-      setFixedCenter({ lat: data.place.lat, lng: data.place.lng });
-      // 이동 직후는 **반경 전체**가 기본이다 — 그 동네를 보러 왔는데 원으로
+      setFixedCenter({ lat: pdata.place.lat, lng: pdata.place.lng });
+      // 이동 직후는 **거리 제한 없음**이 기본이다 — 그 동네를 보러 왔는데 원으로
       // 잘라 놓으면 지도를 조금만 끌어도 목록이 빈다. 좁히는 건 사용자 몫.
       setRadiusKm(RADIUS_NONE);
-      setQ('');
       // 이전에 보던 오락실 선택은 이전 동네의 맥락이다. 남겨 두면 선택 고정
       // 규칙(selectedFirst) 때문에 "가까운 순" 1번에 11km 밖 지점이 앉는다.
       setSelectedId(null);
-      closeDetail();
+      if (detailOpen) closeDetail();
       setCenterNonce((n) => n + 1);
-      setPlaceNotice(aroundNotice(data.place.name));
+      // 검색칸의 글자는 남기되 이름 · 주소 필터로는 쓰지 않는다 — '서울대입구' 를 글자로 거르면
+      // 이름에 그 말이 든 1곳만 남고 64m 옆 오락실이 빠진다 (F-5).
+      setInterp({ raw, textQ: null, placeLabel: placeQuery });
+      setPlaceNotice(aroundNotice(placeQuery));
     } catch {
       setPlaceNotice(NETWORK_ERROR);
     } finally {
@@ -1068,14 +1283,35 @@ export default function ArcadeFinder() {
   // 브라우저가 위치 권한을 다시 물을 수 있다(권한을 '허용' 으로 둔 사이트면 묻지 않는다).
   useSessionSnapshot(
     VIEW_STORE_KEY,
-    { q, machineIds, radiusKm, follow, center: fixedCenter, sort, placeNotice, sidebarOpen },
+    {
+      q,
+      machineIds,
+      radiusKm,
+      follow,
+      center: fixedCenter,
+      sort,
+      placeNotice,
+      sidebarOpen,
+      interp: interpActive ? interp : null,
+      favOnly: favOnlyRaw,
+    },
     (saved) => {
       if (!isReturnVisit(initialArcadeId)) return;
       const savedQ = savedString(saved.q);
       if (savedQ) {
         setQ(savedQ);
         setDebouncedQ(savedQ); // 300ms 를 기다리지 않고 그 검색어로 바로 조회한다
+        // Enter 로 해석해 둔 검색어면 해석째로 — 안 그러면 '서울대입구' 가 글자 검색으로 돌아간다
+        const si = saved.interp as { raw?: unknown; textQ?: unknown; placeLabel?: unknown } | null;
+        if (si && si.raw === savedQ.trim()) {
+          setInterp({
+            raw: savedQ.trim(),
+            textQ: savedString(si.textQ) ?? null,
+            placeLabel: savedString(si.placeLabel) ?? null,
+          });
+        }
       }
+      if (saved.favOnly === true) setFavOnly(true);
       if (Array.isArray(saved.machineIds)) {
         setMachineIds(saved.machineIds.filter((id): id is number => Number.isInteger(id)));
       }
@@ -1093,7 +1329,7 @@ export default function ArcadeFinder() {
       if (saved.sort === 'score' || saved.sort === 'distance' || saved.sort === 'rating') {
         setSort(saved.sort);
       }
-      if (saved.sidebarOpen === true) setSidebarOpen(true);
+      if (typeof saved.sidebarOpen === 'boolean') setSidebarOpen(saved.sidebarOpen);
       // startFollow 가 아니다 — 그쪽은 반경이 없으면 기본 반경을 거는데, 되살릴 때는 저장된
       // 반경('반경 탐색 해제' 포함)을 그대로 둬야 한다.
       if (saved.follow === true) beginFollow();
@@ -1186,28 +1422,14 @@ export default function ArcadeFinder() {
   const handleSelect = useCallback((id: number) => openDetail(id), [openDetail]);
 
   /**
-   * 목록 줄 — 데스크톱에서는 핀과 똑같이 상세를 열지만, 모바일(세로 스택,
-   * ≤860px)에서는 **지도 이동까지만** 합니다. 상세는 지도 핀을 눌러야 열립니다.
+   * 목록 줄 — 핀과 똑같이 상세를 연다. 휴대폰도 같다 (2026-11-20 사용성 시험 F-3).
    *
-   * 폰에서는 목록·지도·상세가 한 화면에 다 들어가지 않아서, 줄을 누를 때마다
-   * 상세가 지도를 밀어내면 "목록에서 골라 위치를 훑어보는" 흐름이 끊깁니다.
-   * 선택(selectedId)만 바꾸면 지도가 그 좌표로 따라가고(NaverMap 의 센터링
-   * 이펙트), 열려 있던 상세는 닫아 지도가 보이게 합니다.
-   *
-   * 판정은 useIsStacked (matchMedia 구독) — CSS 의 스택 경계와 같은 값이고,
-   * 창 크기를 바꾸면 그 자리에서 따라 바뀝니다.
+   * 전에는 휴대폰(세로 스택, ≤860px)에서 줄을 누르면 지도 이동까지만 하고, 상세는 지도 말풍선을
+   * 다시 눌러야 열렸다. "목록에서 골라 위치를 훑어보라" 는 뜻이었지만, 시험한 세 사람 모두 카드를
+   * 두세 번 누르다 막혔다 — 카드에 '자세히' 같은 단서도 없었다. 위치는 상세의 '지도에서 보기' 가 맡는다.
+   * 상세는 히스토리 한 칸이라(openDetail) 뒤로 가기 한 번이면 목록으로 돌아온다.
    */
-  const handleListSelect = useCallback(
-    (id: number) => {
-      // 폰에서는 지도 이동까지만 — 히스토리에 쌓을 '열림' 이 없다.
-      if (stacked) {
-        setSelectedId(id);
-        return;
-      }
-      openDetail(id);
-    },
-    [stacked, openDetail],
-  );
+  const handleListSelect = useCallback((id: number) => openDetail(id), [openDetail]);
 
   /**
    * 상세 "닫기". 패널만 치우고 선택은 남긴다 — 목록 하이라이트·지도 핀이 유지된다.
@@ -1275,22 +1497,30 @@ export default function ArcadeFinder() {
    */
   // 검색 중에는 지도 범위가 아니다 — 전국에서 찾은 결과다. 같은 말을 쓰면
   // 지도 밖의 결과가 어디서 왔는지 설명이 안 된다.
-  const listCountLabel = searching
-    ? inViewport.length > ordered.length
-      ? `검색 결과 ${inViewport.length}곳 중 ${ordered.length}곳 · ${orderLabel(listSort)}`
-      : `검색 결과 ${inViewport.length}곳 · ${orderLabel(listSort)}`
-    : inViewport.length > ordered.length
-      ? `지도에 보이는 ${inViewport.length}곳 중 ${ordered.length}곳 · ${orderLabel(listSort)}`
-      : `지도에 보이는 ${ordered.length}곳 · ${orderLabel(listSort)}`;
+  const placeLabel = interpActive ? interp.placeLabel : null;
+  const listCountLabel = favOnly
+    ? `즐겨찾기 ${ordered.length}곳 · ${orderLabel(listSort)}`
+    : searching
+      ? inViewport.length > ordered.length
+        ? `검색 결과 ${inViewport.length}곳 중 ${ordered.length}곳 · ${orderLabel(listSort)}`
+        : `검색 결과 ${inViewport.length}곳 · ${orderLabel(listSort)}`
+      : // Enter 로 지명에 옮겨 왔으면 사용자가 친 그 말로 "'서울대입구' 주변" 을 앞에 붙인다 (F-5)
+        `${placeLabel ? `'${placeLabel}' 주변 · ` : ''}${
+          inViewport.length > ordered.length
+            ? `지도에 보이는 ${inViewport.length}곳 중 ${ordered.length}곳`
+            : `지도에 보이는 ${ordered.length}곳`
+        } · ${orderLabel(listSort)}`;
 
-  const hint = listHint({
-    canFavorite: favorites.canFavorite,
-    listedCount: listed.length,
-    offscreen,
-    hasOrigin: origin !== null,
-    truncated: inViewport.length > ordered.length,
-    searching,
-  });
+  const hint = favOnly
+    ? null
+    : listHint({
+        canFavorite: favorites.canFavorite,
+        listedCount: listed.length,
+        offscreen,
+        hasOrigin: origin !== null,
+        truncated: inViewport.length > ordered.length,
+        searching,
+      });
 
   /**
    * 목록이 비었을 때 그 자리에 들어갈 것 (왜 비었는지 + 다음 행동).
@@ -1300,50 +1530,69 @@ export default function ArcadeFinder() {
    */
   const emptyState = useMemo(
     () =>
-      listEmptyState({
-        loading,
-        searching,
-        query: debouncedQ.trim(),
-        offscreen,
-        machineNames: machines
-          .filter((m) => machineIds.includes(m.id))
-          .map((m) => m.shortName || m.name),
-        // 반경은 기준점이 있고 검색 중이 아닐 때만 목록을 자른다 (inRadius)
-        radiusKm: origin !== null && !searching ? radiusKm : 0,
-        matchedTotal: arcades.length,
-        onClearMachines: () => setMachineIds([]),
-        onClearConditions: clearConditions,
-      }),
-    [loading, searching, debouncedQ, offscreen, machines, machineIds, origin, radiusKm, arcades.length, clearConditions],
+      favOnly ? (
+        fullListBusy ? null : machineIds.length > 0 ? (
+          <>
+            <p className="muted">고른 게임이 모두 있는 즐겨찾기가 없어요</p>
+            <button type="button" className="btn btn-sm" onClick={() => setMachineIds([])}>
+              고른 게임 풀기
+            </button>
+          </>
+        ) : (
+          <p className="muted">
+            아직 즐겨찾기에 담은 곳이 없어요. 목록에서 오락실 이름 옆 ☆ 를 눌러 담아 주세요
+          </p>
+        )
+      ) : (
+        listEmptyState({
+          loading,
+          searching,
+          query: searchText,
+          offscreen,
+          machineNames: machines
+            .filter((m) => machineIds.includes(m.id))
+            .map((m) => m.shortName || m.name),
+          // 반경은 기준점이 있고 검색 중이 아닐 때만 목록을 자른다 (inRadius)
+          radiusKm: origin !== null && !searching ? radiusKm : 0,
+          matchedTotal: arcades.length,
+          onClearMachines: () => setMachineIds([]),
+          onClearConditions: clearConditions,
+        })
+      ),
+    [favOnly, fullListBusy, loading, searching, searchText, offscreen, machines, machineIds, origin, radiusKm, arcades.length, clearConditions],
   );
 
-  /**
-   * 검색의 첫 매치 — 버튼·Enter 가 갈 곳.
-   *
-   * 매치가 있으면 그 지점으로(거리 줌), 없으면 지역 검색으로 간다. "강남대로"
-   * 처럼 지역이면서 매치도 있는 검색어는 지점 쪽이 이긴다 — 그 매치들이
-   * 어차피 그 지역에 있고, 눈앞의 목록과 버튼이 같은 것을 가리켜야 한다.
-   * 조회가 도는 동안은 비워 둔다: 옛 검색어의 첫 줄로 점프하면 안 된다.
-   *
-   * **예외는 시 단위 검색이다**(isCityQuery). '청주시' 는 그 도시를 보러 온
-   * 검색인데 지점 쪽이 이기면 시내 어느 한 곳으로 줌 18까지 당겨져, 도시는
-   * 못 보고 낯선 골목에 떨어진다. 그래서 매치가 있어도 비워 두고 지역
-   * 이동(jumpToPlace)으로 보낸다 — 선택 없이 시가 드는 줌으로.
-   */
-  const topMatch =
-    searching && !loading && !isCityQuery(q) ? listed[0]?.arcade : undefined;
+  // 엔터 = submitSearch (찾은 곳 모두 보기 · 지명이면 그 주변). 모바일 키보드의 입력 키 · 한글 조합
+  // 중 엔터까지 받고, 터치 화면에서는 키보드를 내려 지도가 보이게 한다 (lib/use-search-enter.ts).
+  const search = useSearchEnter((value) => void submitSearch(value));
+  const searchInputRef = search.inputProps.ref;
 
-  const jumpBySearch = () => {
-    if (topMatch) {
-      jumpToArcade(topMatch);
+  // 손잡이로 목록을 펼치면 검색칸으로 초점을 보낸다 (F-1 — 펼쳐도 초점이 손잡이에 남아 Tab 을
+  // 수십 번 눌러야 했다). 터치 화면은 키보드가 올라와 목록을 가리므로 보내지 않는다.
+  useEffect(() => {
+    if (focusSearchNonce === 0) return;
+    if (window.matchMedia('(pointer: coarse)').matches) return;
+    searchInputRef.current?.focus({ preventScroll: true });
+  }, [focusSearchNonce, searchInputRef]);
+
+  /** 즐겨찾기 모아 보기를 켜면 담은 곳이 모두 들게 지도를 맞춘다 — 켤 때 한 번 */
+  const favFitted = useRef(false);
+  useEffect(() => {
+    if (!favOnly) {
+      favFitted.current = false;
       return;
     }
-    void jumpToPlace();
-  };
-  // 엔터 = jumpBySearch. 모바일 키보드의 입력 키 · 한글 조합 중 엔터까지 받고, 터치
-  // 화면에서는 키보드를 내려 지도가 보이게 한다 (lib/use-search-enter.ts).
-  const search = useSearchEnter(() => jumpBySearch());
-
+    if (favFitted.current || favPool.length === 0) return;
+    favFitted.current = true;
+    const box = boxOf(favPool);
+    if (!box) return;
+    setFocusPoint((prev) => ({
+      ...boxCenter(box),
+      zoom: SPOT_ZOOM - 2,
+      fitBox: box,
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
+  }, [favOnly, favPool]);
   const layoutClass = [
     'layout',
     selected ? 'has-detail' : '',
@@ -1376,7 +1625,16 @@ export default function ArcadeFinder() {
 
   return (
     <div className={layoutClass}>
-      <aside className="sidebar" id="arcade-sidebar">
+      {/*
+        접기 손잡이. 지도(.map-pane) 안이 아니라 .layout 의 자식으로 둔다 —
+        좁은 화면에서 상세를 열면 지도가 display:none 이 되므로, 지도 안에
+        있으면 그때 손잡이도 같이 사라져서 접은 사이드바를 다시 열 수 없다.
+        **목록보다 앞에** 둔다 (F-1) — 뒤에 있으면 Tab 으로 목록 · 지도를 다 지나야 닿고,
+        펼친 뒤 다음 Tab 이 목록이 아니라 화면 밖으로 간다. 자리는 CSS(position:absolute)가 잡는다.
+      */}
+      <SidebarHandle open={sidebarOpen} onToggle={toggleSidebar} controls="arcade-sidebar" />
+
+      <aside className="sidebar" id="arcade-sidebar" aria-label="오락실 찾기 · 목록">
         <header className="brand">
           <h1>오락실 파인더</h1>
           <p>내 주변 오락실 · 있는 게임 · 영업시간</p>
@@ -1385,38 +1643,43 @@ export default function ArcadeFinder() {
         {mode.kind === 'list' ? (
           <>
             <section className="filters">
-              {/* Enter = 첫 매치 지점 또는 지역으로 이동 (topMatch 주석).
-                  지도 앱들의 손버릇 그대로다. */}
+              {/* Enter = 찾은 곳 모두 지도에 맞추기 · 지명이면 그 주변 (submitSearch 주석).
+                  검색어는 남는다. 한 곳으로 가는 건 목록 줄을 누를 때뿐이다. */}
               <input
                 {...search.inputProps}
                 className="search"
-                placeholder="오락실 이름 · 주소 · 동네 · 역으로 찾기"
-                aria-label="오락실 찾기"
+                placeholder="오락실 이름 · 동네 · 역 · 게임으로 찾기"
+                aria-label="오락실 찾기 — 이름, 동네, 역, 게임 이름을 쓰고 Enter"
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  // 직접 찾기 시작하면 즐겨찾기 모아 보기는 끈다 — 켜 둔 채면 검색이 안 먹는 것처럼 보인다
+                  if (favOnlyRaw) setFavOnly(false);
+                }}
               />
 
-              {isPlaceQuery(q) && (
+              {isPlaceQuery(q) && !interpActive && (
                 <button
                   type="button"
                   className="btn btn-sm place-jump"
                   disabled={placeBusy}
-                  onClick={jumpBySearch}
+                  onClick={() => void submitSearch(q)}
                 >
-                  {placeBusy
-                    ? '지역 찾는 중…'
-                    : topMatch
-                      ? `'${topMatch.name}' 위치로 가기`
-                      : provinceOf(q)
-                        ? `'${provinceOf(q)!.label}' 지역 지도 보기`
-                        : `'${q.trim()}' 주변 지도 보기`}
+                  {placeBusy ? '찾는 중…' : `'${q.trim()}' 지도에서 찾기`}
                 </button>
               )}
               {placeNotice && <p className="notice">{placeNotice}</p>}
 
+              {/* 위치를 아직 안 쓰는 동안 — 글자 있는 단추 (F-2). 지도 왼쪽 아래 과녁은 글자가 없어
+                  무슨 단추인지 몰랐다. 권한을 이미 허용했으면 처음부터 켜지므로 대개 안 보인다. */}
+              {!follow && (
+                <button type="button" className="btn btn-sm near-me" onClick={startFollow}>
+                  내 위치로 가까운 곳 보기
+                </button>
+              )}
+
               {/* 여기 있던 '내 위치 · 반경 선택 · 위치 해제' 줄은 지웠다 (2026-10-01) — 지도 위의
-                  내 위치 단추(켜기 · 끄기 = 위치 해제)와 반경 칩(바꾸기 · 해제)이 같은 일을 한다.
-                  모바일은 목록을 접은 채 지도만 보며 쓰는 게 기본이라 지도 쪽이 남았다. */}
+                  내 위치 단추(켜기 · 끄기 = 위치 해제)와 거리 칩(바꾸기 · 풀기)이 같은 일을 한다. */}
               <LocationStatusLine
                 follow={follow}
                 status={live.status}
@@ -1428,13 +1691,26 @@ export default function ArcadeFinder() {
               {/* 기종은 계속 늘어나는 목록이라 접히게 두면 사이드바 세로를 다 먹는다 —
                   한 줄로 두고 옆으로 민다 (components/ScrollStrip.tsx).
                   revealKey 는 주지 않는다: 여기는 **여러 개를 켜는** 줄이라, 칩 하나를
-                  켤 때마다 첫 번째 켜진 칩으로 끌려가면 방금 누른 자리를 잃는다. */}
+                  켤 때마다 첫 번째 켜진 칩으로 끌려가면 방금 누른 자리를 잃는다.
+                  맨 앞의 '★ 즐겨찾기' 는 담은 곳을 지도 범위와 상관없이 모아 본다 (F-20). */}
               <ScrollStrip className="chips" remeasureKey={machines.length}>
+                {favorites.canFavorite && (
+                  <button
+                    type="button"
+                    className={`chip chip-fav ${favOnly ? 'is-on' : ''}`}
+                    aria-pressed={favOnly}
+                    onClick={() => setFavOnly(!favOnly)}
+                    title="담아 둔 오락실만 모아 보기 (지도 범위와 상관없이)"
+                  >
+                    ★ 즐겨찾기
+                  </button>
+                )}
                 {machines.map((m) => (
                   <button
                     key={m.id}
                     type="button"
                     className={`chip ${machineIds.includes(m.id) ? 'is-on' : ''}`}
+                    aria-pressed={machineIds.includes(m.id)}
                     onClick={() => toggleMachineFilter(m.id)}
                     title={m.name}
                   >
@@ -1623,14 +1899,6 @@ export default function ArcadeFinder() {
           />
         </aside>
       )}
-
-      {/*
-        접기 손잡이. 지도(.map-pane) 안이 아니라 .layout 의 자식으로 둔다 —
-        좁은 화면에서 상세를 열면 지도가 display:none 이 되므로, 지도 안에
-        있으면 그때 손잡이도 같이 사라져서 접은 사이드바를 다시 열 수 없다.
-      */}
-      <SidebarHandle open={sidebarOpen} onToggle={toggleSidebar} controls="arcade-sidebar" />
-
     </div>
   );
 }
@@ -1676,7 +1944,7 @@ function listHint({
       : `화면 안에서 ${SIDEBAR_MAX_ITEMS}곳까지만 보여 드려요. 지도를 확대하거나 게임을 골라 좁혀 보세요`;
   }
   if (offscreen > 0) return `${offscreen}곳은 화면 밖에 있어요. 지도를 축소하면 보여요`;
-  if (!hasOrigin) return "지도 왼쪽 아래 '내 위치' 단추를 누르면 가까운 순으로 보여 드려요";
+  if (!hasOrigin) return "위쪽 '내 위치로 가까운 곳 보기' 를 누르면 가까운 순으로 보여 드려요";
   if (!canFavorite) return '로그인하면 즐겨찾기한 곳을 목록 맨 위에 보여 드려요';
   return null;
 }
@@ -1757,7 +2025,7 @@ function listEmptyState({
         <p className="muted">
           &apos;{query}&apos; 에 맞는 오락실이 없어요.{' '}
           {isPlaceQuery(query)
-            ? '위 버튼을 누르면 그 동네 주변을 보여 드려요'
+            ? 'Enter 를 누르면 그 동네 주변을 보여 드려요'
             : '검색어를 줄이거나 지워 보세요'}
         </p>
         {conditionLine}

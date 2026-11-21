@@ -32,6 +32,8 @@ interface Props {
   searching: boolean;
   /** 요약을 그대로 넘긴다 — 상세가 응답을 기다리는 동안 이걸로 먼저 그린다 */
   onOpen: (post: PostSummary) => void;
+  /** 글 주소 — 제목을 진짜 링크로 만들어 새 탭 · 링크 복사가 되게 한다 (UX 시험 C-1) */
+  postHref: (postId: number) => string;
   /**
    * 이 글을 곧 열 것 같다 (마우스 버튼을 누른 순간). 상세가 어차피 보낼 요청을
    * 미리 시작하는 데 씁니다 — 누르고 떼는 사이가 그만큼 벌어 주는 시간입니다
@@ -45,6 +47,7 @@ interface RowProps {
   showGame: boolean;
   notice?: boolean;
   onOpen: (post: PostSummary) => void;
+  postHref: (postId: number) => string;
   onPrefetch?: (postId: number) => void;
 }
 
@@ -92,7 +95,12 @@ function PostThumb({ thumbnail }: { thumbnail: PostThumbnail }) {
   );
 }
 
-function PostRow({ post: p, showGame, notice = false, onOpen, onPrefetch }: RowProps) {
+/** 새 탭 · 새 창 · 다운로드로 여는 클릭 — 브라우저에 맡긴다 */
+function isModifiedClick(e: React.MouseEvent): boolean {
+  return e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
+}
+
+function PostRow({ post: p, showGame, notice = false, onOpen, postHref, onPrefetch }: RowProps) {
   return (
     <li
       className={notice ? 'is-notice' : undefined}
@@ -114,19 +122,24 @@ function PostRow({ post: p, showGame, notice = false, onOpen, onPrefetch }: RowP
               <span className="badge badge-rhythm">{p.machineShortName}</span>
             )}
             <span className={`cat cat-${p.category}`}>{p.categoryLabel}</span>
-            {/* 제목이 곧 이 글을 여는 버튼 — ArcadeList 와 같은 이유 (접근성 P1).
+            {/* 제목이 곧 이 글을 여는 링크 (접근성 P1). 예전에는 button 이라 새 탭으로 열 수도, 주소를
+                복사할 수도 없었다(UX 시험 C-1). 그냥 누르면 화면 안에서 열고(목록 요약으로 바로 그림),
+                Ctrl · 가운데 버튼 클릭은 브라우저에 맡겨 새 탭으로 연다.
                 줄 클릭(li onClick)은 마우스 편의로 그대로 둔다. */}
             <h3>
-              <button
-                type="button"
+              <a
                 className="row-title"
+                href={postHref(p.id)}
+                data-post-link={p.id}
                 onClick={(e) => {
                   e.stopPropagation();
+                  if (isModifiedClick(e)) return;
+                  e.preventDefault();
                   onOpen(p);
                 }}
               >
                 {p.title}
-              </button>
+              </a>
             </h3>
           </div>
 
@@ -170,6 +183,7 @@ export default function PostList({
   popularOnly,
   searching,
   onOpen,
+  postHref,
   onPrefetch,
 }: Props) {
   // 내가 차단한 사람의 글은 목록에서 가린다 (lib/use-blocks.ts). 공지는 운영자 글이라 거르지 않는다.
@@ -195,6 +209,7 @@ export default function PostList({
                 showGame={false}
                 notice
                 onOpen={onOpen}
+                postHref={postHref}
                 onPrefetch={onPrefetch}
               />
             ))}
@@ -218,6 +233,7 @@ export default function PostList({
               post={p}
               showGame={showGame}
               onOpen={onOpen}
+              postHref={postHref}
               onPrefetch={onPrefetch}
             />
           ))}

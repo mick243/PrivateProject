@@ -25,6 +25,7 @@ import {
   type PostSearchArgs,
   type ReportSearchArgs,
 } from '@/lib/chat-tools';
+import { UNCLEAR_TEXT } from '@/lib/chat-failure';
 import { placesInAnswer, type ChatPlace, type ChatSource } from '@/lib/chat-types';
 import { chatInputSchema } from '@/lib/validation';
 
@@ -268,13 +269,13 @@ const CHAT_DAILY_LIMIT_GLOBAL = limitFromEnv('CHAT_GLOBAL_DAILY_LIMIT', 2000);
  * 아니고, 원인은 서버 로그에 남깁니다. 개발자에게 필요한 안내는 개발 모드에서만 줍니다.
  */
 const CANNOT_ANSWER = '지금은 답을 만들 수 없어요. 조금 뒤에 다시 시도해 주세요';
-const ANSWER_FAILED = '답을 만들지 못했어요. 조금 뒤에 다시 시도해 주세요';
+const ANSWER_FAILED = '잠깐 문제가 생겼어요. 조금 뒤에 다시 시도해 주세요';
 const isDev = process.env.NODE_ENV !== 'production';
 
 async function onPost(request: Request) {
   const guard = await requirePlayer(request);
   if (!guard.ok) {
-    return fail(401, "로그인하면 챗봇에게 물어볼 수 있어요. '오락실 찾아줘' 는 로그인 없이도 바로 돼요.");
+    return fail(401, "로그인하면 자유 질문에 답해 드려요. 오락실은 '홍대 사볼'처럼 적으면 로그인 없이도 찾아 드려요");
   }
 
   // 키가 없으면 이 경로만 죽습니다. 우선순위 탐색은 클라이언트에서 끝나므로
@@ -409,8 +410,11 @@ async function onPost(request: Request) {
     // 도구가 돌려준 오락실 중 답변에 이름이 나온 곳만 — 말하지 않은 곳의 링크는 달지 않습니다.
     const places = placesInAnswer(text, toolContext.places?.values() ?? []);
 
+    // 빈 답은 "알아듣지 못함" 으로 따로 알립니다 — 화면이 예시를 붙이고 입력을 되돌립니다 (B-4).
+    if (!text) return NextResponse.json({ text: UNCLEAR_TEXT, unclear: true });
+
     return NextResponse.json({
-      text: text || '답을 만들지 못했어요. 질문을 조금 더 구체적으로 적어 주세요.',
+      text,
       sources: sources.size ? [...sources.values()] : undefined,
       places: places.length ? places : undefined,
     });

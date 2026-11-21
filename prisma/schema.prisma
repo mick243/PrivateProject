@@ -359,6 +359,19 @@ model ops_push_subscriptions {
   players    players   @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
+/// 비밀번호 찾기 링크 (db/migrate-084). 토큰은 sha256 해시로만 둔다 — lib/password-reset.ts
+model password_resets {
+  token_hash String    @id
+  player_id  Int
+  email      String
+  expires_at DateTime  @db.Timestamptz(6)
+  used_at    DateTime? @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  players    players   @relation(fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([player_id, created_at(sort: Desc)], map: "idx_password_resets_player")
+}
+
 model player_identities {
   provider     String
   provider_uid String
@@ -392,6 +405,7 @@ model players {
   emoticons              emoticons[]
   machine_reports        machine_reports[]
   ops_push_subscriptions ops_push_subscriptions[]
+  password_resets        password_resets[]
   player_identities      player_identities[]
   post_comments          post_comments[]
   post_images            post_images[]

@@ -30,6 +30,10 @@ import OAuthButtons from './OAuthButtons';
  * 첫 단계의 OAuthButtons 는 제공자 화면으로 넘어가고, 그쪽 이메일은 참고용 사본으로
  * 따로 남습니다 (lib/auth.ts linkOAuthAccount).
  *
+ * 가입이 끝나면 **완료 화면**을 한 번 보여 줍니다 — 누구로 로그인했는지, 확인 메일이 갔는지(이메일의
+ * 쓰임새), 그리고 주 버튼 하나(보던 화면 · 없으면 오락실 찾기)와 커뮤니티 링크. 예전에는 아무 말 없이
+ * `next` 로 갔는데, 홈에서 가입하면 화면이 비로그인 때와 같아 가입이 됐는지 몰랐습니다 (UX 시험 A-1 · A-2).
+ *
  * ⚠ 여기서 하는 검사는 **거들 뿐** 입니다. 판정은 서버(lib/validation.ts
  *   signupInputSchema)가 하고, 화면은 같은 규칙을 미리 보여 줄 뿐입니다.
  */
@@ -93,6 +97,10 @@ export default function SignupForm() {
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 가입이 끝났다 — 완료 화면을 보여 줍니다 (UX 시험 A-1). 'sent' 면 확인 메일이 가는 중 */
+  const [joined, setJoined] = useState<{ nickname: string; email: string; mail: 'sent' | 'off' } | null>(
+    null,
+  );
 
   const goTo = (target: Step) => {
     setError(null);
@@ -129,11 +137,17 @@ export default function SignupForm() {
         return;
       }
 
-      const joined = data.user as SessionUser;
+      const user = data.user as SessionUser;
       // 가입한 이름으로 리뷰·글이 남습니다 — 플레이어는 세션에서 읽으므로
       // (lib/use-player.ts) 여기서 따로 심어 줄 값이 없습니다.
-      setSession(joined);
-      router.replace(next);
+      // 곧장 돌려보내지 않고 완료 화면을 한 번 보여 줍니다. 예전에는 아무 말 없이 홈으로 가서
+      // 홈이 비로그인 때와 같아 가입이 됐는지 몰랐습니다 (2026-11-20 UX 시험 A-1).
+      setJoined({
+        nickname: user.nickname,
+        email: email.trim(),
+        mail: data.emailVerification === 'off' ? 'off' : 'sent',
+      });
+      setSession(user);
     } catch {
       setError('연결이 잠깐 끊겼어요. 다시 시도해 주세요');
     } finally {
@@ -162,6 +176,44 @@ export default function SignupForm() {
     }
     void signup();
   };
+
+  // 가입 완료 — 세션이 생겨 아래 "이미 로그인했어요" 보다 먼저 봅니다.
+  if (joined) {
+    // 주 버튼은 하나: 보던 화면이 있으면 그리로, 홈에서 왔으면 오락실 찾기로 (§1-2 · §1-3)
+    const back = next !== '/';
+    return (
+      <main className="login-page">
+        <section className="login-card">
+          <h1>가입했어요!</h1>
+          <p className="notice" role="status">
+            &apos;{joined.nickname}&apos;(으)로 로그인했어요. 이제 글 · 댓글 · 리뷰를 남길 수 있어요.
+          </p>
+          <p className="muted small">
+            {joined.mail === 'sent'
+              ? `${joined.email}로 확인 메일을 보냈어요. 확인하지 않아도 다 쓸 수 있고, 확인해 두면 비밀번호를 잊었을 때 이 주소로 되찾을 수 있어요.`
+              : '지금은 확인 메일을 보내지 않아요. 확인하지 않아도 다 쓸 수 있어요.'}
+          </p>
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            onClick={() => router.replace(back ? next : '/finder')}
+          >
+            {back ? '보던 화면으로 돌아가기' : '오락실 찾으러 가기'}
+          </button>
+          <div className="link-row">
+            <Link className="btn-link" href="/community">
+              커뮤니티 둘러보기
+            </Link>
+            {back && (
+              <Link className="btn-link" href="/finder">
+                오락실 찾기
+              </Link>
+            )}
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   // 이미 로그인한 사람에게 가입 폼을 보여 주면, 채워 넣는 동안 지금 계정이
   // 어떻게 되는지 알 수 없습니다. 무엇을 눌러야 하는지만 알려 줍니다.

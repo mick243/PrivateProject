@@ -41,7 +41,9 @@ export default function LocateButton({
   return (
     <button
       type="button"
-      className={`locate-fab${tracking ? ' is-on' : ''}${locating ? ' is-locating' : ''}`}
+      className={`locate-fab${tracking ? ' is-on' : ''}${locating ? ' is-locating' : ''}${
+        following ? '' : ' has-text'
+      }`}
       onClick={following ? onStop : onStart}
       // 아이콘만 있는 버튼이라 접근성 이름이 없으면 스크린리더에 "버튼" 으로만 읽힙니다.
       aria-label={label}
@@ -60,6 +62,13 @@ export default function LocateButton({
           strokeLinecap="round"
         />
       </svg>
+      {/* 꺼져 있을 때는 글자를 붙인다 (2026-11-20 사용성 시험 F-2 — 글자 없는 과녁은 무슨
+          단추인지 몰랐다). 켜진 뒤에는 초록 · 점멸이 상태를 말하고, 지도를 덜 가리게 아이콘만 둔다. */}
+      {!following && (
+        <span className="locate-fab-text" aria-hidden="true">
+          내 위치
+        </span>
+      )}
     </button>
   );
 }

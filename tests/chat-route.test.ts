@@ -320,6 +320,17 @@ describe('POST /api/chat', () => {
     expect(json.text).toBe('이 질문에는 답할 수 없어요. 다른 말로 다시 물어봐 주세요.');
   });
 
+  it('빈 답이면 알아듣지 못했다고 표시해 화면이 예시를 붙이게 한다 (UX 시험 B-4)', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    queue = [textCandidate('')];
+
+    const { status, json } = await post([{ role: 'user', text: '음' }]);
+
+    expect(status).toBe(200);
+    expect(json.unclear).toBe(true);
+    expect(json.text).toContain('홍대 사볼');
+  });
+
   /**
    * 토큰 상한 (lib/chat-budget.ts, 2026-09-28). 대화 전체를 왕복마다 다시 싣던 때는 24턴 × 4,000자
    * 대화에서 질문 하나가 모델로 858,396자를 보냈습니다.

@@ -17,6 +17,7 @@ const good = {
   TRUSTED_PROXY_HOPS: '1',
   NEXT_PUBLIC_NAVER_MAP_KEY_ID: 'key',
   GEMINI_API_KEY: 'gk',
+  RESEND_API_KEY: 're_test',
 } satisfies Record<string, string>;
 
 describe('checkProductionEnv', () => {
@@ -71,5 +72,20 @@ describe('checkProductionEnv', () => {
     });
     expect(errors).toEqual([]);
     expect(warnings).toHaveLength(2);
+  });
+
+  it('약관의 운영자 정보가 비어 있으면(빌드에 박힌 값) 기동을 막는다 — UX 시험 C-12', () => {
+    const { errors } = checkProductionEnv(good, { legalPlaceholders: true });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('NEXT_PUBLIC_OPERATOR_NAME');
+    expect(checkProductionEnv(good, { legalPlaceholders: false }).errors).toEqual([]);
+    // 개발에서는 막지 않는다 — 화면의 개발용 안내가 대신 알린다 (lib/legal.ts SHOW_LEGAL_DEV_WARNING)
+    expect(checkProductionEnv({ NODE_ENV: 'development' }, { legalPlaceholders: true }).errors).toEqual([]);
+  });
+
+  it('메일 키가 없으면 뜨되 경고한다 — 확인 메일 · 비밀번호 찾기가 멈춤', () => {
+    const { errors, warnings } = checkProductionEnv({ ...good, RESEND_API_KEY: undefined });
+    expect(errors).toEqual([]);
+    expect(warnings.some((w) => w.includes('RESEND_API_KEY'))).toBe(true);
   });
 });

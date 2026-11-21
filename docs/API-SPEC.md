@@ -289,8 +289,8 @@ multipart: `file`(레거시 별칭 `image` 허용). 로그인 필요 — **본�
 ### `GET /api/admin/players?q=` — 관리자 전용
 q 가 없으면 처리 전 신고가 들어온 사람 · 정지 중인 사람. 최대 50명.
 
-### `PUT /api/admin/players/[id]/suspension {days: 1~3650|null, reason?}` · `DELETE …/suspension` — 관리자 전용
-`days=null` 은 무기한. 정지하면 세대 번호를 올리고 `getSession` 이 그 계정을 비로그인으로 봅니다(즉시). 로그인 · 소셜 로그인은 비밀번호가 맞은 뒤 `403` + 정지 문구. 관리자 계정은 `400`.
+### `PUT /api/admin/players/[id]/suspension {days: 1~3650|null, reason}` · `DELETE …/suspension` — 관리자 전용
+`days=null` 은 무기한. 정지하면 세대 번호를 올리고 `getSession` 이 그 계정을 비로그인으로 봅니다(즉시). 로그인 · 소셜 로그인은 비밀번호가 맞은 뒤 `403` + 정지 문구. 관리자 계정은 `400`. `reason` 은 비우면 `400`(정지된 사람에게 그대로 보입니다 · 2026-11-21).
 
 ### `GET /api/admin/guesses` · `PUT /api/admin/guesses {arcadeId, machineId}` · `DELETE /api/admin/guesses?arcadeId=&machineId=` — 관리자 전용
 AI 보유 기종 추정 검수. PUT 은 보유 기종에 넣고(기체 1대, 이미 있으면 기체는 그대로) 추정을 지움. 없으면 `404`.

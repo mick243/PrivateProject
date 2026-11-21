@@ -23,6 +23,15 @@ if [[ ! -f "$BUILD_ENV" ]]; then
   echo "deploy/ncp/build.env 가 없습니다 — build.env.example 을 복사해 채우세요" >&2
   exit 2
 fi
+# 약관 · 개인정보처리방침의 운영자 이름 · 연락처 — 빌드 때 박히는 값이라 비면 화면에 '[운영자명 — …]' 이
+# 그대로 나간다 (2026-11-20 UX 시험 C-12). 묶음을 만들기 전에 멈춘다. 서버 기동 검사(lib/env-check.ts)도 같은 것을 본다.
+for key in NEXT_PUBLIC_OPERATOR_NAME NEXT_PUBLIC_CONTACT_EMAIL; do
+  val="$(tr -d '\r' < "$BUILD_ENV" | grep -E "^${key}=" | tail -1 | cut -d= -f2- | sed -E "s/^[\"']|[\"']\$//g" | tr -d '[:space:]' || true)"
+  if [[ -z "$val" ]]; then
+    echo "✗ deploy/ncp/build.env 의 ${key} 가 비어 있습니다 — 약관에 운영자 정보 대신 자리표시자가 보입니다. 채운 뒤 다시 하세요" >&2
+    exit 2
+  fi
+done
 docker info >/dev/null 2>&1 || { echo "Docker 가 꺼져 있습니다 — Docker Desktop 을 켜 주세요" >&2; exit 2; }
 
 # 묶음 이름에 붙일 커밋. ⚠ 주 체크아웃의 arcade-finder/ 에는 옛 중첩 저장소(.git)가 따로 있어서,

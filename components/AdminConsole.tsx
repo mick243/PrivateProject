@@ -9,6 +9,9 @@ import {
   REPORT_STATUS_LABEL,
   REPORT_TARGET_LABEL,
   SUSPEND_OPTIONS,
+  suspendConfirmText,
+  suspendLabel,
+  unsuspendConfirmText,
   type AdminPlayerRow,
   type GuessRow,
   type ReportGroup,
@@ -24,8 +27,10 @@ import { useSession } from '@/lib/use-session';
  * 승인은 DB 를 직접 고쳐야 했습니다. 이 화면이 부르는 API 는 전부 requireAdmin 을 지납니다
  * (app/api/admin/*). 관리자가 아니면 /admin/emoticons 와 같이 "없는 주소" 화면을 보여 줍니다.
  *
- * 되돌릴 수 없는 동작(지우기 · 무기한 정지)만 한 번 묻습니다. 기각 · 정지 풀기 · 추정 버리기는
- * 다시 할 수 있으므로 묻지 않습니다.
+ * 지우기 · 정지 · 정지 풀기는 한 번 묻습니다. 정지는 사유가 있어야 하고(서버도 막습니다),
+ * 정지 풀기는 정지 단추가 있던 자리가 아니라 사유 줄 끝의 글자 링크입니다 — 2026-11-20 UX 시험
+ * Ad-2 · Ad-3 에서 사유 없이 정지되고, 같은 자리에 나타난 '정지 풀기'를 한 번 더 눌러 바로 풀렸습니다.
+ * 기각 · 추정 버리기는 다시 할 수 있어 묻지 않습니다.
  */
 
 type Tab = 'reports' | 'players' | 'guesses';
@@ -41,24 +46,37 @@ async function errorOf(res: Response, fallback: string): Promise<string> {
 async function getJson<T>(url: string): Promise<Load<T>> {
   try {
     const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) return { kind: 'failed', message: await errorOf(res, '불러오지 못했습니다') };
+    if (!res.ok) return { kind: 'failed', message: await errorOf(res, '목록을 불러오지 못했어요. 다시 시도해 주세요') };
     return { kind: 'ready', data: (await res.json()) as T };
   } catch {
-    return { kind: 'failed', message: '네트워크 오류' };
+    return { kind: 'failed', message: OFFLINE };
   }
 }
 
-/** 요청 하나 — 실패하면 문구, 성공하면 null */
-async function send(url: string, init: RequestInit): Promise<string | null> {
+const OFFLINE = '연결이 잠깐 끊겼어요. 다시 시도해 주세요';
+const NOT_DONE = '처리하지 못했어요. 다시 시도해 주세요';
+
+/** 요청 하나 — 성공하면 응답 본문까지 */
+async function sendJson<T = unknown>(
+  url: string,
+  init: RequestInit,
+): Promise<{ ok: true; data: T } | { ok: false; message: string }> {
   try {
     const res = await fetch(url, {
       ...init,
       headers: init.body ? { 'content-type': 'application/json' } : undefined,
     });
-    return res.ok ? null : await errorOf(res, '처리하지 못했습니다');
+    if (!res.ok) return { ok: false, message: await errorOf(res, NOT_DONE) };
+    return { ok: true, data: (await res.json().catch(() => ({}))) as T };
   } catch {
-    return '네트워크 오류';
+    return { ok: false, message: OFFLINE };
   }
+}
+
+/** 요청 하나 — 실패하면 문구, 성공하면 null */
+async function send(url: string, init: RequestInit): Promise<string | null> {
+  const res = await sendJson(url, init);
+  return res.ok ? null : res.message;
 }
 
 function NotFound() {
@@ -95,7 +113,7 @@ function ReportsPanel() {
 
   const resolve = async (g: ReportGroup, action: 'delete' | 'dismiss') => {
     const what = REPORT_TARGET_LABEL[g.targetType];
-    if (action === 'delete' && !window.confirm(`이 ${what}을(를) 지울까요? 되돌릴 수 없습니다.`)) return;
+    if (action === 'delete' && !window.confirm(`이 ${what}을(를) 지울까요? 되돌릴 수 없어요.`)) return;
     const key = `${g.targetType}:${g.targetId}`;
     setBusyKey(key);
     setError(null);
@@ -204,12 +222,25 @@ function ReportsPanel() {
 
 // ─── 계정 ────────────────────────────────────────────────────
 
+/** 정지 끝 시각 — `11월 27일 18:31까지` */
+function untilLabel(until: string): string {
+  if (isIndefinite(until)) return '무기한 정지';
+  const d = new Date(until);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `정지 · ${d.getMonth() + 1}월 ${d.getDate()}일 ${hh}:${mm}까지`;
+}
+
 function PlayersPanel() {
   const [q, setQ] = useState('');
   const [query, setQuery] = useState('');
   const [list, setList] = useState<Load<{ players: AdminPlayerRow[] }>>({ kind: 'loading' });
   const [busyId, setBusyId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 처리 결과 안내 — `○○ 님을 7일 정지했어요` · `정지를 풀었어요` */
+  const [done, setDone] = useState<string | null>(null);
+  /** 사유를 비운 채 누른 줄 — 그 칸에 안내를 붙인다 */
+  const [reasonMissing, setReasonMissing] = useState<number | null>(null);
   /** 줄마다 고른 정지 기간 · 사유 */
   const [draft, setDraft] = useState<Record<number, { days: string; reason: string }>>({});
 
@@ -223,28 +254,60 @@ function PlayersPanel() {
 
   const draftOf = (id: number) => draft[id] ?? { days: '7', reason: '' };
 
+  /** 한 줄만 고쳐 끼운다 — 목록을 다시 불러오면 정지를 푼 계정이 말없이 빠지기 때문(Ad-3) */
+  const patchRow = (id: number, patch: Partial<AdminPlayerRow>) =>
+    setList((prev) =>
+      prev.kind === 'ready'
+        ? { kind: 'ready', data: { players: prev.data.players.map((x) => (x.id === id ? { ...x, ...patch } : x)) } }
+        : prev,
+    );
+
   const suspend = async (p: AdminPlayerRow) => {
     const d = draftOf(p.id);
     const days = d.days === 'null' ? null : Number(d.days);
-    if (days === null && !window.confirm(`${p.nickname} 님을 무기한 정지할까요?`)) return;
+    const reason = d.reason.trim();
+    setDone(null);
+    if (!reason) {
+      setReasonMissing(p.id);
+      document.getElementById(`suspend-reason-${p.id}`)?.focus();
+      return;
+    }
+    setReasonMissing(null);
+    if (!window.confirm(suspendConfirmText(p.nickname, days, reason))) return;
     setBusyId(p.id);
     setError(null);
-    const err = await send(`/api/admin/players/${p.id}/suspension`, {
+    const res = await sendJson<{ until: string }>(`/api/admin/players/${p.id}/suspension`, {
       method: 'PUT',
-      body: JSON.stringify({ days, reason: d.reason.trim() || null }),
+      body: JSON.stringify({ days, reason }),
     });
     setBusyId(null);
-    if (err) setError(err);
-    else void load();
+    if (!res.ok) {
+      setError(res.message);
+      return;
+    }
+    patchRow(p.id, { suspendedUntil: res.data.until, suspendedReason: reason });
+    setDraft((prev) => ({ ...prev, [p.id]: { days: '7', reason: '' } }));
+    setDone(`${p.nickname} 님을 ${suspendLabel(days)} 정지했어요.`);
   };
 
   const unsuspend = async (p: AdminPlayerRow) => {
+    setDone(null);
+    if (!window.confirm(unsuspendConfirmText(p.nickname))) return;
     setBusyId(p.id);
     setError(null);
-    const err = await send(`/api/admin/players/${p.id}/suspension`, { method: 'DELETE' });
+    const res = await sendJson(`/api/admin/players/${p.id}/suspension`, { method: 'DELETE' });
     setBusyId(null);
-    if (err) setError(err);
-    else void load();
+    if (!res.ok) {
+      setError(res.message);
+      return;
+    }
+    patchRow(p.id, { suspendedUntil: null, suspendedReason: null });
+    // 기본 목록(신고 · 정지 중)은 다음에 불러올 때 이 계정이 빠질 수 있어 미리 말해 둔다
+    setDone(
+      !query && p.openReports === 0
+        ? `${p.nickname} 님의 정지를 풀었어요. 처리 전 신고가 없어서 다음에 열면 목록에서 빠져요.`
+        : `${p.nickname} 님의 정지를 풀었어요.`,
+    );
   };
 
   return (
@@ -253,6 +316,7 @@ function PlayersPanel() {
         className="admin-toolbar"
         onSubmit={(e) => {
           e.preventDefault();
+          setDone(null);
           setQuery(q.trim());
         }}
       >
@@ -260,7 +324,7 @@ function PlayersPanel() {
           className="admin-search"
           type="search"
           value={q}
-          placeholder="닉네임 또는 id"
+          placeholder="닉네임 또는 번호"
           aria-label="계정 찾기"
           onChange={(e) => setQ(e.target.value)}
         />
@@ -269,21 +333,25 @@ function PlayersPanel() {
         </button>
       </form>
       <p className="muted small">
-        {query
-          ? `'${query}' 로 찾은 계정입니다.`
-          : '처리 전 신고가 들어온 사람과 정지 중인 사람입니다. 다른 계정은 위에서 찾으세요.'}{' '}
-        정지하면 그 계정의 로그인이 바로 끊기고, 다시 로그인하면 정지 사유를 봅니다.
+        {query ? `'${query}'(으)로 찾은 계정이에요.` : '처리 전 신고가 들어온 사람과 정지 중인 사람이에요. 다른 계정은 위에서 찾아 주세요.'}
       </p>
+      {done && (
+        <p className="notice small" role="status">
+          {done}
+        </p>
+      )}
       {error && <p className="warn small" role="alert">{error}</p>}
       {list.kind === 'loading' && <p className="muted small">불러오는 중…</p>}
       {list.kind === 'failed' && <p className="warn small">{list.message}</p>}
       {list.kind === 'ready' &&
         (list.data.players.length === 0 ? (
-          <p className="muted small">{query ? '찾은 계정이 없습니다.' : '손볼 계정이 없습니다.'}</p>
+          <p className="muted small">{query ? `'${query}'에 맞는 계정이 없어요. 닉네임을 다시 확인해 주세요.` : '손볼 계정이 없어요.'}</p>
         ) : (
           <ul className="mod-list">
             {list.data.players.map((p) => {
               const d = draftOf(p.id);
+              const days = d.days === 'null' ? null : Number(d.days);
+              const missing = reasonMissing === p.id;
               return (
                 <li key={p.id} className="mod-card">
                   <div className="mod-card-head">
@@ -291,61 +359,71 @@ function PlayersPanel() {
                     <span className="muted small">#{p.id} · 가입 {timeAgo(p.createdAt)}</span>
                     {p.isAdmin && <span className="admin-badge">관리자</span>}
                     {p.openReports > 0 && <span className="admin-badge is-gone">처리 전 신고 {p.openReports}</span>}
-                    {p.suspendedUntil && (
-                      <span className="admin-badge is-gone">
-                        {isIndefinite(p.suspendedUntil)
-                          ? '무기한 정지'
-                          : `정지 ~${new Date(p.suspendedUntil).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}`}
-                      </span>
-                    )}
+                    {p.suspendedUntil && <span className="admin-badge is-gone">{untilLabel(p.suspendedUntil)}</span>}
                   </div>
                   <p className="muted small">
                     글 {p.posts} · 댓글 {p.comments} · 리뷰 {p.reviews}
-                    {p.suspendedReason && ` · 정지 사유: ${p.suspendedReason}`}
                   </p>
-                  {!p.isAdmin && (
-                    <div className="form-actions">
-                      {p.suspendedUntil ? (
+                  {p.suspendedUntil ? (
+                    // 정지 중 — 정지 단추가 있던 자리에 풀기 단추를 두지 않는다(Ad-3).
+                    // 사유 줄 끝의 글자 링크 + 확인창으로 낮춘다.
+                    <p className="small mod-suspended">
+                      <span>정지 사유: {p.suspendedReason ?? '(적지 않음)'}</span>{' '}
+                      {!p.isAdmin && (
                         <button
                           type="button"
-                          className="btn btn-sm"
+                          className="btn-link"
                           disabled={busyId === p.id}
                           onClick={() => void unsuspend(p)}
                         >
-                          정지 풀기
+                          {busyId === p.id ? '푸는 중…' : '정지 풀기'}
                         </button>
-                      ) : (
-                        <>
-                          <select
-                            aria-label={`${p.nickname} 정지 기간`}
-                            value={d.days}
-                            onChange={(e) => setDraft({ ...draft, [p.id]: { ...d, days: e.target.value } })}
-                          >
-                            {SUSPEND_OPTIONS.map((o) => (
-                              <option key={o.label} value={String(o.days)}>
-                                {o.label}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            type="text"
-                            maxLength={200}
-                            value={d.reason}
-                            placeholder="사유 (본인에게 보입니다)"
-                            aria-label={`${p.nickname} 정지 사유`}
-                            onChange={(e) => setDraft({ ...draft, [p.id]: { ...d, reason: e.target.value } })}
-                          />
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-danger"
-                            disabled={busyId === p.id}
-                            onClick={() => void suspend(p)}
-                          >
-                            정지
-                          </button>
-                        </>
                       )}
-                    </div>
+                    </p>
+                  ) : (
+                    !p.isAdmin && (
+                      <div className="form-actions mod-suspend-form">
+                        <select
+                          aria-label={`${p.nickname} 정지 기간`}
+                          value={d.days}
+                          onChange={(e) => setDraft({ ...draft, [p.id]: { ...d, days: e.target.value } })}
+                        >
+                          {SUSPEND_OPTIONS.map((o) => (
+                            <option key={o.label} value={String(o.days)}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          id={`suspend-reason-${p.id}`}
+                          type="text"
+                          maxLength={200}
+                          required
+                          value={d.reason}
+                          placeholder="정지 사유 (본인에게 보여요)"
+                          aria-label={`${p.nickname} 정지 사유`}
+                          aria-invalid={missing || undefined}
+                          aria-describedby={missing ? `suspend-reason-msg-${p.id}` : undefined}
+                          onChange={(e) => {
+                            if (missing) setReasonMissing(null);
+                            setDraft({ ...draft, [p.id]: { ...d, reason: e.target.value } });
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-danger"
+                          disabled={busyId === p.id}
+                          onClick={() => void suspend(p)}
+                        >
+                          {busyId === p.id ? '정지하는 중…' : `${suspendLabel(days)} 정지하기`}
+                        </button>
+                        {missing && (
+                          <p id={`suspend-reason-msg-${p.id}`} className="warn small mod-suspend-msg" role="alert">
+                            정지 사유를 써 주세요. 정지된 사람에게 보여요.
+                          </p>
+                        )}
+                      </div>
+                    )
                   )}
                 </li>
               );

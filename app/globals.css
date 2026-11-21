@@ -523,6 +523,7 @@ input[type='password'],
    밝은 회색이라 흰 바탕에 흰 글씨가 됩니다 (.input-on-light 주석과 같은 함정).
    type 을 새로 쓸 때는 여기에 같이 적어야 합니다. */
 input[type='email'],
+input[type='search'],
 select,
 textarea {
   width: 100%;
@@ -6019,3 +6020,215 @@ body:has(.ops-panel) .chat-panel {
 .report-menu:has(.report-form) {
   flex-basis: 100%;
 }
+
+/* ── UX-2026-11 상세 · 제보 ── */
+/* 닫기 묶음은 DOM 에서 제목 앞(Shift+Tab 한 번)이지만 보이는 자리는 오른쪽 그대로 (C-3) */
+.arcade-detail .detail-head > .detail-head-actions {
+  order: 2;
+}
+/* 열 때 초점을 받는 제목 — 마우스로 열었을 때는 테두리를 그리지 않는다 */
+.arcade-detail h2[tabindex='-1']:focus:not(:focus-visible) {
+  outline: none;
+}
+/* '없어졌다고 알리기' — 대기 단추와 떨어진 블록 맨 아래 글자 링크 (R-1) */
+.gone-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+/* 제보 결과 · 오류 — 누른 게임 블록 바로 아래 */
+.row-msg {
+  margin-top: 8px;
+}
+/* ── /UX-2026-11 상세 · 제보 ── */
+
+/* ── UX-2026-11 서열표 ── */
+/* 곡 이름 검색 — 머리글의 한 줄을 통째로 쓴다 (T-1 · components/TierSongSearch.tsx) */
+.tier-search {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.tier-search input[type='search'] {
+  width: 100%;
+  max-width: 520px;
+}
+.tier-search-results {
+  margin-top: 8px;
+  max-width: 720px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.tier-search-results > p {
+  margin: 0 0 6px;
+}
+.tier-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.tier-search-list > li {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+}
+.tier-search-song {
+  overflow-wrap: anywhere;
+}
+.tier-search-charts,
+.chart-siblings-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+/* 채보 패널 머리의 '링크 복사' 결과 — 비어 있을 때는 자리를 차지하지 않되 낭독 칸은 남긴다 (C-1) */
+.detail .chart-copy-note {
+  margin: -6px 0 0;
+  color: var(--muted);
+}
+.detail .chart-copy-note:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+/* 열 때 초점을 받는 채보 제목 — 마우스로 열었을 때는 테두리를 그리지 않는다 (C-3) */
+.detail h2[tabindex='-1']:focus:not(:focus-visible) {
+  outline: none;
+}
+/* ── /UX-2026-11 서열표 ── */
+/* ── UX-2026-11 관리 · 커뮤니티 ── */
+/* 글 제목 링크 (C-1) — button 이던 때와 같은 모양으로. 밑줄은 마우스를 올렸을 때만 */
+a.row-title {
+  text-decoration: none;
+}
+a.row-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* 열 때 · 돌아올 때 초점을 받는 제목 — 마우스로 옮겼을 때는 테두리를 그리지 않는다 (C-3) */
+.post-detail-title:focus:not(:focus-visible),
+.post-form-title:focus:not(:focus-visible),
+.board-title:focus:not(:focus-visible) {
+  outline: none;
+}
+/* 글쓰기 '쓰던 글이 있어요 · 이어 쓰기' (M-1) */
+.draft-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.draft-offer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 관리 > 계정 — 정지 사유 줄 끝의 '정지 풀기' 글자 링크, 사유 칸 아래 안내 (Ad-2 · Ad-3) */
+.mod-suspended {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.mod-suspend-form input[type='text'] {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.mod-suspend-msg {
+  flex-basis: 100%;
+  margin: 0;
+}
+/* ── /UX-2026-11 관리 · 커뮤니티 ── */
+
+/* ── UX-2026-11 파인더 ── */
+/* 목록 · 검색 손잡이에 글자 (F-1, components/SidebarHandle.tsx).
+   펼친 데스크톱만 좁은 띠(글자 숨김)이고, 접혔을 때와 휴대폰에서는 글자가 보이는 알약이다.
+   누를 수 있는 범위는 어느 기기든 44px 이상 — 보이는 띠는 그대로 두고 ::after 로 넓힌다. */
+.sidebar-handle {
+  gap: 6px;
+  font-size: var(--t3);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sidebar-handle::after {
+  content: '';
+  position: absolute;
+  inset: -12px;
+}
+.sidebar-handle-text {
+  display: none;
+}
+.sidebar-handle.is-off {
+  width: auto;
+  height: 44px;
+  padding: 0 14px 0 10px;
+  border-radius: 0 var(--r-full) var(--r-full) 0;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.sidebar-handle.is-off:hover {
+  background: var(--accent);
+  color: #fff;
+  filter: brightness(1.08);
+}
+.sidebar-handle.is-off::after {
+  inset: 0;
+}
+.sidebar-handle.is-off .sidebar-handle-text {
+  display: inline;
+}
+.sidebar-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 목록 위 '내 위치로 가까운 곳 보기' (F-2) — 검색칸 아래 한 줄, 칸 폭에 맞춰 왼쪽 정렬 */
+.filters .near-me {
+  align-self: flex-start;
+}
+
+/* 지도 위 내 위치 단추 — 꺼져 있을 때만 '내 위치' 글자를 붙인 알약 (F-2, components/LocateButton.tsx) */
+.locate-fab.has-text {
+  width: auto;
+  gap: 6px;
+  padding: 0 14px 0 10px;
+  border-radius: var(--r-full);
+  color: var(--text);
+  font-size: var(--t3);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 게임 칩 줄 맨 앞의 '★ 즐겨찾기' (F-20) — 게임 칩과 갈리게 오른쪽에 틈 */
+.chip-fav {
+  margin-right: 6px;
+}
+
+@media (max-width: 860px) {
+  /* 휴대폰: 경계 가운데에 매달린 알약에 늘 글자를 보인다 ('목록 접기' · '목록 · 검색 열기') */
+  .sidebar-handle {
+    width: auto;
+    height: 32px;
+    padding: 0 14px;
+  }
+  .sidebar-handle .sidebar-handle-text {
+    display: inline;
+  }
+  /* 접혔을 때는 지도 맨 위 가운데 — 더 크게, 강조색으로 */
+  .sidebar-handle.is-off {
+    height: 44px;
+    padding: 0 18px;
+    border-radius: 0 0 var(--r-full) var(--r-full);
+  }
+}
+/* ── /UX-2026-11 파인더 ── */

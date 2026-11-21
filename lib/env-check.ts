@@ -13,6 +13,8 @@
  * 순수 함수로 두고 env 객체를 인자로 받는 이유는 테스트입니다 (tests/env-check.test.ts).
  */
 
+import { LEGAL_PLACEHOLDERS_PRESENT } from './legal';
+
 export interface EnvCheckResult {
   /** 이것이 하나라도 있으면 기동하지 않아야 합니다 */
   errors: string[];
@@ -25,7 +27,16 @@ const MIN_SECRET_LENGTH = 16;
 /** process.env 모양 — Next 의 타입은 NODE_ENV 를 필수로 두므로 테스트가 부분 객체를 넘길 수 있게 느슨하게 받습니다 */
 export type EnvLike = Record<string, string | undefined>;
 
-export function checkProductionEnv(env: EnvLike = process.env): EnvCheckResult {
+/** 환경변수 밖에서 오는 판정 — 빌드 때 박힌 값처럼 env 객체로는 볼 수 없는 것 */
+export interface BuildFacts {
+  /**
+   * 약관 · 개인정보처리방침의 운영자 이름 · 연락처가 비어 자리표시자가 보이는가 (lib/legal.ts).
+   * NEXT_PUBLIC_* 은 빌드 때 박히므로 서버의 실행 env 가 아니라 빌드 결과를 봐야 합니다.
+   */
+  legalPlaceholders?: boolean;
+}
+
+export function checkProductionEnv(env: EnvLike = process.env, facts: BuildFacts = {}): EnvCheckResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -65,6 +76,18 @@ export function checkProductionEnv(env: EnvLike = process.env): EnvCheckResult {
     );
   }
 
+  // 2026-11-20 UX 시험 C-12: 약관에 '[운영자명 — …]' 이 그대로 보여 열람 · 삭제 요청을 보낼 곳이 없었습니다.
+  // 법적 고지에 연락처가 없는 채로 받는 가입은 받지 않는 편이 낫습니다 — 기동하지 않습니다.
+  if (facts.legalPlaceholders) {
+    errors.push(
+      '약관 · 개인정보처리방침의 운영자 정보가 비어 있습니다 — NEXT_PUBLIC_OPERATOR_NAME · NEXT_PUBLIC_CONTACT_EMAIL 을 deploy/ncp/build.env 에 채워 **다시 빌드**하세요 (빌드 때 박히는 값)',
+    );
+  }
+
+  if (!env.RESEND_API_KEY) {
+    warnings.push('RESEND_API_KEY 가 없습니다 — 확인 메일 · 비밀번호 찾기 메일이 나가지 않습니다 (비밀번호 찾기 화면은 문의 주소를 대신 보여 줍니다)');
+  }
+
   if (env.DB_FALLBACK && env.DB_FALLBACK !== 'off') {
     warnings.push('DB_FALLBACK 이 켜져 있습니다 — Postgres 가 끊기면 인스턴스마다 다른 사본에 씁니다. 운영에서는 off 를 권합니다');
   }
@@ -85,14 +108,18 @@ export function checkProductionEnv(env: EnvLike = process.env): EnvCheckResult {
  * `next build` 의 정적 생성 단계(NEXT_PHASE=phase-production-build)에서는 보지 않습니다 —
  * 빌드 머신에는 운영 비밀이 없는 것이 정상입니다.
  */
-export function enforceProductionEnv(env: EnvLike = process.env): void {
+export function enforceProductionEnv(
+  env: EnvLike = process.env,
+  // 기본값은 이 빌드에 박힌 값 (lib/legal.ts — NEXT_PUBLIC_* 은 서버 번들에도 빌드 때 들어갑니다)
+  facts: BuildFacts = { legalPlaceholders: LEGAL_PLACEHOLDERS_PRESENT },
+): void {
   if (env.NEXT_PHASE === 'phase-production-build') return;
   // 로컬에서 운영 빌드를 잠깐 띄워 볼 때(PWA 확인 등)의 탈출구. 운영 배포에서는 절대 켜지 마세요.
   if (env.ENV_CHECK === 'off') {
     console.warn('[env] ⚠ ENV_CHECK=off — 운영 필수 설정 검사를 건너뜁니다. 실제 배포에서는 켜 두세요.');
     return;
   }
-  const { errors, warnings } = checkProductionEnv(env);
+  const { errors, warnings } = checkProductionEnv(env, facts);
   for (const w of warnings) console.warn(`[env] ⚠ ${w}`);
   if (errors.length === 0) return;
   for (const e of errors) console.error(`[env] ✗ ${e}`);
