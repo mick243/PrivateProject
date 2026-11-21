@@ -57,17 +57,17 @@
 | 선택적 레이어 승격 | `will-change: transform`은 내 위치 마커 1개만 | 337개 전부 승격은 **순손실**로 측정 |
 | 레이아웃 안정화 | `autoResize()` + 220 ms 이중 재중심 + `ResizeObserver` | 사이드바 접힘 시 핀 **360 px** 밀림 해결 |
 
-측정 도구는 직접 만들었습니다 — `?perf=1`로 켜지는 `MapPerfPanel` + `lib/map-perf.ts`(마커 수·DOM 노드·JS 힙·동기화 ms·draw 횟수 실시간 표시, 컬링 ON/OFF 4초 셰이크 비교로 FPS·블로킹 ms 산출).
+측정 도구는 `?perf=1`로 켜지는 `MapPerfPanel` + `lib/map-perf.ts`(마커 수·DOM 노드·JS 힙·동기화 ms·draw 횟수 실시간 표시, 컬링 ON/OFF 4초 셰이크 비교로 FPS·블로킹 ms 산출)로, 직접 만들었습니다.
 
 ### 1.5 미디어 최적화 (커뮤니티 글 이미지·영상 다량 이슈 → `PostMedia.tsx`)
 
 - **이미지**: 원본에 치수가 없어 `loading="lazy"` 단독으론 실패(크기 없는 `<img>`가 2×2로 붕괴 → Chrome lazy 휴리스틱 오작동, 실측). 로드 완료까지 16/10 비율 플레이스홀더를 유지해 해결. 캐시 히트로 하이드레이션 전에 로드가 끝나는 경우는 마운트 `useEffect`로 수습.
-- **영상**: `<video>`엔 lazy 속성이 없어 `IntersectionObserver`(rootMargin 400px)로 뷰포트 근접 시에만 `<video preload="metadata">` 장착 — 메타데이터만도 파일당 수백 KB.
+- **영상**: `<video>`엔 lazy 속성이 없어 `IntersectionObserver`(rootMargin 400px)로 뷰포트 근접 시에만 `<video preload="metadata">` 장착. 메타데이터만 받아도 파일당 수백 KB.
 - **유튜브**: `<iframe loading="lazy">`.
 
 ### 1.6 리액트 렌더 전략
 
-- `ArcadeList` · `ArcadeDetailPanel`은 `memo` — 부모(`ArcadeFinder`)가 키 입력·GPS 틱마다 리렌더되므로. 전제 조건으로 부모의 콜백 11종을 `useCallback`, 파생 목록을 `useMemo`로 고정.
+- `ArcadeList` · `ArcadeDetailPanel`은 `memo`. 부모(`ArcadeFinder`)가 키 입력·GPS 틱마다 리렌더되기 때문. 전제 조건으로 부모의 콜백 11종을 `useCallback`, 파생 목록을 `useMemo`로 고정.
 - 순위·거리 재계산은 클라이언트 전용(`lib/recommend.ts`는 DB·fetch 없는 순수 모듈) — GPS 틱마다 네트워크 왕복 없이 재정렬.
 - 재페치는 기준점이 **0.3 km** 이상 이동했을 때만, 반경 +0.5 km 마진으로 받아 클라이언트가 재절단.
 - `RichTextEditor` 툴바는 `useEditorState` selector로 선택 상태 조각이 바뀔 때만 리렌더(키 입력마다가 아니라).
@@ -76,7 +76,7 @@
 ### 1.7 남은 성능 항목
 
 - 커뮤니티·서열표 탭 초기 로딩(데이터 페치 시간)은 서버 캐싱으로 일부 개선됐으나 화면 단 스켈레톤·프리페치는 미적용.
-- `/api/arcades`가 전체 목록(942행, 307KB)을 한 번에 반환 — 프런트가 `fullListRef`로 재사용하는 설계라 첫 로드 1회뿐이지만, 데이터가 늘면 재검토 대상.
+- `/api/arcades`가 전체 목록(942행, 307KB)을 한 번에 반환. 프런트가 `fullListRef`로 재사용하는 설계라 첫 로드 1회뿐이지만, 데이터가 늘면 재검토 대상.
 
 ---
 
@@ -110,7 +110,7 @@
 
 **P3. 챗봇 dialog가 모달 계약 미이행** — `role="dialog"`인데 포커스 트랩·Escape 닫기·`aria-modal`·닫을 때 FAB로 포커스 복귀가 없음.
 
-**P4. 토글 상태의 프로그래밍적 표현 누락** — 기종 필터 칩(ArcadeFinder), 종류 세그먼트(LiveFeed), 태그 칩(ChartComments), 에디터 서식 버튼(RichTextEditor), 추천 버튼(PostDetailView)이 CSS `is-on`만으로 상태 표시. 같은 코드베이스의 `aria-pressed` 선례(즐겨찾기 별, 인기글 정렬, 컨디션 버튼)를 확장하면 됨. (TierBoardView 의 모드 세그먼트는 `migrate-059`(EZ2DJ) 작업에서 `<select>` 로 바뀌어 이 목록에서 빠졌습니다 — 대신 그 화면의 `<select>` 넷에 `<label>` 이 없는 것은 남아 있습니다.)
+**P4. 토글 상태의 프로그래밍적 표현 누락** — 기종 필터 칩(ArcadeFinder), 종류 세그먼트(LiveFeed), 태그 칩(ChartComments), 에디터 서식 버튼(RichTextEditor), 추천 버튼(PostDetailView)이 CSS `is-on`만으로 상태 표시. 같은 코드베이스의 `aria-pressed` 선례(즐겨찾기 별, 인기글 정렬, 컨디션 버튼)를 확장하면 됨. (TierBoardView 의 모드 세그먼트는 `migrate-059`(EZ2DJ) 작업에서 `<select>` 로 바뀌어 이 목록에서 빠졌습니다. 대신 그 화면의 `<select>` 넷에 `<label>` 이 없는 것은 남아 있습니다.)
 
 **P5. 레이블 없는 컨트롤** — 파인더 검색 인풋, LiveFeed `<select>` 2종, 리뷰/댓글/평가 `<textarea>`, 제보 메모 인풋, 위도/경도 인풋이 placeholder 의존. `aria-label` 부여로 해결 가능.
 
@@ -118,8 +118,8 @@
 
 **P7. 기타** — 내비 활성 링크 `aria-current` 없음, 게임 탭 `tablist` 시맨틱 없음, ChartDetailPanel 슬라이더 `aria-valuetext` 없음(현재값·등급명이 인접 마크업에만), 히스토그램 텍스트 대체 없음(막대 아래 숫자가 완화), `window.confirm/alert` 다용(네이티브라 접근은 되지만 맥락 유실).
 
-**구조적 한계** — `NaverMap` 마커는 `innerHTML` 주입 `<div>`라 보조기술로 접근 불가. 현실적 대응은 지도의 정보를 목록이 100% 대체하도록 유지하는 것(현재 설계 방향과 일치)이며, 따라서 P1(목록 키보드화)이 지도 접근성의 실질 해법.
+**구조적 한계** — `NaverMap` 마커는 `innerHTML` 주입 `<div>`라 보조기술로 접근 불가. 현실적 대응은 지도의 정보를 목록이 100% 대체하도록 유지하는 것(현재 설계 방향과 일치)이므로 P1(목록 키보드화)이 곧 지도 접근성의 실질 해법.
 
 ### 2.3 요약
 
-시맨틱 구조·폼 레이블링·페이지네이션 등 **뼈대는 평균 이상**이고, XSS 방어를 겸하는 렌더 파이프라인 덕에 출력 신뢰성이 높습니다. 격차는 대부분 **상호작용 계층**(키보드 경로, 상태 알림, 토글 상태 노출)에 몰려 있고, 코드베이스 안에 이미 올바른 선례가 있어 패턴 복제로 해결 가능한 수준입니다. 우선순위는 P1(목록 키보드화) → P2(라이브 리전) 순을 권합니다.
+시맨틱 구조·폼 레이블링·페이지네이션 등 **뼈대는 평균 이상**이고, XSS 방어를 겸하는 렌더 파이프라인 덕에 출력 신뢰성이 높습니다. 격차는 대부분 **상호작용 계층**(키보드 경로, 상태 알림, 토글 상태 노출)에 몰려 있고, 코드베이스 안에 이미 올바른 선례가 있어 그 패턴을 옮겨 오면 해결됩니다. P1(목록 키보드화) → P2(라이브 리전) 순서를 권합니다.

@@ -1,6 +1,6 @@
 # 로컬 감시 — Prometheus · Grafana
 
-> 2026-10-06 작성. **PC 전용**입니다. 운영 서버(NCP Micro 1GB)는 방식이 다릅니다 — 서버 안 수집기가 Grafana Cloud 로 보냅니다
+> 2026-10-06 작성. **PC 전용**입니다. 운영 서버(NCP Micro 1GB)는 방식이 다릅니다. 서버 안 수집기가 Grafana Cloud 로 보냅니다
 > ([deploy/ncp/README.md §9](../deploy/ncp/README.md)). 대시보드 JSON 은 둘이 같이 씁니다.
 
 PC 에서 돌리는 `npm run dev`(또는 `start:cluster`)를 Prometheus 가 15초마다 긁고, Grafana 가 대시보드로 보여 줍니다.
@@ -60,7 +60,7 @@ docker compose down -v      # 지표까지 지우기
 
 맨 위 여덟 칸이 한눈에 볼 것입니다(앱 상태 · 초당 요청 · 응답 p95 · 5xx 비율 · DB 풀 대기 · 메모리 여유 · 디스크 여유 · 울리는 알림).
 그 아래 줄은 서버 · Caddy → 요청 → DB → Node 프로세스 → PostgreSQL 순서입니다. **메모리 · 디스크 여유와 "서버 · Caddy" 줄은
-운영 서버에서만 찹니다**(node_exporter · Caddy 지표) — 로컬에서는 "운영만" · No data 가 정상입니다.
+운영 서버에서만 찹니다**(node_exporter · Caddy 지표). 로컬에서는 "운영만" · No data 가 정상입니다.
 
 맨 위 **데이터 소스** 칸은 로컬에서는 그대로 두면 됩니다(기본 Prometheus). Grafana Cloud 에 가져갔을 때 스택의 Prometheus 를 고르는 칸입니다.
 
@@ -73,7 +73,7 @@ docker compose down -v      # 지표까지 지우기
 | 셋 다 (이벤트 루프 지연까지) | Node 프로세스가 CPU 로 밀림. 쿼리가 무죄여도 DB 시간이 길게 찍힙니다 |
 
 DB 연산 시간은 **코드가 체감한 시간**이라 풀 대기와 이벤트 루프 지연이 함께 들어갑니다(`lib/telemetry.ts` 머리말).
-풀 대기는 "pg 풀 커넥션" 의 `waiting` 으로 따로 봅니다 — 0 이 정상입니다.
+풀 대기는 "pg 풀 커넥션" 의 `waiting` 으로 따로 봅니다. 0 이 정상입니다.
 
 > dev 서버는 라우트를 처음 열 때마다 컴파일하느라 그 순간 응답 시간과 이벤트 루프 지연이 크게 튑니다. 숫자를 비교하려면
 > `npm run build && npm run start:cluster` 로 띄우세요(아래).
@@ -94,7 +94,7 @@ DB 연산 시간은 **코드가 체감한 시간**이라 풀 대기와 이벤트
 ### 대시보드 고치기
 
 정본은 `grafana/dashboards/arcade-finder.json` 입니다. 화면에서 고쳐도 저장되지만, 남기려면 대시보드 설정 → JSON Model 을
-복사해 그 파일을 덮어쓰세요(30초 안에 다시 읽습니다). 알림 문턱은 `prometheus/rules.yml` — 고친 뒤 `docker compose restart prometheus`.
+복사해 그 파일을 덮어쓰세요(30초 안에 다시 읽습니다). 알림 문턱은 `prometheus/rules.yml` 에 있습니다. 고친 뒤 `docker compose restart prometheus`.
 
 ## 4. 운영 빌드(`start:cluster`)를 볼 때
 
@@ -135,4 +135,4 @@ K6_PROMETHEUS_RW_SERVER_URL=http://localhost:9090/api/v1/write K6_PROMETHEUS_RW_
   서버 토큰은 `deploy/ncp/monitoring/install-monitoring.sh` 가 서버에서 따로 만듭니다.
 - `/api/metrics` 는 Caddy 가 밖에서 404 로 막고, 수집기는 서버 안에서 127.0.0.1:3001 을 긁습니다.
 - 알림 규칙은 `deploy/ncp/monitoring/rules.yml`(Grafana Cloud 용 · 서버 규칙 포함)이 따로 있습니다. 앱 규칙의 문턱은 이 폴더의 것과 같게 유지합니다.
-- `naver-api-gateway-monitoring` 워크트리의 미커밋 작업(Caddy 접근 로그 → Pulse)은 Caddy 지표와 겹칩니다 — 정리할지는 따로 정합니다.
+- `naver-api-gateway-monitoring` 워크트리의 미커밋 작업(Caddy 접근 로그 → Pulse)은 Caddy 지표와 겹칩니다. 정리할지는 따로 정합니다.

@@ -10,7 +10,9 @@
  *
  * **글자를 붙입니다** (2026-11-20 사용성 시험 F-1). 꺾쇠 하나뿐이던 때('v' · '›', 64×20px)는
  * 목록 · 검색을 여는 단추로 읽히지 않아 처음 온 사람 대부분이 검색칸을 찾지 못했습니다.
- * 접혀 있을 때는 '목록 · 검색 열기', 펼쳐져 있을 때는 '목록 접기' 를 그대로 보여 줍니다.
+ * 접혀 있을 때는 '메뉴', 펼쳐져 있을 때는 '목록 접기' 를 그대로 보여 줍니다. 처음엔 '목록 · 검색 열기'
+ * 였는데 길다는 의견으로 보이는 글자만 '메뉴' 로 줄였습니다(2026-11-22). 스크린리더 이름은 보이는
+ * 글자를 앞에 두고 무엇이 열리는지 덧붙입니다('메뉴 열기: 목록과 검색').
  * 데스크톱에서 펼친 상태만은 칸 경계에 붙는 좁은 띠라 글자를 숨기고(.sidebar-handle-text)
  * 이름은 aria-label 로 남깁니다. 누를 수 있는 크기는 어느 상태든 44px 이상입니다 (CSS).
  *
@@ -27,7 +29,8 @@ export default function SidebarHandle({
   /** 접었다 펴는 대상(사이드바)의 id — 스크린리더가 둘을 잇습니다 */
   controls: string;
 }) {
-  const label = open ? '목록 접기' : '목록 · 검색 열기';
+  const text = open ? '목록 접기' : '메뉴';
+  const label = open ? '목록 접기' : '메뉴 열기: 목록과 검색';
 
   return (
     <button
@@ -52,7 +55,7 @@ export default function SidebarHandle({
         />
       </svg>
       <span className="sidebar-handle-text" aria-hidden="true">
-        {label}
+        {text}
       </span>
     </button>
   );

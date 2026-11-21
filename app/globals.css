@@ -6215,7 +6215,7 @@ a.row-title:hover {
 }
 
 @media (max-width: 860px) {
-  /* 휴대폰: 경계 가운데에 매달린 알약에 늘 글자를 보인다 ('목록 접기' · '목록 · 검색 열기') */
+  /* 휴대폰: 경계 가운데에 매달린 알약에 늘 글자를 보인다 ('목록 접기' · '메뉴') */
   .sidebar-handle {
     width: auto;
     height: 32px;
