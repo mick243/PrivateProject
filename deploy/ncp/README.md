@@ -65,7 +65,7 @@ bash deploy/ncp/make-server-env.sh        # → deploy/ncp/server.env
 ```
 
 `server.env` 에는 지도 · 검색 · 로그인 · AI · 메일 키가 들어갑니다. DB 주소 · `AUTH_SECRET` · 관리자 비밀번호는
-**넣지 않습니다** — 서버가 새로 만듭니다(개발용 값을 운영에 쓰지 않게).
+**넣지 않습니다**. 서버가 새로 만듭니다(개발용 값을 운영에 쓰지 않게).
 
 ## 3. 서버에 올리고 설치
 
@@ -96,7 +96,7 @@ cat /root/arcade-finder-secrets.env                         # 관리자 비밀�
 
 ⚠ 이 방법은 개발 DB 의 **계정 · 글 · 리뷰까지 함께** 옮깁니다(내가 만든 테스트 계정 포함). 기준 데이터만 옮기는
 도구 `npm run data:release` 가 2026-10-08 에 main 에 들어왔습니다 — 절차는 [docs/DATA-SOURCES.md](../../docs/DATA-SOURCES.md) §4 ·
-[deploy/README.md](../README.md). 빈 DB 에서 끝까지 돌려 본 것은 로컬뿐이고, 이 서버를 그것으로 채워 본 적은 아직 없습니다 —
+[deploy/README.md](../README.md). 빈 DB 에서 끝까지 돌려 본 것은 로컬뿐이고, 이 서버를 그것으로 채워 본 적은 아직 없습니다.
 아래 덤프 복원이 리허설과 실서버에서 확인한 길입니다.
 
 PC 에서 (개발 DB 는 읽기만 합니다):
@@ -142,7 +142,7 @@ chown -R arcade:arcade /srv/arcade-finder/app/arcade-finder/uploads
 | NCP 콘솔 — 지도 키를 만든 Application 의 **Web 서비스 URL** | `https://223-130-1-2.sslip.io` | 지도 인증 실패 → 대체 지도로 뜸 |
 | Google Cloud 콘솔 · 카카오 개발자 · 네이버 개발자 | 콜백 `https://<주소>/api/auth/oauth/{google,kakao,naver}/callback` — 아래 표 | 그 소셜 로그인만 실패 |
 
-소셜 로그인 콘솔은 곳마다 넣는 칸이 다릅니다. `localhost` 로 등록해 둔 줄은 지우지 말고 **하나 더** 넣으세요 — 개발 서버도 계속 로그인됩니다.
+소셜 로그인 콘솔은 곳마다 넣는 칸이 다릅니다. `localhost` 로 등록해 둔 줄은 지우지 말고 **하나 더** 넣으세요. 개발 서버도 계속 로그인됩니다.
 
 | 콘솔 | 넣는 곳 | 빠졌을 때 보이는 것 |
 |---|---|---|
@@ -166,7 +166,7 @@ sudo bash install-release.sh /root/release-<새것>.tgz
 
 - **묶음 정리**: 설치가 끝나면 `/root` 에 올린 묶음은 지워지고, `/srv/arcade-finder/releases/` 에 지금 판과 그 전에 설치한 판
   2개만 남습니다. 2026-10-06 전 판의 스크립트는 `/root` 원본을 남겼고, 그게 `releases/` 의 묶음과 하드링크라서 `releases/` 를
-  정리해도 공간이 비지 않았습니다 — 그 판으로 설치한 서버는 `ls -lh /root/*.tgz` 에서 지금 판 말고는 지워도 됩니다.
+  정리해도 공간이 비지 않았습니다. 그 판으로 설치한 서버는 `ls -lh /root/*.tgz` 에서 지금 판 말고는 지워도 됩니다.
 - **되돌리기**: `/srv/arcade-finder/releases/` 에 직전 묶음이 남아 있습니다 → `sudo bash install-release.sh /srv/arcade-finder/releases/<직전>.tgz`.
   마이그레이션은 되돌리지 않으니, 스키마를 바꾼 배포를 되돌릴 때는 코드가 새 스키마에서도 도는지 먼저 보세요.
 - **지도 키 · APP_URL 을 바꿨다면** `build.env` 를 고치고 **다시 빌드**해야 합니다 (빌드 때 박히는 값).
@@ -188,7 +188,7 @@ sudo bash install-release.sh /root/release-<새것>.tgz
 ## 8. 문제가 생기면
 
 - **HTTPS 가 안 열린다** — `journalctl -u caddy -n 50`. 인증서 발급 실패면 ① ACG 에 80 · 443 이 열렸는지 ② 주소의 IP 가
-  공인 IP 와 같은지. sslip.io 는 여러 사람이 같이 쓰는 주소라 Let's Encrypt 발급 한도에 걸릴 수 있습니다 — 그러면
+  공인 IP 와 같은지. sslip.io 는 여러 사람이 같이 쓰는 주소라 Let's Encrypt 발급 한도에 걸릴 수 있습니다. 그러면
   `nip.io` 로 바꾸거나(`/etc/caddy/Caddyfile` 과 `.env.local` 의 `APP_URL`, 그리고 다시 빌드) 도메인을 사세요.
 - **메모리가 모자라다** (`journalctl` 에 heap · killed) — 콘솔에서 서버를 정지하고 스펙을 **c2-g3(2vCPU · 4GB, 월 약 8.4만 원)** 으로 바꾼 뒤,
   `sudo SITE_DOMAIN=… bash bootstrap.sh` 를 다시 돌리면 메모리에 맞춰 인스턴스 2개 · 기본 설정으로 바꿉니다.
@@ -254,7 +254,7 @@ Caddyfile 을 묶음의 새 판으로 바꾸고(옛 판은 `/etc/caddy/Caddyfile
 timer(`arcade-process-memory`)를 띄우고 → 앱을 한 번 다시 띄운 뒤 → Grafana Cloud 가 받았는지, 밖에서 `/api/metrics` 가
 막혔는지 확인합니다. 알림 규칙은 올리지 않습니다(9-4 에서 화면으로).
 
-**이미 설치된 서버를 새 판으로 바꿀 때**는 `grafana-cloud.env` 가 없어도 됩니다 — 인자 없이 돌리면 서버에 있는 설정
+**이미 설치된 서버를 새 판으로 바꿀 때**는 `grafana-cloud.env` 가 없어도 됩니다. 인자 없이 돌리면 서버에 있는 설정
 (`/etc/arcade-monitoring`)에서 접속 정보를 꺼내 다시 씁니다.
 
 ```bash
@@ -262,7 +262,7 @@ sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/monitoring/install-mon
 ```
 
 끝에 `✔ Grafana Cloud 가 받았습니다` 가 나오면 됩니다. 못 보내면 그 자리에서 멈추고 Grafana Cloud 가
-돌려준 응답을 찍습니다 — 401/403 이면 토큰 · Instance ID, 404 면 URL 입니다. 고친 `grafana-cloud.env` 로 같은 명령을 다시
+돌려준 응답을 찍습니다. 401/403 이면 토큰 · Instance ID, 404 면 URL 입니다. 고친 `grafana-cloud.env` 로 같은 명령을 다시
 돌리면 됩니다.
 
 ### 9-4. Grafana Cloud 화면 (직접)
@@ -272,7 +272,7 @@ sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/monitoring/install-mon
    "서버 · Caddy" · "프로세스별 메모리" 줄과 "메모리 여유" · "디스크 여유" 칸은 운영에서만 찹니다.
    대시보드 JSON 이 바뀐 판이면 같은 파일을 다시 Import 합니다 — uid(`arcade-finder`)가 같아 덮어쓰기를 묻습니다.
 2. **알림 받을 메일** — Alerting → Notification configuration → **Contact points**. 새 스택에는 `empty` 라는 연락 지점 하나가
-   기본 정책(Default policy)에 걸려 있고 **받는 곳이 비어 있습니다**(No integrations configured) — 그대로면 알림이 아무 데도
+   기본 정책(Default policy)에 걸려 있고 **받는 곳이 비어 있습니다**(No integrations configured). 그대로면 알림이 아무 데도
    안 갑니다. `empty` 의 **Edit** → Integration **Email** · Addresses 에 메일 → **Save contact point**. 이름은 그대로 두세요
    (기본 정책이 그 이름을 가리킵니다).
 3. **알림 규칙 가져오기** — Alerting → Alert rules → **More → Import alert rules** →
@@ -283,7 +283,7 @@ sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/monitoring/install-mon
    - Import → 확인 창에서 Import. 폴더 `arcade-finder` 아래 `arcade-finder-prod` 에 12개가 생깁니다.
 
    **왜 이렇게 하나**: 처음 판은 `install-monitoring.sh` 가 mimirtool 로 Grafana Cloud 의 Prometheus(Mimir)에 규칙을 올렸습니다.
-   실서버에서 그 규칙은 평가는 됐지만(`DiskLow` firing) 알림이 Grafana 의 연락 지점으로 오지 않았습니다 — 스택의 Prometheus
+   실서버에서 그 규칙은 평가는 됐지만(`DiskLow` firing) 알림이 Grafana 의 연락 지점으로 오지 않았습니다. 스택의 Prometheus
    데이터 소스가 `manageAlerts: false` 라 Alert rules 화면에도 안 보이고 "Existing data source-managed rules" 로도 못 가져옵니다.
    그 판으로 설치한 서버라면 Mimir 쪽 사본 12개가 조용히 평가되고 있는데, 알림을 내지 않으니 두어도 됩니다.
 4. **울려 보기** — 서비스에 영향 없이: `sudo systemctl stop arcade-postgres-exporter` → 4~5분 뒤 `PostgresDown` 메일
@@ -319,7 +319,7 @@ sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/monitoring/install-mon
 
 - Grafana Cloud 가 잠깐 받지 못해도 수집기가 6시간까지 쌓아 두었다가 다시 보냅니다.
 - 리허설 컨테이너에서는 "디스크 여유" 가 비었지만(루트가 overlay 라 node_exporter 가 건너뜀), 실서버(ext4 `/dev/vda2`)에서는
-  찹니다 — 2026-10-06 첫 측정이 14% 라 바로 `DiskLow` 가 울렸습니다. 다 쓴 배포 묶음(하나에 224MB)부터 지우세요.
+  찹니다. 2026-10-06 첫 측정이 14% 라 바로 `DiskLow` 가 울렸습니다. 다 쓴 배포 묶음(하나에 224MB)부터 지우세요.
 - 수집 간격은 60초입니다. Grafana Cloud 는 사용량을 시계열 수와 1분당 점 수로 세므로 더 줄이지 마세요.
 - **프로세스별 메모리** (2026-10-07 추가) — 서버 전체 메모리만으로는 누가 쓰는지 알 수 없었습니다. 10-07 15:19 에 스왑에 있던
   150MB 가 한꺼번에 RAM 으로 올라와 "메모리 여유" 가 35% → 16% 로 줄었는데, 어느 프로세스인지 가릴 수 없었습니다.
@@ -341,9 +341,9 @@ sudo -u caddy node /srv/arcade-finder/app/arcade-finder/scripts/caddy-traffic.mj
 ```
 
 기간 · 평균/피크 분당 요청 · 상태코드 비율 · 종류(페이지/api/정적/기타) · 봇 추정 · 경로별 상위 15 가 나옵니다.
-`caddy` 사용자로 돌리는 것이 중요합니다 — **Caddy 는 로그 파일을 기본 권한 600 으로 만들어서** 다른 사용자는 못 읽습니다.
+`caddy` 사용자로 돌리는 것이 중요합니다. **Caddy 는 로그 파일을 기본 권한 600 으로 만들어서** 다른 사용자는 못 읽습니다.
 이 명령이 되면 ② 의 서비스도 같은 이유로 됩니다. ⚠ Caddyfile 이 로그를 10MiB × 5개(약 50MiB)만 남기니, 트래픽이 많으면
-며칠 치도 안 남습니다 — 오래 보려면 ② 로 Pulse 에 쌓으세요.
+며칠 치도 안 남습니다. 오래 보려면 ② 로 Pulse 에 쌓으세요.
 
 **② 상주 + Pulse 로 보내기** — 한 번만 합니다. (`bootstrap.sh` · `install-release.sh` 는 이 서비스를 깔지 않습니다.)
 
@@ -361,7 +361,7 @@ journalctl -u arcade-traffic -n 20                      # "로그를 읽고 있�
 ```
 
 서버가 Pulse 주소로 나갈 수 있는지 먼저 확인하세요: `curl -s -o /dev/null -w '%{http_code}\n' "$PULSE_API_URL/health"`.
-Pulse 를 같은 서버에 올리지는 마세요 — Pulse 는 Postgres · Redis · API · worker · web 스택이고, 이 서버는 앱 + DB 만으로 피크에 515MB 입니다.
+Pulse 를 같은 서버에 올리지는 마세요. Pulse 는 Postgres · Redis · API · worker · web 스택이고, 이 서버는 앱 + DB 만으로 피크에 515MB 입니다.
 
 **Pulse 에 생기는 지표** (이름이 곧 계약입니다 — 64자 · 마지막 점 뒤가 통계 이름)
 
@@ -385,4 +385,4 @@ Pulse 를 같은 서버에 올리지는 마세요 — Pulse 는 Postgres · Redi
 | `edge.req.rpm` 급락 | 평소 트래픽이 있는 사이트에서 갑자기 0 에 가까움 (DNS · 인증서 · ACG 문제) |
 
 ⚠ 로그가 회전(10MiB 마다)하는 순간 옛 파일에서 못 읽은 마지막 1초 안팎의 줄은 놓칩니다. 요청 수 추세에는 영향이 없는 크기입니다.
-⚠ 서버를 키워 앱 인스턴스가 2개 이상이 돼도 이 집계기는 **하나만** 있으면 됩니다 (Caddy 로그는 하나) — 앱 계측과 달리 인스턴스별 이름 충돌이 없습니다.
+⚠ 서버를 키워 앱 인스턴스가 2개 이상이 돼도 이 집계기는 **하나만** 있으면 됩니다 (Caddy 로그는 하나). 앱 계측과 달리 인스턴스별 이름 충돌이 없습니다.

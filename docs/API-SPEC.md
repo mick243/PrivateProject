@@ -17,7 +17,7 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 { "error": "입력한 내용을 다시 확인해 주세요", "details": ["닉네임은 2자 이상으로 써 주세요"] }
 ```
 
-문구는 [DESIGN-GUIDE.md](DESIGN-GUIDE.md) 를 따릅니다 — 해요체, "무슨 일 + 할 일", 내부 이름 없이.
+문구는 [DESIGN-GUIDE.md](DESIGN-GUIDE.md) 를 따릅니다. 해요체, "무슨 일 + 할 일", 내부 이름 없이.
 `details` 도 화면에 그대로 뜨므로 필드 이름(`nickname:`)을 앞에 붙이지 않습니다 (2026-09-29 부터,
 `lib/validation.ts` formatIssues). 어느 칸인지가 필요한 곳(가입)은 `field` 를 따로 줍니다.
 
@@ -31,7 +31,7 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 | 409 | 상태가 어긋남 (중복 리뷰 등) | `fail(409, '…')` |
 | 500 | 그 밖의 모든 예외 | `handle()` 이 자동으로 |
 
-전부 `lib/api-errors.ts` 에 있습니다. 라우트마다 다시 쓰지 마세요 — 정규화 전에는
+전부 `lib/api-errors.ts` 에 있습니다. 라우트마다 다시 쓰지 마세요. 정규화 전에는
 `'잘못된 id 입니다'` 13곳 · `'JSON 본문을 파싱할 수 없습니다'` 19곳 ·
 `'입력값이 올바르지 않습니다'` 17곳 · `'로그인이 필요합니다'` 11곳이었고,
 `parseId` 가 7곳에 재정의돼 있었습니다. (2026-09-29 에 이 문구들은 모두 해요체로 바뀌었습니다 — 아래 §1-2.)
@@ -47,7 +47,7 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 `handle()` 과 공용 헬퍼는 **라우트 7개**(`arcades` · `arcades/:id` ·
 `arcades/:id/reports` · `posts` · `posts/:id` · `reports` · `tier`)에만 적용했습니다.
 나머지는 `mfa-jwt-token-status` 브랜치가 같은 파일들을 수정 중이라, 지금 손대면
-충돌만 만듭니다 — **그 병합 뒤에 한 번에** 하세요. 기계적인 작업입니다.
+충돌만 납니다. **그 병합 뒤에 한 번에** 하세요. 기계적인 작업입니다.
 
 감싸지 않은 라우트는 예외가 났을 때 **본문 없는 500** 을 내고, 그러면 클라이언트의
 `res.json()` 이 거기서 던져 화면이 이유를 못 보여 줍니다(실측으로 확인한 동작입니다).
@@ -154,7 +154,7 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 비밀번호 있는 계정: 계정별 레이트리밋 키(`account:{playerId}`, `429`) → `currentPassword` 필수(`400`) → 검증 실패 `403`. OAuth 전용 계정: 검증 생략하되 첫 비밀번호 설정 필수. 닉네임 먼저, 비밀번호 나중(409면 무변경). 성공 시 쿠키 재서명 → `200 {user}`.
 
 ### `POST /api/account/verify`
-`/account` 화면 게이트. `{password}` → `200 {ok: true}` | `401`/`403`/`429`. PUT과 **레이트리밋 키 공유**(이 라우트로 잠금 우회 불가). 성공해도 서버에 아무것도 남기지 않는 **무상태** 설계 — PUT이 재검증.
+`/account` 화면 게이트. `{password}` → `200 {ok: true}` | `401`/`403`/`429`. PUT과 **레이트리밋 키 공유**(이 라우트로 잠금 우회 불가). 성공해도 서버에 아무것도 남기지 않는 **무상태** 설계(PUT이 다시 검증).
 
 ---
 
@@ -181,7 +181,7 @@ POST와 동일 스키마 + `noticeGuard` 재실행("일반 글로 쓰고 말머�
 관리자(`isAdminRequest`) → 남의 글 삭제 가능. 일반 사용자 → 본인 글만(`403`), 비로그인 `401`. `204` | `404`. **수정은 관리자에게도 미개방** — 삭제는 중재, 남의 이름으로 고쳐 쓰기는 아님.
 
 ### `PUT /api/posts/[id]/like` · `DELETE /api/posts/[id]/like?commentOffset=`
-켜기/끄기를 나눈 **멱등** 쌍입니다 — 토글은 재전송·두 번 탭에 뒤집혀 인기글 정렬이 조용히 틀어집니다. `PUT` 본문 `{commentOffset?}` 은 생략 가능(보고 있던 댓글 페이지 유지용). `200 {liked, post}` | `401` | `404`.
+켜기/끄기를 나눈 **멱등** 쌍입니다. 토글은 재전송·두 번 탭에 뒤집혀 인기글 정렬이 조용히 틀어집니다. `PUT` 본문 `{commentOffset?}` 은 생략 가능(보고 있던 댓글 페이지 유지용). `200 {liked, post}` | `401` | `404`.
 
 ### `POST /api/posts/[id]/comments`
 `{body}` (로그인 필요 `401`). 갱신된 글 전체를 **막 쓴 댓글이 보이는 페이지**(`lastCommentOffset`)로 반환. `201 {post}` | `404`.
@@ -231,7 +231,7 @@ multipart: `file`(레거시 별칭 `image` 허용). 로그인 필요 — **본�
 
 ## 8. 즐겨찾기 (Favorites) — 세션 전용
 
-플레이어는 **세션에서만** 결정합니다. R1 이후로는 이 문서의 모든 쓰기가 같습니다 — 여기가 그 첫 자리였을 뿐입니다.
+플레이어는 **세션에서만** 결정합니다. R1 이후로는 이 문서의 모든 쓰기가 같습니다. 여기가 그 첫 자리였을 뿐입니다.
 
 - `GET /api/favorites` → `200 {arcadeIds}` — 비로그인은 `401`이 아닌 `200 {arcadeIds: []}`(사이드바가 무조건 호출하며, 비로그인은 오류가 아님)
 - `POST /api/favorites` `{arcadeId}` → `200 {arcadeIds}` | `401` | `400` | `404`(FK 위반을 존재 검사로 사용 — TOCTOU 없음)
@@ -248,7 +248,7 @@ multipart: `file`(레거시 별칭 `image` 허용). 로그인 필요 — **본�
 
 ### `GET /api/places?q=강남역`
 `isPlaceQuery`(2~60자) 검증 → `400`. `lib/naver-local.searchLocal` 래핑, `pickPlace`(정상 좌표를 가진 첫 항목)로 `200 {place: Place|null}`.
-라우트로 존재하는 이유는 오직 `NAVER_HUB_API_KEY_*`를 서버에 두기 위함. 자격증명 미설정 → `503`, 그 외 실패 → `502`. **버튼/Enter에서만 호출**(일 쿼터를 오락실 임포터와 공유).
+라우트를 따로 둔 이유는 `NAVER_HUB_API_KEY_*`를 서버에 두려는 것 하나뿐. 자격증명 미설정 → `503`, 그 외 실패 → `502`. **버튼/Enter에서만 호출**(일 쿼터를 오락실 임포터와 공유).
 
 ## 11. 챗봇 (Chat)
 
@@ -309,4 +309,4 @@ AI 보유 기종 추정 검수. PUT 은 보유 기종에 넣고(기체 1대, 이
 | `unhealthy` | 503 | DB 조회 실패 |
 
 응답 `{status, checks: {db, db_primary}, db: {driver, fallback, fallbackAt?}, version, uptime_s, latency_ms}`.
-`checks.*` 는 `'ok' | 'fail'` 만 쓴다 — Pulse 프로브가 항목마다 `check.<이름>` 지표(1/0)로 편입해 룰(`check.db_primary < 1` = 폴백 알림)을 걸 수 있는 규약. 폴백 사유 문자열은 DB 호스트가 섞여 있어 응답에 싣지 않는다(서버 로그).
+`checks.*` 는 `'ok' | 'fail'` 만 쓴다. Pulse 프로브가 항목마다 `check.<이름>` 지표(1/0)로 받아 룰(`check.db_primary < 1` = 폴백 알림)을 걸 수 있게 정한 규약이다. 폴백 사유 문자열은 DB 호스트가 섞여 있어 응답에 싣지 않는다(서버 로그).
