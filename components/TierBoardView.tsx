@@ -1,9 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { UNDECIDED_CODE, UNKNOWN_LEVEL } from '@/lib/tier-types';
 import type { ChartDetail, ChartSummary, TierBoard, TierGame } from '@/lib/tier-types';
 import { usePlayerId } from '@/lib/use-player';
+import { parseTierQuery, sameSelection, tierQuery } from '@/lib/tier-url';
+import type { TierSelection, TierUrlState } from '@/lib/tier-url';
+import type { ChartSearchChart } from '@/lib/chart-search-types';
+import TierSongSearch from './TierSongSearch';
 import ScrollStrip from './ScrollStrip';
 import ChartDetailPanel from './ChartDetailPanel';
 
@@ -19,50 +23,35 @@ interface LevelOption {
  * 요청하고 싶은 조합. versionId/mode/level 이 null 이면 "그 게임의 첫 조합" 을
  * 서버가 고릅니다. 화면에 실제로 그려진 조합은 board.versionId / board.mode /
  * board.level 이 유일한 출처입니다 — 요청값과 결과값을 양쪽에 두면 게임을 바꿀 때
- * 둘이 어긋납니다.
+ * 둘이 어긋납니다. 모양과 주소 규칙은 lib/tier-url.ts.
  */
-interface Selection {
-  machineId: number | null;
-  versionId: number | null;
-  mode: string | null;
-  /**
-   * 숫자 = 그 레벨 · `UNKNOWN_LEVEL` = 난이도 미상 칸 · null = 서버가 고른다.
-   * 셋을 구분해야 해서 null 하나로 합칠 수 없습니다 — '고르지 않음' 과 '모름' 은
-   * 다른 뜻이고, 뒤엣것도 사용자가 **고른** 칸입니다.
-   */
-  level: number | typeof UNKNOWN_LEVEL | null;
-}
+type Selection = TierSelection;
 
 /**
- * 주소에 실린 선택을 읽는다 (?machineId=3&level=17 · 모드가 있는 게임이면 &mode=S ·
- * 버전이 있는 게임이면 &versionId=1).
+ * 주소에 실린 상태를 읽는다 (?machineId=3&level=17 · 모드가 있는 게임이면 &mode=S ·
+ * 버전이 있는 게임이면 &versionId=1 · 채보 패널이 열려 있으면 &chart=123).
  *
  * useSearchParams 가 아니라 window.location 을 직접 읽습니다 — 그쪽을 쓰면 이
  * 페이지가 Suspense 경계를 요구해서, 얻는 것 없이 트리가 하나 더 생깁니다.
- *
- * 값이 이상하면(정수가 아니면) null 로 둡니다. null 은 "서버가 알아서 고르라"는
- * 뜻이라, 주소를 손으로 고쳐 넣어도 화면이 깨지지 않고 기본 조합으로 갑니다.
  */
-function selectionFromUrl(): Selection {
+function stateFromUrl(): TierUrlState {
   // 서버 렌더에는 주소가 없다. 이때 값이 갈리지만 첫 렌더 출력('불러오는 중…')은
   // sel 과 무관해서 하이드레이션이 어긋나지 않는다.
   if (typeof window === 'undefined') {
-    return { machineId: null, versionId: null, mode: null, level: null };
+    return { sel: { machineId: null, versionId: null, mode: null, level: null }, chartId: null };
   }
+  return parseTierQuery(window.location.search);
+}
 
-  const q = new URLSearchParams(window.location.search);
-  const int = (key: string): number | null => {
-    const raw = q.get(key);
-    if (raw === null) return null;
-    const n = Number(raw);
-    return Number.isInteger(n) ? n : null;
-  };
-  return {
-    machineId: int('machineId'),
-    versionId: int('versionId'),
-    mode: q.get('mode'),
-    level: q.get('level') === UNKNOWN_LEVEL ? UNKNOWN_LEVEL : int('level'),
-  };
+/**
+ * 이 기록 칸이 "채보 패널을 연 것" 인가. 열 때 pushState 의 state 에 표시를 남깁니다 —
+ * 그래야 닫기 · Esc 가 history.back() 으로 그 칸을 걷어 내, 뒤로 가기가 다시 패널을 열지
+ * 않습니다. 공유 주소로 들어와 처음부터 열려 있던 패널은 표시가 없어 주소만 고칩니다.
+ */
+const PANEL_MARK = 'tierPanel';
+function isPanelEntry(): boolean {
+  const st = window.history.state as Record<string, unknown> | null;
+  return Boolean(st && st[PANEL_MARK]);
 }
 
 /**
@@ -76,10 +65,28 @@ function avgLabel(avg: number): string {
   return Number(avg.toFixed(2)).toFixed(2);
 }
 
+/**
+ * 서열표 주소를 바꾼다. **push** 는 뒤로 가기로 돌아올 칸을 하나 더 쌓고, **replace** 는
+ * 지금 칸을 고칩니다. `mark` 는 이 칸이 '채보 패널을 연 칸' 인지 (isPanelEntry).
+ * 주소가 같으면 아무것도 쌓지 않습니다 — 같은 레벨을 다시 골라도 기록이 늘지 않게.
+ */
+function writeUrl(state: TierUrlState, how: 'push' | 'replace', mark: boolean) {
+  const q = tierQuery(state);
+  const next = `${window.location.pathname}${q ? `?${q}` : ''}`;
+  const same = next === window.location.pathname + window.location.search;
+  if (same && (how === 'push' || isPanelEntry() === mark)) return;
+  // Next 16 은 history.pushState · replaceState 를 감싸 라우터와 맞춥니다
+  // (node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md
+  //  'Native History API'). 우리 표시 외의 내부 상태는 Next 가 옮겨 붙입니다.
+  if (how === 'push') window.history.pushState({ [PANEL_MARK]: mark }, '', next);
+  else window.history.replaceState({ [PANEL_MARK]: mark }, '', next);
+}
+
 export default function TierBoardView() {
   const playerId = usePlayerId();
 
-  const [sel, setSel] = useState<Selection>(selectionFromUrl);
+  const [initial] = useState<TierUrlState>(stateFromUrl);
+  const [sel, setSel] = useState<Selection>(initial.sel);
   const [games, setGames] = useState<TierGame[]>([]);
   const [levels, setLevels] = useState<LevelOption[]>([]);
   const [board, setBoard] = useState<TierBoard | null>(null);
@@ -87,9 +94,39 @@ export default function TierBoardView() {
   /** 서열표를 못 받았을 때의 문구. 예전엔 500 응답의 undefined 가 `.map` 에서 터져 흰 화면이었다 */
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  /**
+   * 열린 채보 — **주소의 `chart`** 와 같은 값입니다 (C-1). 상세 내용(detail)은 이 번호로
+   * 따로 읽어 오므로, 주소만 있으면 새로고침 · 공유 · 뒤로 가기에서 같은 패널이 섭니다.
+   */
+  // 첫 값은 비워 두고 붙은 뒤에 주소에서 채운다 — 서버 렌더에는 주소가 없어, 처음부터 채우면
+  // 오른쪽 칸의 첫 출력(안내문 ↔ '불러오는 중…')이 서버와 달라져 하이드레이션이 어긋난다.
+  const [chartId, setChartId] = useState<number | null>(null);
   const [detail, setDetail] = useState<ChartDetail | null>(null);
+  /** 열린 채보를 못 읽었을 때의 문구 — 어느 채보의 것인지 함께 둔다 */
+  const [detailError, setDetailError] = useState<{ id: number; message: string } | null>(null);
+  /**
+   * 패널 제목으로 초점을 옮기라는 신호 (C-3). 사용자가 **눌러서** 연 채보의 상세가 도착했을
+   * 때만 올립니다 — 공유 주소로 들어와 처음부터 열린 패널은 초점을 빼앗지 않습니다.
+   */
+  const [focusToken, setFocusToken] = useState(0);
+  const focusPendingRef = useRef<number | null>(null);
+  /** 패널이 닫힌 뒤 초점을 돌려줄 칩의 채보 번호 */
+  const returnFocusRef = useRef<number | null>(null);
+  /** 검색 · 다른 채보 링크로 고른 채보 — 그 표가 그려지면 칩이 보이게 굴린다 */
+  const scrollPendingRef = useRef<number | null>(null);
+  const chartIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const fromUrl = parseTierQuery(window.location.search).chartId;
+    if (fromUrl !== null) setChartId(fromUrl);
+  }, []);
+  useEffect(() => {
+    chartIdRef.current = chartId;
+  }, [chartId]);
+  /** 늦게 도착한 앞선 응답이 새 표를 덮지 않게 (레벨을 빠르게 넘길 때) */
+  const loadSeq = useRef(0);
 
   const loadBoard = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -100,12 +137,14 @@ export default function TierBoardView() {
 
       const res = await fetch(`/api/tier?${params}`);
       const data = await res.json().catch(() => ({}));
+      if (seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(data.error ?? '서열표를 불러오지 못했어요.');
       setGames((data.games as TierGame[]) ?? []);
       setLevels((data.levels as LevelOption[]) ?? []);
       setBoard((data.board as TierBoard) ?? null);
       setLoadError(null);
     } catch (e) {
+      if (seq !== loadSeq.current) return;
       // fetch 가 던지는 TypeError 의 message 는 브라우저 문구('Failed to fetch')라 화면에 내지 않는다
       setLoadError(
         e instanceof Error && !(e instanceof TypeError)
@@ -113,7 +152,7 @@ export default function TierBoardView() {
           : '연결이 잠깐 끊겼어요. 다시 시도해 주세요',
       );
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
     // playerId 는 요청에 쓰이지 않지만 **의존성에는 남깁니다**. 내 클리어·투표
     // 표시는 서버가 세션에서 읽으므로, 로그인한 사람이 바뀌면 같은 주소라도
@@ -125,60 +164,172 @@ export default function TierBoardView() {
   }, [loadBoard]);
 
   /**
-   * 그려진 조합을 주소에 남긴다 — 새로고침하면 보던 서열표가 그대로 나온다.
+   * 그려진 조합으로 주소를 **고친다**(replace) — 새로고침하면 보던 서열표가 그대로 나온다.
    *
    * 요청값(sel)이 아니라 **board** 를 씁니다. sel 은 게임만 고르고 모드·레벨은
    * 비워 두는 경우가 있어(그 게임의 첫 조합을 서버가 고른다), sel 을 주소에
    * 적으면 새로고침했을 때 레벨이 빠진 주소가 되어 다시 첫 조합으로 갑니다.
-   * board 는 서버가 실제로 고른 결과라 그 자리를 정확히 가리킵니다.
    *
-   * pushState 가 아니라 replaceState 입니다 — 레벨을 훑어보는 동안 히스토리가
-   * 쌓이면 뒤로가기를 여러 번 눌러야 이 페이지를 벗어나게 됩니다.
+   * 기록을 **쌓는** 일은 사용자가 고를 때(choose · openChart) 합니다 — 2026-11-20 UX 시험에서
+   * 레벨을 바꿔도 기록이 늘지 않아 뒤로 가기가 곧장 홈으로 나갔습니다(C-1). 여기서는 그
+   * 칸의 주소를 서버가 고른 조합으로 다듬기만 하므로 replace 가 맞습니다. 열린 채보는
+   * 주소에 있는 그대로 둡니다.
    */
   useEffect(() => {
     if (!board) return;
-
-    const q = new URLSearchParams();
-    q.set('machineId', String(board.game.machineId));
-    // 버전을 구분하지 않는 게임(펌프·사볼)은 빈 versionId= 를 남기지 않는다.
-    if (board.versionId !== null) q.set('versionId', String(board.versionId));
-    // 난이도 축인 게임(사볼)은 모드가 없다 — 빈 mode= 를 남기지 않는다.
-    if (board.mode !== null) q.set('mode', board.mode);
-    q.set('level', board.level === null ? UNKNOWN_LEVEL : String(board.level));
-
-    const next = `${window.location.pathname}?${q}`;
-    if (next !== window.location.pathname + window.location.search) {
-      window.history.replaceState(null, '', next);
-    }
+    const { chartId: openId } = parseTierQuery(window.location.search);
+    writeUrl(
+      {
+        sel: {
+          machineId: board.game.machineId,
+          versionId: board.versionId,
+          mode: board.mode,
+          level: board.level === null ? UNKNOWN_LEVEL : board.level,
+        },
+        chartId: openId,
+      },
+      'replace',
+      isPanelEntry(),
+    );
   }, [board]);
 
-  // 로그인한 사람이 바뀌면 열려 있는 상세도 그 사람 기준으로 다시 읽는다.
-  // (playerId 를 보내지는 않는다 — 서버가 세션에서 읽는다. 다시 읽는 것 자체가
-  //  필요한 이유는 내 클리어·투표 표시가 그 사람 기준이기 때문이다.)
+  /** 뒤로 · 앞으로 가기 — 주소를 다시 읽어 표와 패널을 맞춘다 */
   useEffect(() => {
-    if (!detail) return;
-    fetch(`/api/charts/${detail.id}`)
-      .then((r) => r.json())
-      .then((d) => d.chart && setDetail(d.chart as ChartDetail))
-      .catch(() => undefined);
-    // detail.id 가 아니라 playerId 변경에만 반응해야 한다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playerId]);
+    const onPop = () => {
+      const st = parseTierQuery(window.location.search);
+      if (chartIdRef.current !== null && st.chartId === null) {
+        returnFocusRef.current = chartIdRef.current;
+      }
+      setSel((prev) => (sameSelection(prev, st.sel) ? prev : st.sel));
+      setChartId(st.chartId);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
-  const openChart = async (id: number) => {
-    try {
-      const res = await fetch(`/api/charts/${id}`);
-      const data = await res.json();
-      if (res.ok && data.chart) setDetail(data.chart as ChartDetail);
-    } catch {
-      // 상세를 못 열었을 뿐 — 서열표는 그대로 보인다
+  /**
+   * 열린 채보의 상세를 읽는다. 로그인한 사람이 바뀌어도 다시 읽는다 — 내 클리어·투표
+   * 표시가 그 사람 기준이다 (playerId 를 보내지는 않는다. 서버가 세션에서 읽는다).
+   */
+  useEffect(() => {
+    if (chartId === null) return;
+    let live = true;
+    fetch(`/api/charts/${chartId}`)
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!live) return;
+        if (res.ok && data.chart) {
+          setDetail(data.chart as ChartDetail);
+          setDetailError(null);
+          if (focusPendingRef.current === chartId) {
+            focusPendingRef.current = null;
+            setFocusToken((t) => t + 1);
+          }
+        } else {
+          setDetailError({
+            id: chartId,
+            message: data.error ?? '채보를 불러오지 못했어요. 다시 시도해 주세요',
+          });
+        }
+      })
+      .catch(() => {
+        if (live) setDetailError({ id: chartId, message: '연결이 잠깐 끊겼어요. 다시 시도해 주세요' });
+      });
+    return () => {
+      live = false;
+    };
+  }, [chartId, playerId]);
+
+  /** 패널이 닫히면 그 패널을 연 칩으로 초점을 돌려준다 (C-3) */
+  useEffect(() => {
+    if (chartId !== null || returnFocusRef.current === null) return;
+    const id = returnFocusRef.current;
+    returnFocusRef.current = null;
+    document.querySelector<HTMLElement>(`[data-chart-id="${id}"]`)?.focus();
+  }, [chartId]);
+
+  /** 검색 · 다른 채보 링크로 건너온 칩을 화면 안으로 굴린다 — 표가 그려진 뒤에 */
+  useEffect(() => {
+    const id = scrollPendingRef.current;
+    if (id === null) return;
+    const chip = document.querySelector<HTMLElement>(`[data-chart-id="${id}"]`);
+    if (!chip) return; // 아직 앞 표다 — 새 표가 오면 다시 본다
+    scrollPendingRef.current = null;
+    chip.scrollIntoView({ block: 'center' });
+  }, [board, chartId]);
+
+  /**
+   * 게임 · 버전 · 모드 · 레벨을 고른다 — 뒤로 가기로 돌아올 칸을 쌓는다 (C-1).
+   *
+   * 1초 안에 잇따라 고르면 새 칸을 쌓지 않고 방금 칸을 고칩니다. 닫힌 셀렉트에서 ↓ 를
+   * 누르면 한 칸마다 change 가 나서(S1 → S20 이 19번), 그대로 쌓으면 뒤로 가기를 19번
+   * 눌러야 합니다. 마지막에 멈춘 레벨 하나만 남습니다.
+   */
+  const lastChooseAt = useRef(0);
+  const choose = (next: Selection) => {
+    const now = Date.now();
+    const how = now - lastChooseAt.current < 1000 ? 'replace' : 'push';
+    lastChooseAt.current = now;
+    writeUrl({ sel: next, chartId: parseTierQuery(window.location.search).chartId }, how, false);
+    setSel(next);
+  };
+
+  /** 칩을 눌러 채보를 연다. 닫혀 있었으면 기록을 쌓아 뒤로 가기가 패널을 닫게 한다 */
+  const openChart = (id: number) => {
+    if (chartId === id) {
+      // 이미 열린 채보 — 초점만 패널로 옮긴다
+      setFocusToken((t) => t + 1);
+      return;
     }
+    focusPendingRef.current = id;
+    const cur = parseTierQuery(window.location.search);
+    if (chartId === null) writeUrl({ ...cur, chartId: id }, 'push', true);
+    else writeUrl({ ...cur, chartId: id }, 'replace', isPanelEntry());
+    setChartId(id);
+  };
+
+  /** 닫기 · Esc. 연 칸이 쌓여 있으면 그 칸을 걷어 내고(뒤로 가기와 같은 결과), 아니면 주소만 고친다 */
+  const closePanel = () => {
+    returnFocusRef.current = chartId;
+    if (isPanelEntry()) {
+      window.history.back(); // popstate 가 chartId 를 비운다
+      return;
+    }
+    writeUrl({ ...parseTierQuery(window.location.search), chartId: null }, 'replace', false);
+    setChartId(null);
   };
 
   const handleChanged = (chart: ChartDetail) => {
     setDetail(chart);
     void loadBoard(); // 등급이 바뀌었을 수 있으므로 서열표를 다시 계산해 받는다
   };
+
+  /**
+   * 검색 결과 · '이 곡의 다른 채보' 에서 채보 하나를 고른다 — 그 채보의 표로 건너가고
+   * 패널을 그 채보로 연다. 기록을 쌓으므로 뒤로 가기로 보던 표로 돌아온다.
+   *
+   * 패널 표시(mark)는 남기지 않습니다 — 건너온 표에서 패널을 닫으면 그 표에 머무는 것이
+   * 맞고, 닫기가 history.back() 으로 앞 표까지 되돌리면 안 됩니다.
+   */
+  const jumpToChart = (c: ChartSearchChart) => {
+    if (!board) return;
+    const next: Selection = {
+      machineId: board.game.machineId,
+      versionId: c.versionId,
+      // 난이도 축인 게임(사볼)은 레벨만으로 표가 정해진다 — 모드를 보내지 않는다
+      mode: board.settings.modeIsDifficulty ? null : c.mode,
+      level: c.level ?? UNKNOWN_LEVEL,
+    };
+    focusPendingRef.current = c.id;
+    scrollPendingRef.current = c.id;
+    writeUrl({ sel: next, chartId: c.id }, 'push', false);
+    setSel((prev) => (sameSelection(prev, next) ? prev : next));
+    setChartId(c.id);
+  };
+
+  /** 지금 보이는 상세 — 닫혔으면 없다. 다른 채보로 바꾸는 동안에는 앞 채보를 그대로 둔다 */
+  const shownDetail = chartId === null ? null : detail;
+  const shownError = chartId !== null && detailError?.id === chartId ? detailError.message : null;
 
   /**
    * 등급 칸(anchor 가 있는 칸)에 실제로 놓인 채보 수. 개인차·특수패턴·미정은 세지
@@ -301,7 +452,7 @@ export default function TierBoardView() {
               value={board?.game.machineId ?? ''}
               onChange={(e) =>
                 // 게임을 바꾸면 버전·모드·레벨은 비운다. 그 게임에 있는 첫 조합을 서버가 고른다.
-                setSel({
+                choose({
                   machineId: Number(e.target.value),
                   versionId: null,
                   mode: null,
@@ -309,6 +460,7 @@ export default function TierBoardView() {
                 })
               }
               title="서열표가 있는 게임"
+              aria-label="게임"
             >
               {games.map((g) => (
                 <option key={g.machineId} value={g.machineId}>
@@ -323,14 +475,15 @@ export default function TierBoardView() {
                 value={board?.versionId ?? ''}
                 onChange={(e) =>
                   // 버전마다 있는 (모드, 레벨) 조합이 다르므로 둘은 비운다.
-                  setSel((s) => ({
-                    machineId: s.machineId,
+                  choose({
+                    machineId: board?.game.machineId ?? sel.machineId,
                     versionId: Number(e.target.value),
                     mode: null,
                     level: null,
-                  }))
+                  })
                 }
                 title="채보 목록의 기준 버전"
+                aria-label="버전"
               >
                 {versions.map((v) => (
                   <option key={v.id} value={v.id}>
@@ -346,14 +499,15 @@ export default function TierBoardView() {
                 value={activeMode}
                 onChange={(e) =>
                   // 모드마다 있는 레벨이 다르므로 레벨은 비운다.
-                  setSel((s) => ({
-                    machineId: s.machineId,
-                    versionId: s.versionId,
+                  choose({
+                    machineId: board?.game.machineId ?? sel.machineId,
+                    versionId: board?.versionId ?? sel.versionId,
                     mode: e.target.value,
                     level: null,
-                  }))
+                  })
                 }
                 title="플레이 모드"
+                aria-label="플레이 모드"
               >
                 {modeCodes.map((m) => (
                   <option key={m} value={m}>
@@ -366,14 +520,15 @@ export default function TierBoardView() {
             <select
               value={activeLevel}
               onChange={(e) =>
-                setSel((s) => ({
-                  machineId: s.machineId,
-                  versionId: s.versionId,
+                choose({
+                  machineId: board?.game.machineId ?? sel.machineId,
+                  versionId: board?.versionId ?? sel.versionId,
                   mode: modeIsDifficulty ? null : activeMode,
                   level:
                     e.target.value === UNKNOWN_LEVEL ? UNKNOWN_LEVEL : Number(e.target.value),
-                }))
+                })
               }
+              aria-label="레벨"
             >
               {levelsForMode.map((l) => (
                 <option key={l.level ?? UNKNOWN_LEVEL} value={l.level ?? UNKNOWN_LEVEL}>
@@ -384,6 +539,17 @@ export default function TierBoardView() {
               ))}
             </select>
           </ScrollStrip>
+
+          {/* 레벨을 몰라도 곡 이름으로 찾는다 — 이 게임의 모든 레벨에서 (T-1) */}
+          {board && (
+            <TierSongSearch
+              // 게임 · 버전을 바꾸면 앞 게임의 검색어와 결과를 걷는다
+              key={`${board.game.machineId}:${board.versionId ?? ''}`}
+              game={board.game}
+              versionId={board.versionId}
+              onPick={jumpToChart}
+            />
+          )}
         </header>
 
         {loadError ? (
@@ -418,7 +584,9 @@ export default function TierBoardView() {
                     <button
                       key={c.id}
                       type="button"
-                      className={`chart-chip ${detail?.id === c.id ? 'is-on' : ''}`}
+                      className={`chart-chip ${chartId === c.id ? 'is-on' : ''}`}
+                      data-chart-id={c.id}
+                      aria-current={chartId === c.id ? 'true' : undefined}
                       onClick={() => openChart(c.id)}
                       title={[
                         `${c.voteCount}표`,
@@ -491,13 +659,28 @@ export default function TierBoardView() {
       </section>
 
       <aside className="tier-side">
-        {detail ? (
+        {shownError ? (
+          // 주소의 채보를 못 읽었을 때 — 지워졌거나 번호가 틀린 공유 주소. 닫을 길을 둔다.
+          <div className="detail-empty">
+            <p className="warn" role="alert">
+              {shownError}
+            </p>
+            <button type="button" className="btn btn-sm" onClick={closePanel}>
+              닫기
+            </button>
+          </div>
+        ) : shownDetail ? (
           <ChartDetailPanel
-            chart={detail}
+            chart={shownDetail}
             playerId={playerId}
+            game={board?.game ?? null}
+            focusToken={focusToken}
             onChanged={handleChanged}
-            onClose={() => setDetail(null)}
+            onClose={closePanel}
+            onPickChart={jumpToChart}
           />
+        ) : chartId !== null ? (
+          <p className="detail-empty muted">채보를 불러오는 중…</p>
         ) : (
           <div className="detail-empty muted">
             <p>채보를 누르면 투표 분포와 평가를 보고, 체감 난이도를 투표할 수 있어요.</p>

@@ -49,7 +49,7 @@ sudo -u arcade cp .env.example .env.local && sudo -u arcade nano .env.local
 | `APP_URL` | `https://<운영 도메인>` — OAuth 콜백·sitemap·OG 의 기준 |
 | `TRUSTED_PROXY_HOPS` | `1` (start:cluster 만) · nginx 를 앞에 두면 `2` |
 | `NEXT_PUBLIC_NAVER_MAP_KEY_ID` | 빌드 시점 값 — 바꾸면 **재빌드** |
-| `NEXT_PUBLIC_OPERATOR_NAME` · `NEXT_PUBLIC_CONTACT_EMAIL` | 약관·처리방침에 찍히는 운영자 정보 (없으면 화면에 경고가 보입니다) |
+| `NEXT_PUBLIC_OPERATOR_NAME` · `NEXT_PUBLIC_CONTACT_EMAIL` | 약관·처리방침에 찍히는 운영자 정보 — **빌드 때** 박힘. 비면 build-release.sh 가 멈추고, 그렇게 만든 빌드는 기동 검사(lib/env-check.ts)가 막음. 개발 모드에서만 화면에 설정 안내가 보임 |
 
 DB 와 첫 데이터 (자세한 이유와 실측은 docs/DATA-SOURCES.md):
 

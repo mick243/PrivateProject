@@ -18,6 +18,7 @@ export function WaitBadge({
   live,
   cabinets,
   compact,
+  shownAt,
 }: {
   live: MachineLive | null;
   /**
@@ -27,26 +28,33 @@ export function WaitBadge({
    */
   cabinets?: number | null;
   compact?: boolean;
+  /**
+   * 보이는 숫자를 알려 준 제보의 시각 (lib/report-display.ts waitShownAt).
+   * 뷰의 waitReportedAt 은 **가장 최근 제보**의 시각이라, 10분 전 3명 + 방금 1명이
+   * '3명 · 방금' 으로 읽혔다 (2026-11-20 UX 시험 R-2). 모르면 뷰의 시각을 쓴다.
+   */
+  shownAt?: string | null;
 }) {
   if (!live || live.waitCount === null) return null;
 
   const count = live.waitCount;
   const { label, tone } = waitLevel(count, cabinets);
+  const at = shownAt ?? live.waitReportedAt;
 
   return (
     <span
       className={`wait wait-${tone}`}
       title={
         live.waitReports > 1
-          ? `제보 ${live.waitReports}건 중 가장 많이 본 값`
+          ? `최근 제보 ${live.waitReports}건 중 가장 많은 인원${at ? ` · ${timeAgo(at)} 제보` : ''}`
           : '제보 1건'
       }
     >
       {/* 뷰가 고른 최대값이 그대로 내려온다 (machine_live.wait_count) */}
       <strong>{waitCountLabel(count)}</strong>
       <em>{label}</em>
-      {!compact && live.waitReportedAt && (
-        <span className="wait-time">{timeAgo(live.waitReportedAt)}</span>
+      {!compact && at && (
+        <span className="wait-time">{timeAgo(at)}</span>
       )}
     </span>
   );

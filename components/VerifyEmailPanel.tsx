@@ -55,17 +55,70 @@ function parseStatus(raw: string | null): Status {
   return raw !== null && raw in MESSAGES ? (raw as Status) : null;
 }
 
+interface VerifyState {
+  email: string | null;
+  verified: boolean;
+  mailConfigured: boolean;
+  /** 이메일을 가려서 저장하는 중 — 확인 메일을 보내지 않습니다 (lib/email-mask.ts) */
+  masked: boolean;
+}
+
+/** 결과(?status=) 없이 들어왔을 때의 한 줄 — 지금 계정 상태에 맞춰서 */
+function NoStatusMessage({ loggedIn, state }: { loggedIn: boolean; state: VerifyState | null }) {
+  if (!loggedIn) {
+    return (
+      <p className="muted small">
+        로그인하면 내 이메일이 확인됐는지 볼 수 있어요. 메일의 링크는 로그인하지 않아도 열려요.
+      </p>
+    );
+  }
+  if (state === null) return <p className="muted small">불러오는 중…</p>;
+  if (state.masked) {
+    // 보내지 않은 메일을 보냈다고 적지 않습니다 (SignupForm 완료 화면과 같은 이유)
+    return (
+      <p className="muted small">
+        시험 기간에는 이메일 주소의 앞부분을 가려서 저장해서 확인 메일을 보내지 않아요. 확인하지
+        않아도 둘러보기와 글쓰기는 그대로 돼요.
+      </p>
+    );
+  }
+  if (!state.email) {
+    return (
+      <p className="muted small">
+        이 계정에는 이메일이 없어요. 소셜 계정으로 가입하면 이메일을 따로 받지 않아요.
+      </p>
+    );
+  }
+  if (state.verified) {
+    return (
+      <>
+        <p className="notice">이미 확인한 이메일이에요</p>
+        <p className="muted small">비밀번호를 잊어도 이 주소로 되찾을 수 있어요.</p>
+      </>
+    );
+  }
+  return (
+    <p className="muted small">
+      아직 확인 전이에요. 가입할 때 보낸 메일의 링크를 열거나 아래에서 새 메일을 받아 주세요.
+      확인해 두면 비밀번호를 잊었을 때 이 주소로 되찾을 수 있어요.
+    </p>
+  );
+}
+
 export default function VerifyEmailPanel() {
-  const status = parseStatus(useSearchParams().get('status'));
+  const params = useSearchParams();
+  const status = parseStatus(params.get('status'));
+  /** 메일의 링크를 손으로 옮기다 `/verify-email?token=…` 로 온 경우 — 확인 라우트로 넘깁니다 */
+  const strayToken = status === null ? params.get('token') : null;
   const user = useSession();
 
-  const [state, setState] = useState<{
-    email: string | null;
-    verified: boolean;
-    mailConfigured: boolean;
-    /** 이메일을 가려서 저장하는 중 — 확인 메일을 보내지 않습니다 (lib/email-mask.ts) */
-    masked: boolean;
-  } | null>(null);
+  const [state, setState] = useState<VerifyState | null>(null);
+
+  useEffect(() => {
+    if (strayToken) {
+      window.location.replace(`/api/auth/verify?token=${encodeURIComponent(strayToken)}`);
+    }
+  }, [strayToken]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -133,6 +186,14 @@ export default function VerifyEmailPanel() {
    */
   const hasPrimary = canResend || !user;
 
+  if (strayToken) {
+    return (
+      <main className="login-page">
+        <p className="muted pad">링크를 확인하는 중…</p>
+      </main>
+    );
+  }
+
   return (
     <main className="login-page">
       <section className="login-card">
@@ -143,17 +204,13 @@ export default function VerifyEmailPanel() {
             <p className={message.tone === 'ok' ? 'notice' : 'warn'}>{message.title}</p>
             <p className="muted small">{message.body}</p>
           </>
-        ) : state?.masked ? (
-          // 보내지 않은 메일을 보냈다고 적지 않습니다 (SignupForm 머리말과 같은 이유)
-          <p className="muted small">
-            시험 기간에는 이메일 주소의 앞부분을 가려서 저장해서 확인 메일을 보내지
-            않아요. 확인하지 않아도 둘러보기와 글쓰기는 그대로 돼요.
-          </p>
         ) : (
-          <p className="muted small">
-            가입할 때 적은 주소로 확인 메일을 보냈어요. 메일의 링크를 열면 확인이 끝나고,
-            나중에 비밀번호를 잊어도 이 주소로 되찾을 수 있어요.
-          </p>
+          /*
+           * 결과 없이 들어온 경우 — 예전에는 누구에게나 "확인 메일을 보냈어요" 한 문장이었습니다.
+           * 로그인 안 함 · 이미 확인함 · 이메일 없음에도 같은 말이라 상태를 알 수 없었습니다
+           * (2026-11-20 UX 시험 A-2). 지금 상태에 맞는 한 가지를 말합니다.
+           */
+          <NoStatusMessage loggedIn={Boolean(user)} state={state} />
         )}
 
         {otherAccount && (
@@ -197,7 +254,7 @@ export default function VerifyEmailPanel() {
         {!user && (
           <Link className="btn btn-primary btn-block" href="/login?next=%2Fverify-email">
             {/* 확인이 끝난 사람에게 "메일 받기" 는 할 일이 아니다 */}
-            {status === 'ok' || status === 'used' ? '로그인하기' : '로그인하고 새 메일 받기'}
+            {status === 'ok' || status === 'used' || status === null ? '로그인하기' : '로그인하고 새 메일 받기'}
           </Link>
         )}
         {hasPrimary ? (

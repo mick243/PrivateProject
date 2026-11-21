@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import {
   UNDECIDED_CODE,
   UNIQUE_CODE,
@@ -10,7 +10,9 @@ import {
   chartVideoSearchUrl,
   youtubeWatchUrl,
 } from '@/lib/tier-types';
-import type { ChartDetail, TierGrade } from '@/lib/tier-types';
+import type { ChartDetail, TierGame, TierGrade } from '@/lib/tier-types';
+import { chartStepLabel } from '@/lib/chart-search-types';
+import type { ChartSearchChart, SongCharts } from '@/lib/chart-search-types';
 import ChartComments from './ChartComments';
 
 interface Props {
@@ -18,6 +20,15 @@ interface Props {
   playerId: number | null;
   onChanged: (chart: ChartDetail) => void;
   onClose: () => void;
+  /** 모드 표기(Single · MAXIMUM …)를 붙일 게임. 모르면 코드 그대로 쓴다 */
+  game?: TierGame | null;
+  /**
+   * 오를 때마다 패널 제목으로 초점을 옮긴다 (C-3). 사용자가 칩을 눌러 연 채보가 도착했을
+   * 때만 부모가 올린다 — 공유 주소로 처음부터 열린 패널은 초점을 빼앗지 않는다.
+   */
+  focusToken?: number;
+  /** '이 곡의 다른 채보' 를 고르면 — 부모가 그 레벨로 건너가 패널을 바꾼다 */
+  onPickChart?: (chart: ChartSearchChart) => void;
 }
 
 /**
@@ -83,7 +94,24 @@ function withRo(num: string): string {
   return /[036]$/.test(num) ? `${num}으로` : `${num}로`;
 }
 
-export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }: Props) {
+/** 텍스트를 적는 칸인가 — 거기서 누른 Esc 는 패널을 닫지 않는다 (쓰던 평가를 잃지 않게) */
+function isTyping(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable || el.tagName === 'TEXTAREA') return true;
+  if (el.tagName !== 'INPUT') return false;
+  const type = (el as HTMLInputElement).type;
+  return type !== 'checkbox' && type !== 'radio' && type !== 'range' && type !== 'button';
+}
+
+export default function ChartDetailPanel({
+  chart,
+  playerId,
+  onChanged,
+  onClose,
+  game = null,
+  focusToken = 0,
+  onPickChart,
+}: Props) {
   const { settings } = chart;
   // 눈금은 tier_step(등급 간격)이 아니라 vote_step 을 따른다. 등급 판정은
   // anchor 최근접이라 눈금을 잘게 해도 판정 구간은 그대로다.
@@ -92,6 +120,63 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
   const [draft, setDraft] = useState<number>(chart.myVote ?? 0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const titleId = useId();
+  const titleRef = useRef<HTMLHeadingElement>(null);
+
+  /**
+   * 칩을 눌러 열면 초점을 패널 제목으로 옮긴다 (UX 시험 2026-11-20 C-3). 예전에는 초점이
+   * 칩에 남아 패널까지 Tab 을 18번 눌러야 했다. 제목은 tabIndex=-1 이라 Tab 순서에는
+   * 끼지 않고, 화면 낭독기는 제목부터 읽는다.
+   */
+  useEffect(() => {
+    if (focusToken > 0) titleRef.current?.focus();
+  }, [focusToken]);
+
+  /** 링크 복사 결과 — 몇 초 뒤 걷는다 */
+  const [copied, setCopied] = useState<'ok' | 'fail' | null>(null);
+  useEffect(() => {
+    if (copied === null) return;
+    const t = window.setTimeout(() => setCopied(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [copied]);
+
+  /**
+   * 지금 주소를 복사한다. 부모(TierBoardView)가 패널을 열 때 주소에 `&chart=` 를 넣어 두므로
+   * 주소가 곧 이 채보의 공유 주소다 (C-1). 복사를 막은 브라우저면 주소창을 쓰라고 말한다.
+   */
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied('ok');
+    } catch {
+      setCopied('fail');
+    }
+  };
+
+  /** 같은 곡의 다른 채보 (T-1). 채보를 바꾸면 다시 읽는다 */
+  const [song, setSong] = useState<SongCharts | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/charts/${chart.id}/siblings`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (live) setSong((d as SongCharts | null) ?? null);
+      })
+      .catch(() => undefined); // 못 읽어도 그 줄만 빠진다
+    return () => {
+      live = false;
+    };
+  }, [chart.id]);
+  const siblings =
+    song && song.charts.some((c) => c.id === chart.id)
+      ? song.charts.filter((c) => c.id !== chart.id)
+      : [];
+
+  // 로그인하고 돌아오면 보던 표와 채보로 (주소 그대로 — C-1 · C-4). 이 패널은 채보를
+  // 받아 온 뒤에만 그려져 서버 렌더가 없다 — window 를 바로 읽어도 하이드레이션과 무관하다.
+  const loginNext =
+    typeof window === 'undefined' ? '/tier' : window.location.pathname + window.location.search;
 
   // 다른 채보를 고르면 슬라이더를 그 채보의 내 투표값으로 되돌린다.
   useEffect(() => {
@@ -141,10 +226,30 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
   const draftLabel = draft.toFixed(2);
 
   return (
-    <div className="detail">
+    <section
+      className="detail"
+      aria-labelledby={titleId}
+      onKeyDown={(e) => {
+        // Esc 로 닫는다 (C-3). 글을 쓰는 칸에서는 쓰던 것을 잃지 않게 닫지 않고, 안쪽의 다른
+        // 부품(이모티콘 고르기 등)이 이미 Esc 를 썼으면(defaultPrevented) 그쪽에 맡긴다.
+        if (e.key !== 'Escape' || e.defaultPrevented || isTyping(e.target)) return;
+        // 이모티콘 고르기는 document 에서 Esc 를 받아 스스로 닫는다 — 그 안에서 누른 Esc 로
+        // 패널까지 닫히지 않게, 펼쳐진 고르기 안이면 그쪽에 맡긴다.
+        if (
+          e.target instanceof Element &&
+          e.target.closest('.emoticon-picker:has([aria-expanded="true"])')
+        ) {
+          return;
+        }
+        e.preventDefault();
+        onClose();
+      }}
+    >
       <div className="detail-head">
         <div>
-          <h2>{chart.title}</h2>
+          <h2 id={titleId} ref={titleRef} tabIndex={-1}>
+            {chart.title}
+          </h2>
           <p className="muted small">
             {/* modeLabel 이 null 이면 난이도 미표기라 레벨만 붙인다 (migrate-047).
                 difficultyLabel 은 난이도 축이 있는 게임에서만 있다 (migrate-059). */}
@@ -155,10 +260,37 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
             Lv.{chart.level ?? '?'}
           </p>
         </div>
-        <button type="button" className="btn btn-sm" onClick={onClose}>
-          닫기
-        </button>
+        <div className="detail-head-actions">
+          <button type="button" className="btn btn-sm" onClick={() => void copyLink()}>
+            링크 복사
+          </button>
+          <button type="button" className="btn btn-sm" onClick={onClose}>
+            닫기
+          </button>
+        </div>
       </div>
+      <p className="chart-copy-note small" role="status">
+        {copied === 'ok' && '링크를 복사했어요. 붙여 넣으면 이 채보가 열려요'}
+        {copied === 'fail' && '복사하지 못했어요. 주소창의 주소를 복사해 주세요'}
+      </p>
+
+      {siblings.length > 0 && onPickChart && (
+        <nav className="chart-siblings" aria-label="이 곡의 다른 채보">
+          <span className="muted small">이 곡의 다른 채보</span>
+          <div className="chart-siblings-list">
+            {siblings.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className="btn btn-sm"
+                onClick={() => onPickChart(c)}
+              >
+                {chartStepLabel(c, game)}
+              </button>
+            ))}
+          </div>
+        </nav>
+      )}
 
       {/*
         채보 영상. 숫자(등급·평균·투표 수)보다 **위**에 둡니다 — 처음 보는 채보에
@@ -245,7 +377,7 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
 
         {!playerId ? (
           <p className="muted small">
-            <Link href="/login?next=%2Ftier">로그인</Link>하면 클리어 기록과 체감 난이도를 남길 수
+            <Link href={`/login?next=${encodeURIComponent(loginNext)}`}>로그인</Link>하면 클리어 기록과 체감 난이도를 남길 수
             있어요.
           </p>
         ) : (
@@ -363,6 +495,6 @@ export default function ChartDetailPanel({ chart, playerId, onChanged, onClose }
       </div>
 
       <ChartComments chart={chart} playerId={playerId} onChanged={onChanged} />
-    </div>
+    </section>
   );
 }

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { COMMENTS_PAGE_SIZE, type PostDetail, type PostSummary } from '@/lib/board-types';
 import { timeAgo } from '@/lib/community-types';
 import {
@@ -223,6 +223,30 @@ export default function PostDetailView({
   // (2026-11-20 로컬 확인에서 "Rendered more hooks" 로 실제로 죽었다).
   const blockedIds = useBlockedIds();
 
+  /**
+   * 글을 열면 제목으로 초점을 옮긴다 (UX 시험 C-3 — 열면 초점이 body 로 가서 낭독기 사용자가 무엇이
+   * 열렸는지 몰랐다). 글마다 한 번만 — 댓글 페이지를 넘기거나 추천할 때마다 끌려 올라가면 안 된다.
+   * 제목이 아직 없으면(요약 없이 들어와 받는 중) 다음 렌더에서 다시 본다.
+   */
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusedFor = useRef<number | null>(null);
+  const titleText = post?.title ?? initial?.title ?? null;
+  useEffect(() => {
+    if (focusedFor.current === postId || !headingRef.current) return;
+    focusedFor.current = postId;
+    headingRef.current.focus({ preventScroll: true });
+  });
+
+  /** 탭 · 방문 기록에 글 제목이 보이게 (C-1 — document.title 이 늘 '커뮤니티' 였다) */
+  useEffect(() => {
+    if (!titleText) return;
+    const before = document.title;
+    document.title = `${titleText} — 커뮤니티 — 오락실 파인더`;
+    return () => {
+      document.title = before;
+    };
+  }, [titleText]);
+
   // 막힌 화면에는 돌아갈 단추를 둔다 (DESIGN-GUIDE §1-3 · §4 없는 대상)
   if (missing)
     return (
@@ -298,7 +322,10 @@ export default function PostDetailView({
           )}
           <span className={`cat cat-${shown.category}`}>{shown.categoryLabel}</span>
         </div>
-        <h1>{shown.title}</h1>
+        {/* tabIndex -1: 글을 열 때 초점을 받는 자리 (위 headingRef) */}
+        <h1 ref={headingRef} tabIndex={-1} className="post-detail-title">
+          {shown.title}
+        </h1>
         <p className="muted small">
           {shown.nickname} · {timeAgo(shown.createdAt)}
           {shown.updatedAt !== shown.createdAt && ` (수정 ${timeAgo(shown.updatedAt)})`} · 조회{' '}

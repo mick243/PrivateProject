@@ -74,8 +74,17 @@ export interface MapPaneProps {
    * 선택 센터링(selectedId)과 다른 점은 줌입니다 — 목록 줄을 눌러 훑는 동안은
    * 보던 줌을 지키지만, "○○ 위치로 이동" 은 그 지점 한 곳을 보러 가는 것이라
    * 거리(street) 수준까지 당깁니다. 기준점(center)은 건드리지 않습니다.
+   *
+   * fitBox 가 있으면 그 사각형이 화면에 다 들도록 줌을 셈합니다 — 검색칸 Enter 의 "찾은 곳 모두
+   * 보기" (lib/finder-search.ts). 그때 zoom 은 상한입니다(한 곳뿐이어도 건물까지는 안 당김).
    */
-  focusPoint?: { lat: number; lng: number; zoom?: number; nonce: number } | null;
+  focusPoint?: {
+    lat: number;
+    lng: number;
+    zoom?: number;
+    fitBox?: LatLngBox;
+    nonce: number;
+  } | null;
   /**
    * 지도를 **처음 만들 때** 이 자리 · 줌으로 연다 — 새로고침 전에 보던 화면 (ArcadeFinder 의
    * MAP_VIEW_STORE_KEY). 이걸로 열면 "첫 기준점으로 한 번 옮기기" 는 건너뛰고, selectedId 가

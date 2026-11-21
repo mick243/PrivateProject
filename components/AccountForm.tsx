@@ -64,7 +64,94 @@ type Phase =
   | { kind: 'open'; currentPassword: string | null; hasPassword: boolean };
 
 /** 들어온 뒤 보이는 화면 — 메뉴, 또는 한 가지 일 */
-type View = 'menu' | 'nickname' | 'password' | 'devices' | 'blocked' | 'leave';
+type View = 'menu' | 'nickname' | 'password' | 'email' | 'devices' | 'blocked' | 'leave';
+
+/** 이메일과 확인 상태 (GET /api/auth/verify/resend) — UX 시험 A-2: 내 정보에 주소 · 상태가 없었습니다 */
+interface EmailState {
+  email: string | null;
+  verified: boolean;
+  mailConfigured: boolean;
+  /** 이메일을 가려서 저장하는 중 — 확인 메일을 보내지 않습니다 (lib/email-mask.ts) */
+  masked: boolean;
+}
+
+function emailSummary(e: EmailState | null): string {
+  if (!e) return '불러오는 중…';
+  if (!e.email) return '없음';
+  return `${e.email} · ${e.verified ? '확인됨' : '아직 확인 전'}`;
+}
+
+/**
+ * 이메일 한 가지 일 화면 — 주소 · 확인 상태 · 확인 메일 다시 받기.
+ * 확인은 관문이 아니라 비밀번호 찾기의 열쇠라는 것을 한 줄로 말합니다 (lib/email-verify.ts).
+ */
+function EmailPanel({ state }: { state: EmailState | null }) {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!state) return <p className="muted small">불러오는 중…</p>;
+  if (!state.email) {
+    return (
+      <p className="muted small">
+        이 계정에는 이메일이 없어요. 소셜 계정으로 가입하면 이메일을 따로 받지 않아요.
+      </p>
+    );
+  }
+
+  const resend = async () => {
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    try {
+      const res = await fetch('/api/auth/verify/resend', { method: 'POST' });
+      const data = (await res.json()) as { error?: string; email?: string };
+      if (!res.ok) {
+        setError(data.error ?? '메일을 보내지 못했어요. 조금 뒤에 다시 시도해 주세요');
+        return;
+      }
+      setNotice(`${data.email ?? state.email} 주소로 확인 메일을 보냈어요. 몇 분 안에 안 오면 스팸함도 봐 주세요.`);
+    } catch {
+      setError(NETWORK_ERROR);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <p className="login-who">{state.email}</p>
+      {state.verified ? (
+        <p className="notice">확인한 이메일이에요. 비밀번호를 잊어도 이 주소로 되찾을 수 있어요.</p>
+      ) : state.masked ? (
+        <p className="muted small">
+          시험 기간에는 이메일 주소의 앞부분을 가려서 저장해서 확인 메일을 보내지 않아요. 확인하지
+          않아도 둘러보기와 글쓰기는 그대로 돼요.
+        </p>
+      ) : (
+        <p className="muted small">
+          아직 확인 전이에요. 확인하지 않아도 다 쓸 수 있고, 확인해 두면 비밀번호를 잊었을 때 이
+          주소로 되찾을 수 있어요.
+        </p>
+      )}
+      {notice && (
+        <p className="notice" role="status">
+          {notice}
+        </p>
+      )}
+      {error && (
+        <p className="warn" role="alert">
+          {error}
+        </p>
+      )}
+      {!state.verified && !state.masked && (
+        <button type="button" className="btn btn-primary btn-block" disabled={busy} onClick={() => void resend()}>
+          {busy ? '보내는 중…' : '확인 메일 다시 받기'}
+        </button>
+      )}
+    </>
+  );
+}
 
 /**
  * 내가 차단한 사람 (lib/use-blocks.ts). 차단은 글 · 댓글 옆의 '⋯' 단추로 하고, 여기서 풉니다.
@@ -131,6 +218,27 @@ export default function AccountForm() {
   const [error, setError] = useState<string | null>(null);
   /** 메뉴로 돌아왔을 때 한 줄로 알리는 결과 */
   const [notice, setNotice] = useState<string | null>(null);
+  /** 이메일 · 확인 상태 — 들어온 뒤에만 묻습니다 (남이 볼 일이 아닌 값) */
+  const [emailState, setEmailState] = useState<EmailState | null>(null);
+  const opened = phase.kind === 'open';
+
+  useEffect(() => {
+    if (!opened) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await fetch('/api/auth/verify/resend', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = (await res.json()) as EmailState;
+        if (alive) setEmailState(data);
+      } catch {
+        // 못 읽어도 메뉴는 그립니다 — 이메일 줄이 '불러오는 중…' 으로 남을 뿐입니다.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [opened]);
 
   useEffect(() => {
     let alive = true;
@@ -493,6 +601,18 @@ export default function AccountForm() {
     );
   }
 
+  if (view === 'email') {
+    return (
+      <main className="login-page">
+        <section className="login-card">
+          <h1>이메일</h1>
+          <EmailPanel state={emailState} />
+          {backLink}
+        </section>
+      </main>
+    );
+  }
+
   if (view === 'devices') {
     return (
       <main className="login-page">
@@ -580,6 +700,7 @@ export default function AccountForm() {
           {phase.hasPassword && (
             <MenuRow label="비밀번호 바꾸기" onClick={() => openView('password')} />
           )}
+          <MenuRow label="이메일" sub={emailSummary(emailState)} onClick={() => openView('email')} />
           <MenuRow
             label="다른 기기에서 로그아웃"
             sub="두고 온 로그인을 끊어요"

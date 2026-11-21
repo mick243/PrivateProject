@@ -32,7 +32,7 @@ export default function PlayerPicker() {
 
   return (
     <span className="player-picker" title={user.nickname}>
-      <span className="muted small">플레이어</span>
+      <span className="muted small">로그인</span>
       <strong className="player-name">{user.nickname}</strong>
       {user.isAdmin && <em className="admin-tag">{ADMIN_LABEL}</em>}
     </span>

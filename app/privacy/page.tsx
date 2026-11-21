@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { CONTACT_EMAIL, LEGAL_EFFECTIVE_DATE, LEGAL_PLACEHOLDERS_PRESENT, OPERATOR_NAME } from '@/lib/legal';
+import { CONTACT_EMAIL, LEGAL_EFFECTIVE_DATE, OPERATOR_NAME, SHOW_LEGAL_DEV_WARNING } from '@/lib/legal';
 
 export const metadata = {
   title: '개인정보처리방침',
@@ -21,7 +21,8 @@ export default function PrivacyPage() {
       <article className="legal">
         <h1>개인정보처리방침</h1>
         <p className="muted small">시행일 {LEGAL_EFFECTIVE_DATE}</p>
-        {LEGAL_PLACEHOLDERS_PRESENT && (
+        {/* 설정 키 안내는 개발 모드에서만 (docs/DESIGN-GUIDE.md §6) — 운영 빌드는 값이 비면 기동 검사에서 막힙니다 (lib/env-check.ts) */}
+        {SHOW_LEGAL_DEV_WARNING && (
           <p className="warn">
             운영자 정보가 설정되지 않았습니다 — <code>NEXT_PUBLIC_OPERATOR_NAME</code> ·{' '}
             <code>NEXT_PUBLIC_CONTACT_EMAIL</code> 을 채우세요. (이 경고는 값이 있으면 사라집니다)

@@ -1,6 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  clearDraft,
+  draftKey,
+  hasDraftContent,
+  loadDraft,
+  saveDraft,
+  savedAgo,
+  type PostDraft,
+} from '@/app/community/post-draft';
 import { attachmentIdsInBody, stripMarkers } from '@/lib/board-content';
 import {
   defaultCategoryCode,
@@ -13,6 +22,12 @@ import type { RichDoc } from '@/lib/rich-text';
 import { usePlayerId } from '@/lib/use-player';
 import { useIsAdmin } from '@/lib/use-session';
 import RichTextEditor from './RichTextEditor';
+
+/** 쓰는 중 임시 저장 간격 — 글자마다 localStorage 에 쓰지 않게 */
+const DRAFT_SAVE_DELAY_MS = 600;
+
+/** 취소할 때 묻는 말 (DESIGN-GUIDE §4 되돌릴 수 없는 확인) */
+const DISCARD_CONFIRM = '쓰던 글을 버릴까요?\n제목 · 내용 · 넣은 사진이 사라지고 되돌릴 수 없어요.';
 
 /** 글자도 첨부도 없으면 빈 본문. lib/validation.ts 의 서버 검증과 같은 규칙 */
 function isBodyEmpty(body: string): boolean {
@@ -68,6 +83,116 @@ export default function PostForm({
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
 
+  // ─── 임시 저장 · 떠나기 확인 (UX 시험 M-1) ─────────────────────
+  //
+  // 취소 · 새로고침 · 뒤로 가기에 쓰던 글이 확인 없이 사라졌다. 세 갈래로 막는다.
+  //   ① 취소 — 바뀐 것이 있으면 '쓰던 글을 버릴까요?' 를 묻는다
+  //   ② 새로고침 · 창 닫기 — beforeunload 로 브라우저가 묻게 한다
+  //   ③ 뒤로 가기(화면 안 이동이라 ②가 안 걸린다) — 쓰는 동안 기기에 적어 두고, 다시 열면 '이어 쓰기' 를 권한다
+
+  const key = playerId ? draftKey(playerId, initial?.id ?? null) : null;
+  /** 처음 연 모습 — 이것과 다르면 '쓰던 글' 이다 */
+  const baseline = useMemo(
+    () => ({
+      machineId: initial ? (initial.machineId ?? '') : (defaultMachineId ?? ''),
+      category: initial?.category ?? defaultCategoryCode(categories),
+      title: initial?.title ?? '',
+      body: initial?.body ?? '',
+      docJson: JSON.stringify(initial?.bodyDoc ?? null),
+    }),
+    // 처음 열 때의 값만 — 게시판 목록이 늦게 와도 기준이 움직이지 않게
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  const dirty =
+    machineId !== baseline.machineId ||
+    category !== baseline.category ||
+    title !== baseline.title ||
+    body !== baseline.body ||
+    (hasDraftContent({ title, body }) && JSON.stringify(bodyDoc) !== baseline.docJson);
+
+  /** 이 기기에 남아 있던 쓰던 글 — 고를 때까지 새로 적지 않는다(덮어쓰지 않게) */
+  const [offer, setOffer] = useState<PostDraft | null>(null);
+  const [offerChecked, setOfferChecked] = useState(false);
+  /** 편집기를 다시 만들 때 쓰는 값 — '이어 쓰기' 로 본문을 바꿀 때만 바뀐다 */
+  const [seed, setSeed] = useState({ n: 0, doc: initial?.bodyDoc ?? null, body: initial?.body ?? '' });
+
+  useEffect(() => {
+    if (!key) return;
+    const saved = loadDraft(key);
+    if (
+      saved &&
+      hasDraftContent(saved) &&
+      (saved.title !== baseline.title || saved.body !== baseline.body || saved.category !== baseline.category)
+    ) {
+      setOffer(saved);
+    }
+    setOfferChecked(true);
+  }, [key, baseline]);
+
+  const resume = () => {
+    if (!offer) return;
+    setMachineId(offer.machineId);
+    setCategory(offer.category);
+    setTitle(offer.title);
+    setBody(offer.body);
+    setBodyDoc(offer.bodyDoc);
+    setSeed((prev) => ({ n: prev.n + 1, doc: offer.bodyDoc, body: offer.body }));
+    setOffer(null);
+  };
+  const dropOffer = () => {
+    if (key) clearDraft(key);
+    setOffer(null);
+  };
+
+  /** 지금 값 — 화면을 떠나는 순간(언마운트)에 마지막으로 한 번 적는 데 쓴다 */
+  const latest = useRef({ key, dirty, paused: true, draft: { machineId, category, title, body, bodyDoc } });
+  latest.current = { key, dirty, paused: !offerChecked || offer !== null, draft: { machineId, category, title, body, bodyDoc } };
+
+  useEffect(() => {
+    if (!key || !offerChecked || offer !== null) return;
+    const t = setTimeout(() => {
+      if (dirty && hasDraftContent({ title, body })) saveDraft(key, { machineId, category, title, body, bodyDoc });
+      else if (!dirty) clearDraft(key);
+    }, DRAFT_SAVE_DELAY_MS);
+    return () => clearTimeout(t);
+  }, [key, offerChecked, offer, dirty, machineId, category, title, body, bodyDoc]);
+
+  /** 저장했거나 버리기로 한 뒤에는 떠날 때 다시 적지 않는다 */
+  const finished = useRef(false);
+  useEffect(
+    () => () => {
+      const l = latest.current;
+      if (finished.current || !l.key || l.paused || !l.dirty || !hasDraftContent(l.draft)) return;
+      saveDraft(l.key, l.draft);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // 옛 브라우저는 returnValue 가 있어야 묻는다 (문구는 브라우저가 정한다)
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  const cancel = () => {
+    if (dirty && !window.confirm(DISCARD_CONFIRM)) return;
+    finished.current = true;
+    if (key) clearDraft(key);
+    onCancel();
+  };
+
+  /** 글쓰기를 열면 제목(h1)으로 초점을 옮긴다 — 화면이 바뀐 것을 낭독기가 알게 (C-3) */
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, []);
+
   const save = async () => {
     if (!playerId || (machineId === '' && !noticeSelected)) return;
     setBusy(true);
@@ -92,6 +217,8 @@ export default function PostForm({
         setErrors(data.details ?? [data.error ?? '글을 저장하지 못했어요. 다시 시도해 주세요']);
         return;
       }
+      finished.current = true;
+      if (key) clearDraft(key);
       onSaved(data.post as PostDetail);
     } catch {
       setErrors(['연결이 잠깐 끊겼어요. 다시 시도해 주세요']);
@@ -147,11 +274,29 @@ export default function PostForm({
         주 버튼 하나만 남긴다. 폼 맨 위라 쓰기 전에 마음을 바꾼 사람에게 가깝다.
       */}
       <header className="board-head">
-        <h1>{initial ? '글 수정' : '글쓰기'}</h1>
-        <button type="button" className="btn-link" onClick={onCancel}>
+        <h1 ref={headingRef} tabIndex={-1} className="post-form-title">
+          {initial ? '글 수정' : '글쓰기'}
+        </h1>
+        <button type="button" className="btn-link" onClick={cancel}>
           취소
         </button>
       </header>
+
+      {offer && (
+        <div className="notice draft-offer" role="status">
+          <span>
+            {savedAgo(offer.savedAt)} 쓰던 글이 있어요{offer.title.trim() ? `: '${offer.title.trim()}'` : ''}.
+          </span>
+          <span className="draft-offer-actions">
+            <button type="button" className="btn btn-sm" onClick={resume}>
+              이어 쓰기
+            </button>
+            <button type="button" className="btn-link" onClick={dropOffer}>
+              버리고 새로 쓰기
+            </button>
+          </span>
+        </div>
+      )}
 
       <div className="field">
         <label htmlFor="post-game">게임{noticeSelected && ' (공지는 고르지 않아요)'}</label>
@@ -204,8 +349,10 @@ export default function PostForm({
       <div className="field">
         <label>내용</label>
         <RichTextEditor
-          initialDoc={initial?.bodyDoc ?? null}
-          initialBody={initial?.body ?? ''}
+          /* '이어 쓰기' 로 본문을 바꾸면 편집기를 새로 만든다 — 편집기는 처음 값만 받는다 */
+          key={seed.n}
+          initialDoc={seed.doc}
+          initialBody={seed.body}
           initialAttachments={initial?.attachments ?? []}
           playerId={playerId}
           disabled={busy}

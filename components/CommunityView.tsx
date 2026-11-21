@@ -14,6 +14,7 @@ import {
   type PostSort,
   type PostSummary,
 } from '@/lib/board-types';
+import { buildCommunityUrl, parseCommunityUrl, type CommunityTarget } from '@/app/community/community-url';
 import { forgetPost, prefetchPost } from '@/lib/post-cache';
 import { usePlayerId } from '@/lib/use-player';
 import { useSearchEnter } from '@/lib/use-search-enter';
@@ -92,7 +93,7 @@ export default function CommunityView() {
   const [view, setView] = useState<View>({ kind: 'list' });
 
   /**
-   * 상세/글쓰기로 들어갈 때마다 히스토리를 한 칸 쌓는다 (URL 은 그대로, 상태만).
+   * 상세/글쓰기로 들어갈 때마다 히스토리를 한 칸 쌓는다 — 주소도 함께(`?post=24` · `?write=1`, 아래 urlForView).
    * 그래서 브라우저 뒤로/앞으로가 오락실 파인더로 나가는 대신 이 화면 안의
    * 해당 단계로 오간다 — 탭·말머리·정렬은 그대로 list 로 setView 하는 것뿐이라
    * 건드리지 않은 채 남아 있다.
@@ -111,6 +112,10 @@ export default function CommunityView() {
    */
   const viewsRef = useRef<View[]>([{ kind: 'list' }]);
   const idxRef = useRef(0);
+  /** 주소에 목록 조건이 있었나 — 있으면 sessionStorage 되살리기보다 주소가 이긴다 (링크로 받은 화면) */
+  const urlHadList = useRef(false);
+  /** `?write=1` 로 들어왔는데 아직 로그인 확인 전 — 확인되면 글쓰기를 연다 */
+  const pendingWrite = useRef(false);
 
   const navigate = (next: View) => {
     const nextIdx = idxRef.current + 1;
@@ -119,7 +124,8 @@ export default function CommunityView() {
     viewsRef.current = viewsRef.current.slice(0, nextIdx);
     viewsRef.current[nextIdx] = next;
     idxRef.current = nextIdx;
-    window.history.pushState({ __idx: nextIdx }, '');
+    pendingWrite.current = false;
+    window.history.pushState({ __idx: nextIdx }, '', urlForView(next));
     setView(next);
   };
 
@@ -131,33 +137,50 @@ export default function CommunityView() {
   };
 
   /**
-   * `/community?post=3` 으로 들어오면 그 글을 열어 둔 채로 시작한다 (홈 소식 배너가
-   * 이 주소로 보낸다).
+   * 주소에서 시작 상태를 읽는다 — `/community?game=3&q=발판&post=24` (app/community/community-url.ts).
    *
-   * 칸을 **쌓지 않고 0번 칸을 갈아끼운다**. 딥링크로 들어온 사람의 첫 칸이므로,
-   * 쌓아 두면 뒤로가기 한 번이 빈 목록으로 갔다가 다시 나가야 사이트를 벗어난다 —
-   * 눌린 횟수와 히스토리 깊이가 어긋난다 (ArcadeFinder 의 ?arcade=<id> 와 같은 규칙).
+   * 글(`?post=`)은 칸을 **쌓지 않고 지금 칸을 갈아끼운다**. 링크로 들어온 사람의 첫 칸이므로, 쌓아 두면
+   * 뒤로가기 한 번이 빈 목록으로 갔다가 다시 나가야 사이트를 벗어난다 (ArcadeFinder 의 ?arcade=<id> 와 같은 규칙).
    *
-   * 열고 나서 주소에서 지운다. 이 화면은 상세 상태를 주소에 계속 반영하지 않으므로
-   * (pushState 의 __idx 로만 관리한다) 남겨 두면 목록으로 돌아간 뒤에도 주소가
-   * `?post=3` 이라고 말하고, 새로고침하면 다시 그 글이 열린다.
+   * 2026-11-20 전에는 열고 나서 주소에서 `post` 를 지웠다 — 상세 상태를 주소에 반영하지 않던 때라 남겨
+   * 두면 목록으로 돌아간 뒤에도 주소가 `?post=3` 이었기 때문이다. 이제 주소가 늘 지금 화면을 말하므로
+   * 그대로 둔다 (UX 시험 C-1: 관리자 '원문 보기' 로 연 글의 주소가 /community 로 바뀌었다).
    *
-   * summary 없이 postId 만 넘긴다 — 상세가 알아서 받아 온다. 목록에서 누른 경우와
-   * 달리 미리 들고 있는 요약이 없다.
+   * 새로고침하면 이 컴포넌트의 칸 목록(viewsRef)은 비지만 브라우저 기록의 `__idx` 는 남는다 — 지금 칸
+   * 번호를 기록에서 이어받고, 모르는 칸으로 돌아가면 popstate 가 그 칸의 주소로 화면을 다시 만든다.
+   *
+   * summary 없이 postId 만 넘긴다 — 상세가 알아서 받아 온다.
    */
   useEffect(() => {
-    const raw = new URLSearchParams(window.location.search).get('post');
-    if (raw === null) return;
-    const postId = Number(raw);
-    if (!Number.isInteger(postId) || postId <= 0) return;
+    const { list, hasList, target } = parseCommunityUrl(window.location.search);
+    urlHadList.current = hasList;
+    if (list.machineId !== undefined) setMachineId(list.machineId);
+    if (list.category !== undefined) setCategory(list.category);
+    if (list.sort !== undefined) setSort(list.sort);
+    if (list.q !== undefined) {
+      setQ(list.q);
+      setDebouncedQ(list.q);
+    }
+    if (list.page !== undefined) setPage(list.page);
 
-    replaceCurrent({ kind: 'detail', postId });
-    const url = new URL(window.location.href);
-    url.searchParams.delete('post');
-    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
+    const st = window.history.state as { __idx?: unknown } | null;
+    const idx = st && typeof st.__idx === 'number' ? st.__idx : 0;
+    idxRef.current = idx;
+    const first: View = target.kind === 'detail' ? { kind: 'detail', postId: target.postId } : { kind: 'list' };
+    viewsRef.current = [];
+    viewsRef.current[idx] = first;
+    if (first.kind !== 'list') setView(first);
+    if (target.kind === 'write') pendingWrite.current = true;
     // 첫 마운트에서 한 번만 — 그 뒤의 이동은 navigate/goBack 이 맡는다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** `?write=1` — 로그인이 확인되면 글쓰기를 연다. 비로그인이면 목록에 머문다 */
+  useEffect(() => {
+    if (!pendingWrite.current || playerId === null) return;
+    pendingWrite.current = false;
+    replaceCurrent({ kind: 'form', post: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerId]);
 
   /** 인앱 '뒤로가기'/'취소' 버튼도 브라우저 뒤로가기와 같은 한 걸음이어야
    *  history 깊이가 눈에 보이는 이동 횟수와 어긋나지 않는다. */
@@ -244,6 +267,7 @@ export default function CommunityView() {
     'community:list',
     { machineId, category, sort, q: debouncedQ, page },
     (saved) => {
+      if (urlHadList.current) return;
       if (saved.machineId === null || Number.isInteger(saved.machineId)) {
         setMachineId(saved.machineId as number | null);
       }
@@ -279,6 +303,23 @@ export default function CommunityView() {
    * 공백 하나를 붙이는 것만으로 같은 결과를 다시 받아 온다.
    */
   const term = debouncedQ.trim();
+
+  /** 지금 목록 조건 — 주소를 만들 때 쓴다 */
+  const listState = { machineId, category, sort, q: term, page };
+  const targetOf = (v: View): CommunityTarget =>
+    v.kind === 'detail'
+      ? { kind: 'detail', postId: v.postId }
+      : v.kind === 'form'
+        ? // 고치는 글은 그 글의 주소로 둔다 — 새로고침하면 글이 열리고, '수정' 을 다시 누르면 임시 저장을 권한다
+          v.post
+          ? { kind: 'detail', postId: v.post.id }
+          : { kind: 'write' }
+        : { kind: 'list' };
+  const urlForView = (v: View) => buildCommunityUrl(listState, targetOf(v));
+
+  /** popstate 핸들러가 지금 로그인한 사람을 보게 */
+  const playerIdRef = useRef(playerId);
+  playerIdRef.current = playerId;
 
   /**
    * 조회 순번 — 늦게 도착한 **옛 조건의** 응답이 최신 목록을 덮어쓰지 않게 한다 (ArcadeFinder 의
@@ -343,13 +384,82 @@ export default function CommunityView() {
       const idx =
         e.state && typeof e.state.__idx === 'number' ? (e.state.__idx as number) : 0;
       idxRef.current = idx;
-      const next = viewsRef.current[idx] ?? { kind: 'list' };
+      let next = viewsRef.current[idx];
+      if (!next) {
+        // 새로고침 전에 쌓인 칸 — 그 칸의 주소로 화면을 다시 만든다
+        const { list, target } = parseCommunityUrl(window.location.search);
+        setMachineId(list.machineId ?? null);
+        setCategory(list.category ?? null);
+        setSort(list.sort ?? 'recent');
+        setQ(list.q ?? '');
+        setDebouncedQ(list.q ?? '');
+        setPage(list.page ?? 1);
+        next =
+          target.kind === 'detail'
+            ? { kind: 'detail', postId: target.postId }
+            : target.kind === 'write' && playerIdRef.current !== null
+              ? { kind: 'form', post: null }
+              : { kind: 'list' };
+        viewsRef.current[idx] = next;
+      }
       setView(next);
       if (next.kind === 'list') void loadPosts(); // 추천·댓글 수가 바뀌었을 수 있다
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, [loadPosts]);
+
+  /**
+   * 주소를 지금 화면에 맞춘다 — 목록 조건이 바뀌면 지금 칸의 주소만 고쳐 적는다(replaceState).
+   * 탭 · 검색어마다 칸을 쌓으면 뒤로가기를 수십 번 눌러야 커뮤니티를 벗어난다.
+   *
+   * 첫 실행은 건너뛴다 — 그때 state 는 주소를 읽기 전의 기본값이라, 적으면 들어온 주소(`?post=24`)를
+   * 한 번 지웠다 되살리게 된다. 주소에서 읽은 값이 들어오는 다음 렌더부터 적는다.
+   */
+  const syncReady = useRef(false);
+  useEffect(() => {
+    if (!syncReady.current) {
+      syncReady.current = true;
+      return;
+    }
+    const url = urlForView(view);
+    if (url !== `${window.location.pathname}${window.location.search}`) {
+      window.history.replaceState(window.history.state, '', url);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, machineId, category, sort, term, page]);
+
+  /**
+   * 초점 돌려주기 (UX 시험 C-3) — 글에서 목록으로 돌아오면 읽던 글의 제목 링크로, 글쓰기를 취소하면
+   * '글쓰기' 단추로. 예전에는 body 로 떨어져 키보드 사용자가 목록 맨 위부터 다시 Tab 을 눌렀다.
+   * 그 글이 목록에 없으면(지운 글) 커뮤니티 제목으로 둔다.
+   */
+  const prevViewRef = useRef<View>(view);
+  const returnFocusTo = useRef<number | 'write' | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const writeBtnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const prev = prevViewRef.current;
+    prevViewRef.current = view;
+    if (view.kind !== 'list' || prev === view) return;
+    if (prev.kind === 'detail') returnFocusTo.current = prev.postId;
+    else if (prev.kind === 'form') returnFocusTo.current = prev.post ? prev.post.id : 'write';
+  }, [view]);
+  useEffect(() => {
+    const target = returnFocusTo.current;
+    if (target === null || view.kind !== 'list') return;
+    const el =
+      target === 'write'
+        ? (writeBtnRef.current ?? headingRef.current)
+        : document.querySelector<HTMLElement>(`[data-post-link="${target}"]`);
+    if (el) {
+      returnFocusTo.current = null;
+      el.focus();
+    } else if (!loading) {
+      returnFocusTo.current = null;
+      headingRef.current?.focus();
+    }
+  }, [view, posts, notices, loading]);
 
   /** 탭·말머리·정렬을 바꾸면 1페이지부터 다시 본다 */
   const resetPaging = () => setPage(1);
@@ -392,6 +502,9 @@ export default function CommunityView() {
       .then((d) => setBoards(d.boards as Board[]))
       .catch(() => undefined);
   };
+
+  /** 글 제목 링크의 주소 — 새 탭으로 열거나 복사해도 그 글이 열린다 (C-1) */
+  const postHref = (postId: number) => buildCommunityUrl(listState, { kind: 'detail', postId });
 
   if (view.kind === 'form') {
     return (
@@ -445,7 +558,9 @@ export default function CommunityView() {
     <div className="board-page">
       <header className="board-head">
         <div>
-          <h1>커뮤니티</h1>
+          <h1 ref={headingRef} tabIndex={-1} className="board-title">
+            커뮤니티
+          </h1>
           <p className="muted small">오락실 정보 · 공략 · 질문을 게임별로 모아 봐요.</p>
         </div>
         {/*
@@ -456,6 +571,7 @@ export default function CommunityView() {
         */}
         {playerId ? (
           <button
+            ref={writeBtnRef}
             type="button"
             className="btn btn-primary btn-sm"
             onClick={() => navigate({ kind: 'form', post: null })}
@@ -606,6 +722,7 @@ export default function CommunityView() {
            라고 해야 한다 — 글은 있고, 찾는 말이 없을 뿐이다 */
         searching={term !== ''}
         onOpen={openPost}
+        postHref={postHref}
         onPrefetch={prefetchPostDetail}
       />
 

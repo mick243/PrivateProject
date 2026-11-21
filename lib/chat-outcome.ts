@@ -79,7 +79,7 @@ export function formatOutcome(
       ? `반경 ${radiusKm}km 안 ${total}곳`
       : outcome.placeName
         ? `'${outcome.placeName}'에서 가까운 순으로 ${total}곳`
-        : `기준점에서 가까운 순으로 ${total}곳`
+        : `기준 위치에서 가까운 순으로 ${total}곳`
     : `등록된 ${total}곳`;
   const filter = machineNames.length ? ` (${machineNames.join('·')} 보유)` : '';
 
@@ -87,7 +87,7 @@ export function formatOutcome(
     `탐색이 완료되었습니다. ${describeOrder(order)} 기준으로 ${scope}${filter}을 비교해 지도와 목록에 표시했습니다.`,
     // 그곳이 목록에 왜 없는지를 여기서 밝히지 않으면 빠진 것이 버그로 보입니다.
     ...(outcome.excluded
-      ? [`${outcome.excluded}을(를) 기준점으로 잡았고, 그곳은 결과에서 뺐습니다.`]
+      ? [`${outcome.excluded}을(를) 기준 위치로 잡았고, 그곳은 결과에서 뺐어요.`]
       : []),
     '',
     ...top.map((t, i) => {
@@ -102,7 +102,8 @@ export function formatOutcome(
   if (!hasOrigin) {
     // "거리는 빼고" 가 아니다 — 모든 곳이 거리 몫의 절반을 똑같이 받아 거리로는 갈리지 않을 뿐이다.
     // 바로 위 점수 설명과 말이 어긋나지 않게 그 사실대로 적는다.
-    lines.push('', '기준점이 없어 거리로는 가르지 못했습니다. 지도 왼쪽 아래 내 위치 단추를 켜면 다시 매깁니다.');
+    // 화면이 이 말풍선 아래에 '내 위치에서 찾기' 단추를 붙입니다 (components/ChatBot.tsx locateRetry).
+    lines.push('', "기준 위치를 몰라 거리로는 가르지 못했어요. 아래 '내 위치에서 찾기'를 누르면 다시 찾아요.");
   }
 
   if (outcome.stale) {

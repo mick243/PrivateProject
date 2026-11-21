@@ -11,6 +11,7 @@ import {
   layoutClusterLabels,
   mergeNearestClusters,
   zoomForCluster,
+  zoomToFit,
   type RegionCluster,
 } from '@/lib/region-cluster';
 import type { Arcade } from '@/lib/types';
@@ -983,6 +984,13 @@ export default function NaverMap({
     focusPointApplied.current = focusPoint.nonce;
     map.autoResize();
     map.setCenter(new naver.maps.LatLng(focusPoint.lat, focusPoint.lng));
+    // 검색 결과 모두 보기(fitBox) — 그 사각형이 화면에 다 드는 줌. 여백을 두고(85%), zoom 은 상한이다.
+    const el = containerRef.current;
+    if (focusPoint.fitBox && el && el.clientWidth > 0 && el.clientHeight > 0) {
+      const fit = zoomToFit(focusPoint.fitBox, el.clientWidth * 0.85, el.clientHeight * 0.85);
+      map.setZoom(Math.max(6, Math.min(focusPoint.zoom ?? 21, fit)));
+      return;
+    }
     // zoom 이 없는 이동('내 위치로 이동')은 보던 줌을 지킨다.
     if (focusPoint.zoom !== undefined) map.setZoom(focusPoint.zoom);
   }, [focusPoint, ready]);

@@ -81,6 +81,20 @@ export interface ChatMessage {
   pending?: boolean;
   /** 실패한 답변 — 다시 보내기를 붙입니다 */
   failed?: boolean;
+  /**
+   * 실패한 자유 질문의 원래 문장 — '다시 보내기' 가 이 문장을 그대로 다시 보냅니다 (B-4).
+   * 있으면 '파인더에서 찾기' · '서열표에서 직접 찾기' 같은 다른 길도 함께 붙입니다.
+   */
+  retryText?: string;
+  /**
+   * 내 위치를 쓰지 못해 다른 곳(지도 가운데 · 기준 없음)으로 찾았거나, 지역을 몰라 되물은
+   * 말풍선 — 아래에 '내 위치에서 찾기' 단추를 붙이고, 누르면 이 제약으로 다시 찾습니다 (B-3).
+   */
+  locateRetry?: ChatConstraints;
+  /** 앱 안 화면으로 가는 링크 (즐겨찾기 목록 · 로그인 등) */
+  links?: { label: string; href: string }[];
+  /** 실패가 아닌 안내 — 빨간 상자 대신 보통 말풍선으로 그립니다 */
+  notice?: boolean;
 }
 
 /** 서버로 보내는 대화 기록 한 줄 (폼·상태는 서버가 알 필요 없습니다) */
@@ -93,6 +107,8 @@ export interface ChatResponse {
   text: string;
   sources?: ChatSource[];
   places?: ChatPlace[];
+  /** 모델이 빈 답을 냈을 때 — 화면이 예시와 '다시 보내기' 를 붙입니다 */
+  unclear?: boolean;
 }
 
 /** 답변 아래에 다는 길찾기 링크의 상한 — 도구 한 쪽(5건)과 같습니다 */
@@ -182,7 +198,7 @@ export function isReorderRequest(text: string): boolean {
 }
 
 /** 상태·수량을 묻는 말 — 이게 있으면 "어디 있나" 가 아니라 "어떤가" 를 묻는 문장입니다 */
-const QUESTION_WORDS = ['어때', '어떤', '어떻', '몇', '언제', '뭐', '왜', '얼마'];
+export const QUESTION_WORDS = ['어때', '어떤', '어떻', '몇', '언제', '뭐', '왜', '얼마'];
 
 /**
  * "홍대 사볼" 같은 **지역 + 기종** 문장인가 — 행동 말이 없어도 찾아 달라는 뜻으로 봅니다.

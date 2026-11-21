@@ -183,8 +183,20 @@ describe('관리자 동작', () => {
     expect((await suspension.PUT(req('/x', { method: 'PUT', as: ADMIN, body: { days: null, reason: '도배' } }), ctx('7'))).status).toBe(200);
     expect(mod.suspendPlayer).toHaveBeenLastCalledWith({ playerId: 7, days: null, reason: '도배' });
     expect((await suspension.PUT(req('/x', { method: 'PUT', as: ADMIN, body: { days: 0 } }), ctx('7'))).status).toBe(400);
-    mod.suspendPlayer.mockRejectedValueOnce(new SuspendError('관리자 계정은 정지할 수 없습니다', 400));
-    expect((await suspension.PUT(req('/x', { method: 'PUT', as: ADMIN, body: { days: 1 } }), ctx('13'))).status).toBe(400);
+    mod.suspendPlayer.mockRejectedValueOnce(new SuspendError('관리자 계정은 정지할 수 없어요', 400));
+    expect((await suspension.PUT(req('/x', { method: 'PUT', as: ADMIN, body: { days: 1, reason: '도배' } }), ctx('13'))).status).toBe(400);
+  });
+
+  it('정지: 사유가 없거나 빈칸이면 400 — 정지된 사람이 빈 사유를 보지 않게 (UX Ad-2)', async () => {
+    for (const body of [{ days: 7 }, { days: 7, reason: null }, { days: 7, reason: '   ' }]) {
+      const res = await suspension.PUT(req('/x', { method: 'PUT', as: ADMIN, body }), ctx('7'));
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe('정지 사유를 써 주세요. 정지된 사람에게 보여요');
+    }
+    expect(mod.suspendPlayer).not.toHaveBeenCalled();
+    const ok = await suspension.PUT(req('/x', { method: 'PUT', as: ADMIN, body: { days: 7, reason: '  광고 도배  ' } }), ctx('7'));
+    expect(ok.status).toBe(200);
+    expect(mod.suspendPlayer).toHaveBeenLastCalledWith({ playerId: 7, days: 7, reason: '광고 도배' });
   });
 
   it('추정 승인: 없는 추정이면 404', async () => {

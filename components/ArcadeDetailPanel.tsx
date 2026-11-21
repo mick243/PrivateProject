@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import {
   REPORT_KIND_LABEL,
   WAIT_CHOICES,
@@ -12,6 +12,7 @@ import {
   type ReportKind,
   REPORT_COMMENT_MAX,
 } from '@/lib/community-types';
+import { reportOutcomeMessage, waitShownAt } from '@/lib/report-display';
 import { placeLinks } from '@/lib/place-links';
 import type { Arcade, ArcadeCabinet, ArcadeMachine, Machine, MachineGuess } from '@/lib/types';
 import { useFavorites } from '@/lib/use-favorites';
@@ -54,20 +55,20 @@ function sameForm(a: OpenForm, b: OpenForm): boolean {
 }
 
 /**
- * 제보 뒤 한 줄. "제보 1/3" 같은 분수 대신 **남은 인원**을 말한다 — 몇 명이 더
- * 있어야 하는지가 사람이 알고 싶은 값이다 (docs/DESIGN-GUIDE.md §2-8).
- * 남은 인원이 0 인데 반영이 안 됐으면(이미 목록에 있던 게임 등) 고맙다는 말만 한다.
+ * 제보 결과가 뜨는 자리. 예전에는 상세 맨 위 한 곳에 떠서, 아래쪽 카드에서 누른
+ * 사람은 결과를 못 보거나 어느 게임 얘기인지 몰랐다 (2026-11-20 UX 시험 R-1).
+ * 누른 자리(그 게임 블록 · '이 게임 있어요' 줄) 바로 아래에 띄운다.
+ * 문구는 lib/report-display.ts reportOutcomeMessage.
  */
-function outcomeMessage(kind: ReportKind, outcome: PresenceOutcome, support: number, need: number) {
-  if (outcome === 'added') return '알려 줘서 고마워요! 이제 게임 목록에 들어갔어요';
-  if (outcome === 'removed') return '알려 줘서 고마워요! 게임 목록에서 빠졌어요';
-  if (kind === 'presence' || kind === 'absence') {
-    const left = Math.max(0, need - support);
-    return left > 0
-      ? `알려 줘서 고마워요! ${left}명이 더 알려 주면 바로 반영돼요`
-      : '알려 줘서 고마워요!';
-  }
-  return '알려 줘서 고마워요! 다음 사람이 바로 볼 수 있어요';
+type RowMsg = { at: number | 'presence'; text: string; tone: 'notice' | 'warn' } | null;
+
+function RowMessage({ msg }: { msg: RowMsg }) {
+  if (!msg) return null;
+  return (
+    <p className={`${msg.tone} row-msg`} role={msg.tone === 'warn' ? 'alert' : 'status'}>
+      {msg.text}
+    </p>
+  );
 }
 
 /**
@@ -125,6 +126,41 @@ function ArcadeDetailPanel({
   const [guessing, setGuessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newMachineId, setNewMachineId] = useState<number | ''>('');
+  /** 제보 결과 · 오류를 누른 자리에 띄운다 (RowMsg) */
+  const [rowMsg, setRowMsg] = useState<RowMsg>(null);
+  /**
+   * '정말 없어졌나요?' 를 묻고 있는 게임. 예전에는 한 번 누르면 곧바로 접수됐고
+   * 되돌릴 길이 없었다 — 실수 몇 번이면 실제로 있는 게임이 목록에서 빠진다 (R-1).
+   * 묻는 동안에는 다른 제보 폼을 닫는다 (한 번에 입력 창 하나 — DESIGN-GUIDE §1-2).
+   */
+  const [confirmGone, setConfirmGone] = useState<number | null>(null);
+
+  /**
+   * 키보드 · 낭독기 (2026-11-20 UX 시험 C-3). 상세가 열리면 제목으로 초점을 옮겨
+   * 무엇이 열렸는지 읽히게 하고, 패널은 그 제목을 이름으로 하는 region 이 된다.
+   * 닫은 뒤 연 단추로 초점을 돌려주는 일은 부모(ArcadeFinder)가 한다 — 이 패널은
+   * 닫히면 사라지므로 돌아갈 곳을 기억할 수 없다.
+   */
+  const titleId = useId();
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    titleRef.current?.focus();
+  }, [arcade.id]);
+
+  /**
+   * Esc 는 안쪽부터 하나씩 닫는다 — 없어졌나요 확인 → 열린 제보 폼 → 상세.
+   * 패널 안에 초점이 있을 때만 듣는다(문서 전체에 걸면 도우미 같은 다른 창의 Esc 까지 가로챈다).
+   */
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    e.preventDefault();
+    if (confirmGone !== null) setConfirmGone(null);
+    else if (open !== null) {
+      // 폼이 사라지면 그 안의 초점도 사라지므로 제목으로 옮겨 둔다
+      setOpen(null);
+      titleRef.current?.focus();
+    } else onClose();
+  };
 
   const loadReports = useCallback(async () => {
     try {
@@ -164,6 +200,8 @@ function ArcadeDetailPanel({
     setOpen(null);
     setNotice(null);
     setError(null);
+    setRowMsg(null);
+    setConfirmGone(null);
     setNewMachineId('');
     void loadReports();
   }, [loadReports]);
@@ -178,6 +216,17 @@ function ArcadeDetailPanel({
     setBusy(true);
     setError(null);
     setNotice(null);
+    setRowMsg(null);
+    setConfirmGone(null);
+    // 결과는 누른 자리에 — '이 게임 있어요' 는 고르는 줄 아래, 나머지는 그 게임 블록 아래
+    const at: number | 'presence' = body.kind === 'presence' ? 'presence' : body.machineId;
+    const owned = arcade.machines.find((m) => m.id === body.machineId);
+    const machineName =
+      owned?.shortName ?? machines.find((m) => m.id === body.machineId)?.shortName ?? '이';
+    const cabinetNo =
+      body.cabinetId != null
+        ? (owned?.cabinets.find((c) => c.id === body.cabinetId)?.cabinetNo ?? null)
+        : null;
     try {
       const res = await fetch(`/api/arcades/${arcade.id}/reports`, {
         method: 'POST',
@@ -194,27 +243,40 @@ function ArcadeDetailPanel({
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error ?? '제보를 보내지 못했어요. 다시 시도해 주세요');
+        setRowMsg({
+          at,
+          tone: 'warn',
+          text: data.error ?? '제보를 보내지 못했어요. 다시 시도해 주세요',
+        });
         return;
       }
 
-      setNotice(
-        outcomeMessage(
-          body.kind,
-          data.outcome as PresenceOutcome,
-          data.support?.count ?? 0,
-          data.support?.threshold ?? 2,
-        ),
-      );
+      const outcome = data.outcome as PresenceOutcome;
+      const nextArcade = (data.arcade as Arcade | null) ?? null;
+      const text = reportOutcomeMessage({
+        kind: body.kind,
+        machineName,
+        cabinetNo,
+        waitCount: body.waitCount ?? null,
+        outcome,
+        support: data.support?.count ?? 0,
+        need: data.support?.threshold ?? 2,
+        // 서버가 세션으로 정한 값이 응답의 report.playerId 에 있다 — 화면의 로그인 상태보다 정확하다
+        anonymous: (data.report?.playerId ?? null) === null,
+        liveAfter: nextArcade?.machines.find((m) => m.id === body.machineId)?.live ?? null,
+      });
+      // 목록에서 빠지면 그 게임 블록이 사라지므로 맨 위에 띄운다
+      if (outcome === 'removed') setNotice(text);
+      else setRowMsg({ at, tone: 'notice', text });
       setOpen(null);
       setMemo('');
       setDraftCondition(null);
       setDraftWait(null);
       setNewMachineId('');
-      if (data.arcade) onArcadeChanged(data.arcade as Arcade);
+      if (nextArcade) onArcadeChanged(nextArcade);
       await loadReports();
     } catch {
-      setError(NETWORK_ERROR);
+      setRowMsg({ at, tone: 'warn', text: NETWORK_ERROR });
     } finally {
       setBusy(false);
     }
@@ -247,6 +309,7 @@ function ArcadeDetailPanel({
     setGuessing(true);
     setError(null);
     setNotice(null);
+    setRowMsg(null);
     try {
       const res = await fetch(`/api/arcades/${arcade.id}/guesses`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
@@ -298,7 +361,18 @@ function ArcadeDetailPanel({
     setDraftWait(null);
     setNotice(null);
     setError(null);
+    setRowMsg(null);
+    setConfirmGone(null);
     setOpen((prev) => (sameForm(prev, next) ? null : next));
+  };
+
+  /** '없어졌다고 알리기' 를 누르면 곧바로 보내지 않고 그 자리에서 한 번 묻는다 */
+  const toggleConfirmGone = (machineId: number) => {
+    setOpen(null);
+    setNotice(null);
+    setError(null);
+    setRowMsg(null);
+    setConfirmGone((prev) => (prev === machineId ? null : machineId));
   };
 
   const ownedIds = new Set(arcade.machines.map((m) => m.id));
@@ -306,12 +380,50 @@ function ArcadeDetailPanel({
   const links = placeLinks(arcade);
 
   return (
-    <div className="detail arcade-detail">
+    <div
+      className="detail arcade-detail"
+      role="region"
+      aria-labelledby={titleId}
+      onKeyDown={onKeyDown}
+    >
       <div className="detail-head">
+        {/*
+          닫기 묶음을 DOM 에서 **제목보다 앞에** 둔다 — 열리면 초점이 제목에 오므로
+          Shift+Tab 한 번이 '닫기' 다. 예전에는 목록에서 Tab 26번을 지나야 닫을 수 있었다
+          (2026-11-20 UX 시험 C-3). 보이는 자리는 그대로 오른쪽(globals.css UX-2026-11 상세 · 제보).
+        */}
+        <div className="detail-head-actions">
+          {/*
+            비로그인에는 별을 그리지 않는다. 즐겨찾기는 계정에 붙는 값이라
+            (app/api/favorites 가 세션에서 playerId 를 읽는다) 담아 둘 곳이 없다.
+          */}
+          {favorites.canFavorite && (
+            <button
+              type="button"
+              className={`fav-btn fav-btn-lg ${favorites.isFavorite(arcade.id) ? 'is-on' : ''}`}
+              aria-pressed={favorites.isFavorite(arcade.id)}
+              // 별 글자만 있는 단추라 이름이 따로 있어야 한다 (docs/DESIGN-GUIDE.md §3-6)
+              aria-label={
+                favorites.isFavorite(arcade.id) ? '즐겨찾기에서 빼기' : '즐겨찾기에 담기'
+              }
+              title={
+                favorites.isFavorite(arcade.id) ? '즐겨찾기에서 빼기' : '즐겨찾기에 담기'
+              }
+              onClick={() => void favorites.toggle(arcade.id)}
+            >
+              {favorites.isFavorite(arcade.id) ? '★' : '☆'}
+            </button>
+          )}
+          <button type="button" className="btn btn-sm" onClick={onClose} title="상세 닫기 (Esc)">
+            닫기
+          </button>
+        </div>
         <div className="detail-title">
           {/* 이름 오른쪽에 붙인다 — '이 지점' 을 가리키는 버튼이라 이름과 한 덩어리다 */}
           <div className="detail-title-row">
-            <h2>{arcade.name}</h2>
+            <h2 id={titleId} ref={titleRef} tabIndex={-1}>
+              {arcade.name}
+            </h2>
             <button
               type="button"
               className="btn btn-sm locate-btn"
@@ -380,32 +492,6 @@ function ArcadeDetailPanel({
               길찾기
             </a>
           </p>
-        </div>
-        <div className="detail-head-actions">
-          {/*
-            비로그인에는 별을 그리지 않는다. 즐겨찾기는 계정에 붙는 값이라
-            (app/api/favorites 가 세션에서 playerId 를 읽는다) 담아 둘 곳이 없다.
-          */}
-          {favorites.canFavorite && (
-            <button
-              type="button"
-              className={`fav-btn fav-btn-lg ${favorites.isFavorite(arcade.id) ? 'is-on' : ''}`}
-              aria-pressed={favorites.isFavorite(arcade.id)}
-              // 별 글자만 있는 단추라 이름이 따로 있어야 한다 (docs/DESIGN-GUIDE.md §3-6)
-              aria-label={
-                favorites.isFavorite(arcade.id) ? '즐겨찾기에서 빼기' : '즐겨찾기에 담기'
-              }
-              title={
-                favorites.isFavorite(arcade.id) ? '즐겨찾기에서 빼기' : '즐겨찾기에 담기'
-              }
-              onClick={() => void favorites.toggle(arcade.id)}
-            >
-              {favorites.isFavorite(arcade.id) ? '★' : '☆'}
-            </button>
-          )}
-          <button type="button" className="btn btn-sm" onClick={onClose}>
-            닫기
-          </button>
         </div>
       </div>
 
@@ -478,6 +564,10 @@ function ArcadeDetailPanel({
               <li key={m.id}>
                 <MachineRow
                   machine={m}
+                  waitShownAt={waitShownAt(m.live, reports, m.id)}
+                  msg={rowMsg?.at === m.id ? rowMsg : null}
+                  confirmingGone={confirmGone === m.id}
+                  onToggleGone={() => toggleConfirmGone(m.id)}
                   open={open}
                   busy={busy}
                   memo={memo}
@@ -546,6 +636,7 @@ function ArcadeDetailPanel({
             </button>
           </div>
         )}
+        <RowMessage msg={rowMsg?.at === 'presence' ? rowMsg : null} />
         <p className="hint">
           여러 사람이 알려 주면 게임 목록에 바로 반영돼요
           {!playerId && '. 익명 제보는 기록만 남고 반영 인원에는 세지 않아요'}
@@ -625,10 +716,34 @@ interface ReportFormProps {
  * 반대로 컨디션은 카드마다 따로다: 1호기는 멀쩡한데 2호기 발판만 죽어 있는
  * 오락실이 흔한데, 기종에 컨디션 한 칸만 두면 그 사실을 적을 자리가 없다.
  */
-function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFormProps) {
+function MachineRow({
+  machine,
+  waitShownAt: shownAt,
+  msg,
+  confirmingGone,
+  onToggleGone,
+  ...form
+}: {
+  machine: ArcadeMachine;
+  /** 대기 뱃지 시각 — 보이는 인원을 알려 준 제보의 시각 (lib/report-display.ts) */
+  waitShownAt: string | null;
+  /** 이 게임에서 보낸 제보의 결과 · 오류 */
+  msg: RowMsg;
+  /** '정말 없어졌나요?' 를 묻는 중인가 */
+  confirmingGone: boolean;
+  onToggleGone: () => void;
+} & ReportFormProps) {
   const { open, busy, memo, onMemo, draftWait, onDraftWait, onToggle, onSubmit } = form;
   const queueForm = { kind: 'queue', machineId: machine.id } as const;
   const queueOpen = sameForm(open, queueForm);
+  const goneBtnRef = useRef<HTMLButtonElement>(null);
+  const goneQuestionId = useId();
+
+  /** 확인을 물리면 초점을 '없어졌다고 알리기' 로 돌려준다 — 묻던 상자가 사라져 초점이 갈 곳을 잃는다 */
+  const cancelGone = () => {
+    onToggleGone();
+    goneBtnRef.current?.focus();
+  };
 
   return (
     <div className="live-row">
@@ -637,7 +752,7 @@ function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFor
           {machine.shortName}
           {machine.cabinetCount > 1 && <em>×{machine.cabinetCount}</em>}
         </span>
-        <WaitBadge live={machine.live} cabinets={machine.cabinetCount} />
+        <WaitBadge live={machine.live} cabinets={machine.cabinetCount} shownAt={shownAt} />
       </div>
 
       <div className="live-actions">
@@ -647,14 +762,6 @@ function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFor
           onClick={() => onToggle(queueForm)}
         >
           대기 알리기
-        </button>
-        <button
-          type="button"
-          className="btn btn-sm btn-danger"
-          disabled={busy}
-          onClick={() => onSubmit({ machineId: machine.id, kind: 'absence' })}
-        >
-          없어졌다고 알리기
         </button>
       </div>
 
@@ -713,6 +820,59 @@ function MachineRow({ machine, ...form }: { machine: ArcadeMachine } & ReportFor
           </li>
         ))}
       </ul>
+
+      {/*
+        '없어졌다고 알리기' 는 블록 맨 아래 글자 링크로 낮춘다. 예전에는 빨간 테두리
+        버튼으로 '대기 알리기' 바로 옆에 있었고 한 번 누르면 곧바로 접수됐다
+        (2026-11-20 UX 시험 R-1). 되돌릴 수 없는 쪽은 주 행동과 같은 줄에 두지 않는다
+        (DESIGN-GUIDE §1-2). 누르면 그 자리에서 게임 이름을 넣어 한 번 더 묻는다.
+      */}
+      <div className="gone-row">
+        <button
+          ref={goneBtnRef}
+          type="button"
+          className="btn-link"
+          disabled={busy}
+          aria-expanded={confirmingGone}
+          onClick={onToggleGone}
+        >
+          없어졌다고 알리기
+        </button>
+      </div>
+      {confirmingGone && (
+        <div
+          className="report-form gone-confirm"
+          role="group"
+          aria-labelledby={goneQuestionId}
+          onKeyDown={(e) => {
+            // 상세의 Esc 보다 먼저 — 묻는 상자만 닫고 초점을 링크로 돌려준다
+            if (e.key !== 'Escape' || e.defaultPrevented) return;
+            e.preventDefault();
+            cancelGone();
+          }}
+        >
+          <p id={goneQuestionId} className="small">
+            <strong>{machine.shortName} 게임이 정말 없어졌나요?</strong> 여러 사람이 알려 주면 이
+            오락실 게임 목록에서 빠져요
+          </p>
+          <div className="form-actions">
+            <button
+              type="button"
+              className="btn btn-sm btn-danger"
+              disabled={busy}
+              onClick={() => onSubmit({ machineId: machine.id, kind: 'absence' })}
+            >
+              {machine.shortName} 없어졌다고 알리기
+            </button>
+            {/* 기본 초점은 물리는 쪽 — Enter 한 번에 접수되지 않게 */}
+            <button type="button" className="btn-link" autoFocus onClick={cancelGone}>
+              그대로 두기
+            </button>
+          </div>
+        </div>
+      )}
+
+      <RowMessage msg={msg} />
     </div>
   );
 }

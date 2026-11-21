@@ -129,6 +129,8 @@ function ArcadeList({
                 <button
                   type="button"
                   className="row-title"
+                  // 상세를 닫으면 초점이 이 단추로 돌아온다 (ArcadeFinder 의 openerRef 주석)
+                  data-arcade-id={a.id}
                   onClick={(e) => {
                     // 줄 클릭과 겹쳐 두 번 불리지 않게 막는다
                     e.stopPropagation();

@@ -11,7 +11,8 @@ import {
   setSessionCookie,
   signupConflictReason,
 } from '@/lib/auth';
-import { sendVerificationMail } from '@/lib/email-verify';
+import { isEmailMaskingOn } from '@/lib/email-mask';
+import { isMailConfigured, sendVerificationMail } from '@/lib/email-verify';
 import { isUniqueViolation } from '@/lib/pg-errors';
 import { formatIssues, issueFields, signupInputSchema } from '@/lib/validation';
 
@@ -30,7 +31,8 @@ export const dynamic = 'force-dynamic';
  * `/verify-email` 에서 다시 보낼 수 있습니다.
  *
  * 확인은 **관문이 아닙니다.** 확인 전에도 둘러보고 글을 씁니다. 확인이 여는
- * 것은 앞으로 붙을 비밀번호 찾기입니다 (lib/email-verify.ts).
+ * 것은 비밀번호 찾기입니다 (lib/password-reset.ts — 확인된 이메일로만 링크를 보냅니다).
+ * 응답의 `emailVerification`('sent' | 'off')으로 가입 완료 화면이 그 안내를 한 줄로 합니다.
  *
  * 가입해서 얻는 건 "이 닉네임은 내 것" 뿐이고, 관리자 권한은 여기로 오지 않습니다
  * (lib/auth.ts createAccount 는 is_admin 을 건드리지 않습니다).
@@ -95,8 +97,14 @@ async function onPost(request: Request) {
       await sendVerificationMail(newPlayerId, origin);
     });
 
+    // 가입 완료 화면이 "확인 메일을 보냈어요" 라고 말해도 되는지 (UX 시험 A-2).
+    // 이메일을 가리는 기간이거나 운영에 메일 키가 없으면 보내지 않으므로 'off' — 보내지 않은
+    // 메일을 기다리게 하지 않습니다. 발송 자체의 성패는 after() 뒤라 여기서 알 수 없습니다.
+    const emailVerification =
+      isEmailMaskingOn() || (process.env.NODE_ENV === 'production' && !isMailConfigured()) ? 'off' : 'sent';
+
     return setSessionCookie(
-      NextResponse.json({ user: result.user }, { status: 201 }),
+      NextResponse.json({ user: result.user, emailVerification }, { status: 201 }),
       result.user.playerId,
     );
   } catch (err) {
