@@ -16,6 +16,24 @@ export interface Coord {
   lng: number;
 }
 
+/**
+ * 고를 수 있는 검색 반경(km). 오락실은 걸어서 · 대중교통으로 가는 곳이라 5km 를 넘겨
+ * 찾을 까닭이 없습니다 (2026-11-24 사용자 결정 — 옛 1 · 3 · 5 · 7 · 10).
+ */
+export const RADIUS_OPTIONS_KM = [1, 2, 3, 4, 5] as const;
+
+/** 반경의 상한(km) — 화면 칩 · 챗봇 도구 모두 이보다 넓게 자르지 않습니다 */
+export const MAX_RADIUS_KM = 5;
+
+/**
+ * 조회 반경에 더해 두는 여유(km). 화면은 반경 + 이만큼 넓게 받아 와 실제 반경으로 다시 자릅니다
+ * (components/ArcadeFinder.tsx 의 REFETCH_MOVE_KM 보다 커야 합니다).
+ */
+export const FETCH_MARGIN_KM = 0.5;
+
+/** /api/arcades 가 받는 radius 의 상한 — 상한 반경 + 여유. 넘으면 이 값으로 줄입니다 */
+export const MAX_QUERY_RADIUS_KM = MAX_RADIUS_KM + FETCH_MARGIN_KM;
+
 /** 지구 반지름(km). db/... 의 haversine 식과 같은 값이어야 합니다 */
 const EARTH_RADIUS_KM = 6371;
 

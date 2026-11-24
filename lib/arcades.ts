@@ -67,6 +67,12 @@ async function fetchArcades(params: {
   );
 }
 
+/** DATE 칸 → 'YYYY-MM-DD' (Prisma 는 Date 로 줍니다) */
+function dateOnly(v: Date | string | null | undefined): string | null {
+  if (!v) return null;
+  return typeof v === 'string' ? v.slice(0, 10) : v.toISOString().slice(0, 10);
+}
+
 function toArcade(row: ArcadeRow): Arcade {
   return {
     id: row.id,
@@ -80,6 +86,14 @@ function toArcade(row: ArcadeRow): Arcade {
     phone: row.phone,
     note: row.note,
     homepage: row.homepage ?? null,
+    hoursText: row.hours_text ?? null,
+    hoursSource: row.hours_source_url
+      ? {
+          title: row.hours_source_title ?? row.hours_source_url,
+          url: row.hours_source_url,
+          checked: dateOnly(row.hours_checked),
+        }
+      : null,
     // json_agg 는 파싱된 값으로 옵니다. 모양은 SQL 이 만든 그대로입니다.
     machines: (row.machines ?? []) as unknown as ArcadeMachine[],
     distanceKm: row.distance_km,
@@ -275,9 +289,23 @@ export async function updateArcade(
 ): Promise<Arcade | null> {
   const prisma = await getPrismaClient();
   const updated = await prisma.$transaction(async (tx) => {
+    // 영업시간을 고치면 그때부터는 관리자 값입니다 — 나무위키에서 옮긴 원문 · 출처(migrate-085)를 비웁니다.
+    // 다른 칸만 고친 저장은 영업시간이 그대로 오므로 출처도 그대로 둡니다.
+    const before = await tx.arcades.findUnique({
+      where: { id },
+      select: { open_time: true, close_time: true, is_24h: true },
+    });
+    const hoursChanged =
+      !!before &&
+      (before.open_time !== input.openTime ||
+        before.close_time !== input.closeTime ||
+        before.is_24h !== input.is24h);
     const { count } = await tx.arcades.updateMany({
       where: { id },
       data: {
+        ...(hoursChanged
+          ? { hours_text: null, hours_source_title: null, hours_source_url: null, hours_checked: null }
+          : {}),
         name: input.name,
         address: input.address,
         lat: input.lat,

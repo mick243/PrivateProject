@@ -116,6 +116,9 @@ describe('searchArcades — 기준점과 반경', () => {
     expect(radiusOf(5)).toBe(5);
     expect(radiusOf('3')).toBe(3);
     expect(radiusOf(9999)).toBe(MAX_RADIUS_KM);
+    // 화면 반경 칩과 같은 5km 상한 (2026-11-24)
+    expect(MAX_RADIUS_KM).toBe(5);
+    expect(radiusOf(20)).toBe(5);
     for (const bad of [0, -1, NaN, 'abc', null, undefined]) expect(radiusOf(bad), String(bad)).toBeNull();
   });
 });

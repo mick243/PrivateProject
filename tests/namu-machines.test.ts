@@ -5,6 +5,7 @@ import {
   matchStore,
   nameKey,
   nameScore,
+  parseNamuHours,
   type DbArcade,
   type NamuStore,
 } from '@/lib/namu-machines';
@@ -193,5 +194,32 @@ describe('matchStore', () => {
       index,
     );
     expect(m).toMatchObject({ kind: 'ambiguous', by: 'address' });
+  });
+});
+
+describe('parseNamuHours — 나무위키 「영업시간」 칸 (2026-11-24)', () => {
+  it('한 구간이면 open · close 도 채운다 (오전 · 오후 · 익일 · 24:00)', () => {
+    expect(parseNamuHours('10:00~22:00')).toMatchObject({ openTime: '10:00', closeTime: '22:00', is24h: false });
+    expect(parseNamuHours('매일 오전 11:00 ~ 오후 10:00')).toMatchObject({ openTime: '11:00', closeTime: '22:00' });
+    expect(parseNamuHours('10:00~익일 02:00')).toMatchObject({ openTime: '10:00', closeTime: '02:00' });
+    expect(parseNamuHours('12:00-24:00')).toMatchObject({ openTime: '12:00', closeTime: '00:00' });
+  });
+
+  it('24시간', () => {
+    expect(parseNamuHours('연중무휴 24시간')).toMatchObject({ is24h: true, openTime: null, closeTime: null });
+  });
+
+  it('요일별 · 단서가 붙은 시간은 원문만 남기고 한 구간으로 줄이지 않는다', () => {
+    expect(parseNamuHours('월~토: 07:00~24:00 / 일:아침[1]~24:00')).toEqual({
+      text: '월~토: 07:00~24:00 / 일:아침~24:00',
+      is24h: false,
+      openTime: null,
+      closeTime: null,
+    });
+    expect(parseNamuHours('11:00-02:00(사실상 01:30)')).toMatchObject({ openTime: null, closeTime: null });
+  });
+
+  it('모름 · 휴업은 넣지 않는다', () => {
+    for (const t of ['미확인', '불명', '?', '-', '(휴업중)', '', null]) expect(parseNamuHours(t)).toBeNull();
   });
 });

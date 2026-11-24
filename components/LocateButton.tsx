@@ -11,7 +11,7 @@ import type { LocationStatus } from '@/lib/use-live-location';
  *
  * 상태를 세 가지로 구분해 보여줍니다 — 누른 뒤 아무 반응이 없으면 눌렸는지조차
  * 알 수 없기 때문입니다:
- *   idle      회색 조준점. 누르면 추적 시작 (반경이 없으면 기본 5km 로 겁니다)
+ *   idle      회색 조준점. 누르면 추적 시작 (반경이 없으면 기본 3km 로 겁니다)
  *   locating  점멸. 첫 좌표를 기다리는 중 (실내에서는 몇 초 걸립니다)
  *   tracking  초록. 누르면 **위치 해제** — 추적을 끄고 기준점 · 반경까지 지웁니다
  *             (ArcadeFinder 의 stopFollow).

@@ -429,3 +429,13 @@ describe('commentInputSchema — 성향 태그는 고정 목록만 받는다', (
     expect(comment(['폭타', '떨기', '틀기', '연타', '체력']).success).toBe(false);
   });
 });
+
+describe('parseListQuery — 반경 상한', () => {
+  const q = (s: string) => new URLSearchParams(s);
+  it('5km + 여유(0.5)를 넘는 반경은 5.5 로 줄인다', () => {
+    expect(parseListQuery(q('lat=37.5&lng=127&radius=10')).radiusKm).toBe(5.5);
+    expect(parseListQuery(q('lat=37.5&lng=127&radius=5.5')).radiusKm).toBe(5.5);
+    expect(parseListQuery(q('lat=37.5&lng=127&radius=3.5')).radiusKm).toBe(3.5);
+    expect(parseListQuery(q('lat=37.5&lng=127')).radiusKm).toBeNull();
+  });
+});

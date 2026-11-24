@@ -4,7 +4,14 @@ import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SearchOutcome } from '@/lib/chat-types';
-import { distanceKm, formatDistance, inBox, type LatLngBox } from '@/lib/geo';
+import {
+  distanceKm,
+  FETCH_MARGIN_KM,
+  formatDistance,
+  inBox,
+  RADIUS_OPTIONS_KM,
+  type LatLngBox,
+} from '@/lib/geo';
 import {
   DEFAULT_WEIGHTS,
   SIDEBAR_MAX_ITEMS,
@@ -64,10 +71,10 @@ import { useIsMapFolded, useIsStacked } from '@/lib/use-stacked';
 // 계측 패널은 `/?perf=1` 에서만 쓰는 개발용이라 주 번들에서 떼어 둔다.
 const MapPerfPanel = dynamic(() => import('./MapPerfPanel'), { ssr: false });
 
-const RADIUS_OPTIONS = [1, 3, 5, 7, 10];
+const RADIUS_OPTIONS: readonly number[] = RADIUS_OPTIONS_KM;
 
-/** 처음 열었을 때 · 위치 추적을 다시 켤 때의 반경(km) */
-const DEFAULT_RADIUS_KM = 5;
+/** 처음 열었을 때 · 위치 추적을 다시 켤 때의 반경(km) — 1~5km 의 가운데 (2026-11-24 사용자 결정 · 옛 5km) */
+const DEFAULT_RADIUS_KM = 3;
 
 /**
  * "반경 전체" — 기준점은 있지만 반경으로 자르지 않는 상태.
@@ -108,15 +115,14 @@ const METRO_ZOOM = 11;
  */
 const REFETCH_MOVE_KM = 0.3;
 
-/**
- * 조회 반경에 더해 두는 여유(km). REFETCH_MOVE_KM 보다 커야 합니다.
+/*
+ * 조회 반경에 더해 두는 여유(FETCH_MARGIN_KM · lib/geo.ts) — REFETCH_MOVE_KM 보다 커야 합니다.
  *
  * 조회는 마지막 기준점(anchor) 기준인데 내 위치는 그 뒤로 최대
  * REFETCH_MOVE_KM 만큼 더 움직여 있을 수 있습니다. 여유 없이 딱 맞춰
  * 조회하면 내 쪽으로 걸어가는 동안 반경 안에 들어온 오락실이 다음 조회
  * 전까지 목록에 안 뜹니다. 넓게 받아 두고 화면에서 실제 거리로 자릅니다.
  */
-const FETCH_MARGIN_KM = 0.5;
 
 /** 지도 마커에 순위 뱃지를 다는 상위 N — 그 아래는 뱃지가 서로 구분이 안 됩니다 */
 const MAP_RANK_TOP = 3;

@@ -16,6 +16,13 @@
  *   - 새로 넣는 기종의 기체는 대수만큼(모르면 1대 — 제보가 1대로 시작하는 것과 같음, lib/reports.ts).
  *   - 한 오락실에 점포 둘이 짝지어지면 기종은 합치고 대수는 큰 쪽을 씁니다.
  *
+ *   - 출처(2026-11-24 · migrate-085): 새로 넣는 기종에 점포의 문서(sourceTitle · sourceUrl)와 원문
+ *     최종 확인일(checked)을 함께 적습니다. 이미 있는 기종 중 **이미 나무위키 출처가 붙은 것**은
+ *     같은 문서가 여전히 적고 있으면 출처 · 확인일을 새로 고칩니다. 출처 없는 기종(이용자 제보)은 그대로.
+ *   - 영업시간: 원문 「영업시간」 칸이 있고 그 오락실 영업시간이 **비어 있거나 전에 나무위키에서
+ *     옮긴 것**일 때만 넣습니다(lib/namu-machines.ts parseNamuHours). 관리자가 적은 시간은 덮지 않고
+ *     계획 파일에 적기만 합니다. 원문은 hours_text 에, 한 구간으로 딱 떨어지면 open/close 에도.
+ *
  * 계획 파일: <입력>.plan.json — 짝지은 것 · 애매한 것 · 못 찾은 것 · 이미 있던 것.
  *
  * 운영 DB 에는 **이 도구를 같은 데이터 파일로 서버에서 한 번 더** 돌립니다. `data:release` 로는 안
@@ -24,7 +31,15 @@
  * DB 마다 id 가 달라도 같은 행을 찾습니다. 데이터 파일은 배포 묶음에 들어가지 않으므로 따로 올립니다.
  */
 import fs from 'node:fs';
-import { indexArcades, matchStore, type DbArcade, type Match, type NamuStore } from '../lib/namu-machines.ts';
+import {
+  indexArcades,
+  matchStore,
+  parseNamuHours,
+  type DbArcade,
+  type Match,
+  type NamuHours,
+  type NamuStore,
+} from '../lib/namu-machines.ts';
 import { BULK_TX_OPTIONS, getPrismaClient } from '../lib/prisma.ts';
 import { describeTarget, loadScriptEnv } from '../lib/script-env.ts';
 
@@ -46,10 +61,18 @@ const machineRows = await prisma.machines.findMany({ select: { id: true, short_n
 const machineId = new Map(machineRows.map((m) => [m.short_name, m.id]));
 const arcades: DbArcade[] = await prisma.arcades.findMany({ select: { id: true, name: true, address: true } });
 const arcadeById = new Map(arcades.map((a) => [a.id, a]));
-const existing = new Set(
-  (await prisma.arcade_machines.findMany({ select: { arcade_id: true, machine_id: true } })).map(
-    (r) => `${r.arcade_id}:${r.machine_id}`,
-  ),
+const existingRows = await prisma.arcade_machines.findMany({
+  select: { arcade_id: true, machine_id: true, source_url: true },
+});
+const existing = new Set(existingRows.map((r) => `${r.arcade_id}:${r.machine_id}`));
+/** 이미 바깥 자료 출처가 붙은 (오락실, 기종) — 같은 문서가 또 적고 있으면 확인일을 고칩니다 */
+const sourcedRows = new Set(existingRows.filter((r) => r.source_url).map((r) => `${r.arcade_id}:${r.machine_id}`));
+const hoursRows = new Map(
+  (
+    await prisma.arcades.findMany({
+      select: { id: true, open_time: true, close_time: true, is_24h: true, hours_text: true, hours_source_url: true },
+    })
+  ).map((a) => [a.id, a]),
 );
 const index = indexArcades(arcades);
 
@@ -60,7 +83,20 @@ interface Planned {
   by: string[];
   add: Map<number, number>; // machine_id → 대수
   kept: string[];
+  /** machine_id → 출처 (새로 넣는 것 · 확인일을 고칠 것 모두) */
+  source: Map<number, Source>;
+  /** 출처가 이미 있던 기종 중 같은 문서가 또 적은 것 — 출처 · 확인일만 고칩니다 */
+  refresh: Set<number>;
+  hours: (NamuHours & { src: Source }) | null;
+  hoursKept: string | null;
 }
+interface Source {
+  title: string;
+  url: string;
+  checked: string | null;
+}
+const sourceOf = (s: NamuStore): Source | null =>
+  s.sourceUrl ? { title: s.sourceTitle ?? s.sourceUrl, url: s.sourceUrl, checked: s.checked ?? null } : null;
 const plan = new Map<number, Planned>();
 const ambiguous: { store: string; doc: string; by: string; candidates: string[] }[] = [];
 const unmatched: { store: string; doc: string; addresses: string[] }[] = [];
@@ -111,33 +147,68 @@ for (const [arcadeId, hits] of hitsByArcade) {
     }
     const p =
       plan.get(arcadeId) ??
-      ({ arcadeId, arcade: arcadeById.get(arcadeId)!.name, stores: [], by: [], add: new Map(), kept: [] } as Planned);
+      ({
+        arcadeId,
+        arcade: arcadeById.get(arcadeId)!.name,
+        stores: [],
+        by: [],
+        add: new Map(),
+        kept: [],
+        source: new Map(),
+        refresh: new Set(),
+        hours: null,
+        hoursKept: null,
+      } as Planned);
     p.stores.push(`${s.doc} · ${s.name}`);
     p.by.push(`${m.by}(${m.nameScore.toFixed(2)})`);
     addMachines(p, s);
+    // 영업시간은 먼저 남은 점포(이름이 가장 잘 맞는 쪽) 하나의 것만
+    if (!p.hours && !p.hoursKept) planHours(p, s);
     plan.set(arcadeId, p);
   }
 }
 
 /** 점포의 기종을 넣을 목록에 더한다 — 이미 있는 기종은 손대지 않고, 같은 기종은 큰 대수 */
 function addMachines(p: Planned, s: NamuStore) {
+  const src = sourceOf(s);
   for (const g of s.machines) {
     const id = machineId.get(g.game);
     if (id === undefined) {
       unknownGame.add(g.game);
       continue;
     }
-    if (existing.has(`${p.arcadeId}:${id}`)) {
+    const k = `${p.arcadeId}:${id}`;
+    if (existing.has(k)) {
       if (!p.kept.includes(g.game)) p.kept.push(g.game);
+      if (src && sourcedRows.has(k)) {
+        p.refresh.add(id);
+        p.source.set(id, src);
+      }
       continue;
     }
     p.add.set(id, Math.max(p.add.get(id) ?? 0, Math.max(1, g.count ?? 1)));
+    if (src && !p.source.has(id)) p.source.set(id, src);
   }
+}
+
+/** 영업시간 — 비어 있거나 전에 바깥 자료에서 옮긴 것일 때만. 관리자가 적은 값은 덮지 않습니다 */
+function planHours(p: Planned, s: NamuStore) {
+  const h = parseNamuHours(s.hours);
+  const src = sourceOf(s);
+  if (!h || !src) return;
+  const cur = hoursRows.get(p.arcadeId);
+  const empty = !cur || (!cur.open_time && !cur.close_time && !cur.is_24h && !cur.hours_text);
+  if (empty || cur?.hours_source_url) {
+    p.hours = { ...h, src };
+    return;
+  }
+  const now = cur!.is_24h ? '24시간' : `${cur!.open_time ?? '?'}~${cur!.close_time ?? '?'}`;
+  p.hoursKept = `${now} (그대로 둠) ← 원문 ${h.text}`;
 }
 
 const shortOf = new Map(machineRows.map((m) => [m.id, m.short_name]));
 const planned = [...plan.values()];
-const toAdd = planned.filter((p) => p.add.size > 0);
+const toAdd = planned.filter((p) => p.add.size > 0 || p.refresh.size > 0 || p.hours);
 const machineCount = toAdd.reduce((n, p) => n + p.add.size, 0);
 const cabinetCount = toAdd.reduce((n, p) => n + [...p.add.values()].reduce((a, b) => a + b, 0), 0);
 
@@ -153,6 +224,11 @@ fs.writeFileSync(
         by: p.by,
         add: Object.fromEntries([...p.add].map(([id, n]) => [shortOf.get(id), n])),
         alreadyHad: p.kept,
+        refreshSource: [...p.refresh].map((id) => shortOf.get(id)),
+        hours: p.hours
+          ? { text: p.hours.text, is24h: p.hours.is24h, open: p.hours.openTime, close: p.hours.closeTime }
+          : null,
+        hoursKept: p.hoursKept,
       })),
       ambiguous,
       unmatched,
@@ -169,7 +245,9 @@ console.log(
     `점포 ${stores.length} — 폐업 ${skippedClosed} · 기종 없음 ${skippedEmpty}`,
     `짝지음 ${planned.length}곳 (주소 ${planned.filter((p) => p.by.some((b) => b.startsWith('address('))).length} · 주소+이름 ${planned.filter((p) => p.by.some((b) => b.startsWith('address+name'))).length} · 이름 ${planned.filter((p) => p.by.some((b) => b.startsWith('name'))).length} · 사람이 정함 ${planned.filter((p) => p.by.some((b) => b.startsWith('manual'))).length})`,
     `애매 ${ambiguous.length} · 못 찾음 ${unmatched.length} · 건너뜀 ${skipped.length}${unknownGame.size ? ` · 모르는 기종 ${[...unknownGame].join(',')}` : ''}`,
-    `넣을 것: 오락실 ${toAdd.length}곳 · 기종 ${machineCount} · 기체 ${cabinetCount} (이미 있던 기종은 건드리지 않음 ${planned.reduce((n, p) => n + p.kept.length, 0)})`,
+    `영업시간: 넣음 ${planned.filter((p) => p.hours).length}곳 (24시간 ${planned.filter((p) => p.hours?.is24h).length} · 한 구간 ${planned.filter((p) => p.hours?.openTime).length} · 원문만 ${planned.filter((p) => p.hours && !p.hours.is24h && !p.hours.openTime).length}) · 관리자 값이라 둠 ${planned.filter((p) => p.hoursKept).length}`,
+    `출처 확인일만 고칠 기종 ${planned.reduce((n, p) => n + p.refresh.size, 0)}`,
+    `넣을 것: 오락실 ${toAdd.filter((p) => p.add.size > 0).length}곳 · 기종 ${machineCount} · 기체 ${cabinetCount} (이미 있던 기종은 건드리지 않음 ${planned.reduce((n, p) => n + p.kept.length, 0)})`,
   ].join('\n'),
 );
 
@@ -181,16 +259,49 @@ if (!write) {
 const result = await prisma.$transaction(async (tx) => {
   let machines = 0;
   let cabinets = 0;
+  let refreshed = 0;
+  let hours = 0;
+  const day = (d: string | null) => (d ? new Date(`${d}T00:00:00Z`) : new Date());
+  const srcCols = (src: Source | undefined) =>
+    src ? { source_title: src.title, source_url: src.url, source_checked: day(src.checked) } : {};
   for (const p of toAdd) {
-    const rows = [...p.add.keys()].map((id) => ({ arcade_id: p.arcadeId, machine_id: id }));
-    machines += (await tx.arcade_machines.createMany({ data: rows, skipDuplicates: true })).count;
+    const rows = [...p.add.keys()].map((id) => ({ arcade_id: p.arcadeId, machine_id: id, ...srcCols(p.source.get(id)) }));
+    if (rows.length) machines += (await tx.arcade_machines.createMany({ data: rows, skipDuplicates: true })).count;
+    for (const id of p.refresh) {
+      refreshed += (
+        await tx.arcade_machines.updateMany({
+          where: { arcade_id: p.arcadeId, machine_id: id, source_url: { not: null } },
+          data: srcCols(p.source.get(id)),
+        })
+      ).count;
+    }
+    if (p.hours) {
+      const h = p.hours;
+      hours += (
+        await tx.arcades.updateMany({
+          where: { id: p.arcadeId },
+          data: {
+            hours_text: h.text,
+            is_24h: h.is24h,
+            open_time: h.openTime,
+            close_time: h.closeTime,
+            hours_source_title: h.src.title,
+            hours_source_url: h.src.url,
+            hours_checked: day(h.src.checked),
+            updated_at: new Date(),
+          },
+        })
+      ).count;
+    }
     const cabs = [...p.add].flatMap(([id, n]) =>
       Array.from({ length: n }, (_, i) => ({ arcade_id: p.arcadeId, machine_id: id, cabinet_no: i + 1 })),
     );
     cabinets += (await tx.arcade_cabinets.createMany({ data: cabs, skipDuplicates: true })).count;
   }
-  return { machines, cabinets };
+  return { machines, cabinets, refreshed, hours };
 }, BULK_TX_OPTIONS);
 
-console.log(`\n✔ 넣었습니다 — 기종 ${result.machines} · 기체 ${result.cabinets}`);
+console.log(
+  `\n✔ 넣었습니다 — 기종 ${result.machines} · 기체 ${result.cabinets} · 출처 고침 ${result.refreshed} · 영업시간 ${result.hours}곳`,
+);
 process.exit(0);
