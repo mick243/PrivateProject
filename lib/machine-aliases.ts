@@ -39,6 +39,7 @@ const MIN_TERM = 2;
  */
 const ALIASES: readonly { of: readonly string[]; aliases: readonly string[] }[] = [
   { of: ['pumpitup', '펌프'], aliases: ['piu', '펌프잇업', '펌프잇'] },
+  { of: ['beaton', '비트온'], aliases: ['손펌프'] },
   { of: ['ez2ac'], aliases: ['이지투ac', '이지투에이씨', '이지투'] },
   { of: ['ez2dj'], aliases: ['이지투dj', '이지투디제이'] },
   { of: ['soundvoltex', '사볼'], aliases: ['sdvx', '사운드볼텍스', '볼텍스'] },

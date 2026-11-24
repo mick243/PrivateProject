@@ -76,7 +76,7 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 |---|---|
 | `q` | 이름·주소 검색. 최대 8토큰으로 분해해 각 토큰을 이름·주소에 ILIKE, AND 결합("홍대 짱" → "짱오락실 홍대점" 매칭) |
 | `machines=1,3` | 나열된 기종을 **모두** 보유한 곳만 (AND 필터) |
-| `lat` `lng` `radius` | 반경(km) 검색 — SQL haversine. 좌표가 있을 때만 radius 적용, 응답에 `distanceKm` 포함 |
+| `lat` `lng` `radius` | 반경(km) 검색 — SQL haversine. 좌표가 있을 때만 radius 적용, 응답에 `distanceKm` 포함. radius 는 최대 5.5(화면 반경 1~5km + 여유 0.5) — 넘으면 5.5 로 줄입니다 |
 
 응답 `200 {arcades: Arcade[]}`. `LIMIT` 없음(942행 307KB 전체 반환 — 프런트 `fullListRef` 재사용 설계, 부하 리포트 '남은 것' 참조).
 

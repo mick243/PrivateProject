@@ -5216,6 +5216,14 @@ body:has(.ops-panel) .chat-panel {
   color: var(--info);
 }
 
+/* 바깥 자료에서 옮겨 온 값의 출처 한 줄 (components/SourceNote.tsx · migrate-085) */
+.source-note {
+  margin: 4px 0 0;
+}
+.source-note a {
+  color: var(--info);
+}
+
 /* 네이버 지도 · 카카오맵 · 길찾기 (components/ArcadeDetailPanel.tsx · lib/place-links.ts).
    폰 폭(375)에서 머리말과 단추 셋이 한 줄에 다 안 들어가므로 접힌다. */
 .place-links {

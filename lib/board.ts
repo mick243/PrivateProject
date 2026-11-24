@@ -57,11 +57,15 @@ function excerptOf(body: string): string {
  * 리듬 기종 전부를 돌려줍니다 — 글이 0건인 게임도 탭에 남깁니다. 글이 있는 게임만
  * 보여주면 새 게임에 첫 글을 쓸 방법이 없어집니다 (닭과 달걀).
  * 리듬게임이 아닌 기종(category='etc')은 제외합니다.
+ * 비트온은 펌프 곡을 손으로 치는 기체라 이야기는 펌프 탭에서 함께 합니다 — 오락실 기종으로만
+ * 따로 두고(migrate-086) 게임 탭은 만들지 않습니다 (2026-11-24 사용자 결정).
  */
+const NO_BOARD_MACHINES = ['BEAT ON (비트온)'];
+
 export async function listBoards(): Promise<Board[]> {
   const prisma = await getPrismaClient();
   const rows = await prisma.machines.findMany({
-    where: { category: 'rhythm' },
+    where: { category: 'rhythm', name: { notIn: NO_BOARD_MACHINES } },
     orderBy: [{ sort_order: 'asc' }, { id: 'asc' }],
     select: { id: true, name: true, short_name: true, _count: { select: { posts: true } } },
   });

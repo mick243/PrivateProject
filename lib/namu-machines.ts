@@ -53,6 +53,11 @@ export interface NamuStore {
   arcadeId?: number;
   /** 사람이 넣지 않기로 한 이유 — 있으면 건너뜁니다 */
   skip?: string;
+  /** 원문 「영업시간」 칸 그대로 (parseNamuHours 가 읽습니다) */
+  hours?: string | null;
+  /** 이 점포가 실린 문서 — 화면에 출처로 밝힙니다 (migrate-085). 예: '나무위키 「오락실/서울/강남」' */
+  sourceTitle?: string;
+  sourceUrl?: string;
 }
 
 export interface DbArcade {
@@ -301,4 +306,63 @@ export function indexArcades(arcades: readonly DbArcade[]): ArcadeIndex {
     }
   }
   return { byKey, byArea, nameCount };
+}
+
+// ─── 영업시간 (2026-11-24) ────────────────────────────────────────────────
+
+export interface NamuHours {
+  /** 원문 그대로 — 각주 번호만 떼고 공백을 정리한 것. 화면은 이것을 보여 줍니다 */
+  text: string;
+  is24h: boolean;
+  /** 하루 한 구간으로 딱 떨어질 때만 'HH:MM'. 요일별 · 단서가 붙으면 null (text 만 씁니다) */
+  openTime: string | null;
+  closeTime: string | null;
+}
+
+/** 모른다는 뜻의 값 — 영업시간으로 넣지 않습니다 */
+const UNKNOWN_HOURS = /^(미확인|미상|불명|정보\s*없음|알\s*수\s*없음|확인\s*필요|[?？\-–—]+)$/;
+/** 지금 문을 닫았다는 뜻이 섞인 값 — 넣지 않습니다(영업시간이 아니라 상태입니다) */
+const CLOSED_HOURS = /휴업|폐업|영업\s*중단|임시\s*휴무\s*중/;
+
+/** '오후 10:00' · '익일 02:00' · '9:00' · '12시' · '24:00' → 'HH:MM'. 못 읽으면 null */
+function clock(raw: string): string | null {
+  const m = raw
+    .trim()
+    .match(/^(오전|오후)?\s*(?:익일|다음\s*날|새벽)?\s*(오전|오후)?\s*(\d{1,2})(?:\s*[:시]\s*(\d{2}))?\s*(?:시|분)?$/);
+  if (!m) return null;
+  const ampm = m[1] ?? m[2];
+  let h = Number(m[3]);
+  const min = m[4] ? Number(m[4]) : 0;
+  if (h > 24 || min > 59) return null;
+  if (ampm === '오후' && h < 12) h += 12;
+  if (ampm === '오전' && h === 12) h = 0;
+  if (h === 24) h = 0;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/**
+ * 나무위키 「영업시간」 칸 → 우리 칸.
+ *   '24시간' · '연중무휴 24시간'           → is24h
+ *   '10:00~22:00' · '매일 오전 11:00 ~ 오후 10:00' · '10:00~익일 02:00' → openTime · closeTime
+ *   '월~토 07:00~24:00 / 일 …' 같은 나머지  → text 만 (한 구간으로 줄이면 틀린 말이 됩니다)
+ *   '미확인' · '휴업중' · 빈 칸            → null (넣지 않음)
+ */
+export function parseNamuHours(raw: string | null | undefined): NamuHours | null {
+  if (!raw) return null;
+  const text = raw
+    .replace(/\[\d+\]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*\/\s*$/, '')
+    .trim();
+  if (!text || UNKNOWN_HOURS.test(text) || CLOSED_HOURS.test(text)) return null;
+  if (/^(연중무휴\s*)?24\s*시간(\s*(영업|연중무휴|운영))?$/.test(text)) {
+    return { text, is24h: true, openTime: null, closeTime: null };
+  }
+  const one = text.match(
+    /^(?:매일|연중무휴|평일\s*[·,/]?\s*주말|월\s*~\s*일(?:요일)?)?\s*[:：]?\s*([^~\-–]+?)\s*[~\-–]\s*([^~\-–]+)$/,
+  );
+  const open = one ? clock(one[1]!) : null;
+  const close = one ? clock(one[2]!) : null;
+  if (open && close && open !== close) return { text, is24h: false, openTime: open, closeTime: close };
+  return { text, is24h: false, openTime: null, closeTime: null };
 }

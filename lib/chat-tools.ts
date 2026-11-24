@@ -26,7 +26,7 @@
 import { listMachines, pageArcades } from './arcades';
 import { listPosts } from './board';
 import type { ChatPlace } from './chat-types';
-import { formatDistance, type Coord } from './geo';
+import { formatDistance, MAX_RADIUS_KM, type Coord } from './geo';
 import { resolveMachines } from './machine-aliases';
 import { placeLinks } from './place-links';
 import { listReports } from './reports';
@@ -112,8 +112,8 @@ export interface ArcadeSearchArgs {
   page?: number | null;
 }
 
-/** 모델이 준 반경의 상한(km). 이보다 넓으면 "근처" 가 아니라 전국입니다 */
-export const MAX_RADIUS_KM = 50;
+/** 모델이 준 반경의 상한(km) — 화면 반경 칩과 같은 5km (lib/geo.ts) */
+export { MAX_RADIUS_KM };
 
 /** 모델이 준 radiusKm 를 0 초과 … MAX_RADIUS_KM 로. 숫자가 아니거나 0 이하면 null(자르지 않음) */
 export function radiusOf(raw: unknown): number | null {

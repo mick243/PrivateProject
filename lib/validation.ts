@@ -10,6 +10,7 @@ import {
 import { CHART_TAGS, REPORT_COMMENT_MAX } from './community-types';
 import { REPORT_DETAIL_MAX, REPORT_REASONS, REPORT_TARGETS } from './moderation-types';
 import { isKnownPushEndpoint } from './ops-alert-input';
+import { MAX_QUERY_RADIUS_KM } from './geo';
 import { normalizeDoc, toPlainText } from './rich-text';
 
 /**
@@ -518,6 +519,11 @@ export function issueFields(error: z.ZodError): string[] {
   return error.issues.map((i) => String(i.path[0] ?? ''));
 }
 
+/** 반경(km)을 MAX_QUERY_RADIUS_KM 이하로 */
+function clampRadius(km: number | null): number | null {
+  return km === null ? null : Math.min(km, MAX_QUERY_RADIUS_KM);
+}
+
 /** 쿼리스트링 → listArcades 파라미터 */
 export function parseListQuery(searchParams: URLSearchParams) {
   const num = (key: string): number | null => {
@@ -537,7 +543,9 @@ export function parseListQuery(searchParams: URLSearchParams) {
     machineIds: machineIds.length ? machineIds : null,
     lat: num('lat'),
     lng: num('lng'),
-    radiusKm: num('radius'),
+    // 5km 넘는 반경은 받지 않습니다 — 넘겨 오면 상한(반경 + 여유)으로 줄입니다 (lib/geo.ts).
+    // 0 이하는 기존처럼 그대로 넘겨 SQL 이 무시하게 둡니다.
+    radiusKm: clampRadius(num('radius')),
   };
 }
 

@@ -130,7 +130,7 @@ const functionDeclarations: FunctionDeclaration[] = [
         radiusKm: {
           type: 'number',
           description:
-            '사용자의 기준점에서 이 거리(km) 안만. "내 근처 · 가까운 · 주변" 질문에 씁니다 (보통 5, 없으면 넓혀서 20). 최대 50',
+            '사용자의 기준점에서 이 거리(km) 안만. "내 근처 · 가까운 · 주변" 질문에 씁니다 (보통 5). 최대 5 — 그 안에 없으면 radiusKm 없이 다시 찾아 가까운 순으로 알려 주세요',
         },
         page: {
           type: 'integer',

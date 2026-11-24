@@ -104,6 +104,12 @@ mach_agg AS (
            'category',  m.category,
            'cabinetCount', COALESCE(cab.cabinet_count, 0),
            'cabinets',     COALESCE(cab.cabinets, '[]'::json),
+           -- 이 기종을 옮겨 온 곳 (migrate-085). NULL = 이용자 제보 · 관리자 입력
+           'source', CASE WHEN am.source_url IS NULL THEN NULL ELSE json_build_object(
+             'title',   am.source_title,
+             'url',     am.source_url,
+             'checked', am.source_checked
+           ) END,
            'live', CASE WHEN ml.machine_id IS NULL THEN NULL ELSE json_build_object(
              'waitCount',      ml.wait_count,
              'waitReports',    COALESCE(ml.wait_reports, 0),
@@ -119,8 +125,12 @@ mach_agg AS (
 )
 SELECT b.id, b.name, b.address, b.lat, b.lng, b.open_time, b.close_time, b.is_24h,
        b.phone, b.note, b.homepage, b.rating_avg, b.review_count, b.distance_km,
+       -- 원문 영업시간과 그 출처 (migrate-085). ▼▲ 조건 구간은 arcadeSearchPage.sql 과 글자까지
+       -- 같아야 해서 scored 에 칸을 늘리지 않고 여기서 한 번 더 붙입니다 (id 기본키 조인).
+       h.hours_text, h.hours_source_title, h.hours_source_url, h.hours_checked,
        COALESCE(ma.machines, '[]'::json) AS machines
 FROM base b
+JOIN arcades h ON h.id = b.id
 LEFT JOIN mach_agg ma ON ma.arcade_id = b.id
 -- id 로 마지막 순위를 못 박습니다 — 같은 이름이 267곳(66종류) 있어 타이브레이커가 없으면
 -- 동명 사이의 순서가 실행계획에 따라 달라집니다 (lib/arcades.ts 주석).

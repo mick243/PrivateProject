@@ -346,11 +346,10 @@ function zoomForRadius(radiusKm: number | null): number {
   // 반경 없이(전체) 이동하면 — 지역·역 이름 검색의 기본 상태 — 역 주변
   // 몇 블록이 한눈에 드는 수준으로. 지점 이동(SPOT_ZOOM 18)보다 네 단계 밖.
   if (!radiusKm) return 14;
+  // 반경은 1~5km (lib/geo.ts RADIUS_OPTIONS_KM)
   if (radiusKm <= 1) return 14;
   if (radiusKm <= 3) return 13;
-  if (radiusKm <= 5) return 12;
-  if (radiusKm <= 10) return 11;
-  return 9;
+  return 12;
 }
 
 export default function NaverMap({

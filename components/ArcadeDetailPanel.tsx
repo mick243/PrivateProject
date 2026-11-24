@@ -14,12 +14,19 @@ import {
 } from '@/lib/community-types';
 import { reportOutcomeMessage, waitShownAt } from '@/lib/report-display';
 import { placeLinks } from '@/lib/place-links';
-import type { Arcade, ArcadeCabinet, ArcadeMachine, Machine, MachineGuess } from '@/lib/types';
+import type {
+  Arcade,
+  ArcadeCabinet,
+  ArcadeMachine,
+  DataSource,
+  Machine,
+  MachineGuess,
+} from '@/lib/types';
 import { useFavorites } from '@/lib/use-favorites';
 import { usePlayerId } from '@/lib/use-player';
 import { useIsAdmin } from '@/lib/use-session';
-import { CC_BY_NC_SA_KR_URL, NAMU_ARCADE_URL } from '@/lib/attribution';
 import ArcadeReviews from './ArcadeReviews';
+import SourceNote, { machineSources } from './SourceNote';
 import { ConditionBadge, WaitBadge } from './LiveBadge';
 
 interface Props {
@@ -442,11 +449,15 @@ function ArcadeDetailPanel({
           */}
           <p className="muted small detail-facts">
             <span>
+              {/* 원문 영업시간(hoursText)이 있으면 그것을 씁니다 — 요일별 · 단서가 붙은 시간을
+                  openTime · closeTime 한 구간으로 줄이면 틀린 말이 됩니다 (migrate-085). */}
               {arcade.is24h
                 ? '24시간'
-                : arcade.openTime && arcade.closeTime
-                  ? `${arcade.openTime} ~ ${arcade.closeTime}`
-                  : '영업시간은 아직 몰라요'}
+                : arcade.hoursText
+                  ? arcade.hoursText
+                  : arcade.openTime && arcade.closeTime
+                    ? `${arcade.openTime} ~ ${arcade.closeTime}`
+                    : '영업시간은 아직 몰라요'}
             </span>
             {arcade.phone && <span className="dot-sep">{arcade.phone}</span>}
             {arcade.homepage && /^https?:\/\//i.test(arcade.homepage) && (
@@ -560,10 +571,11 @@ function ArcadeDetailPanel({
 
         {arcade.machines.length === 0 ? null : (
           <ul className="live-list">
-            {arcade.machines.map((m) => (
+            {arcade.machines.map((m, i) => (
               <li key={m.id}>
                 <MachineRow
                   machine={m}
+                  sources={i === arcade.machines.length - 1 ? machineSources(arcade.machines) : null}
                   waitShownAt={waitShownAt(m.live, reports, m.id)}
                   msg={rowMsg?.at === m.id ? rowMsg : null}
                   confirmingGone={confirmGone === m.id}
@@ -582,21 +594,6 @@ function ArcadeDetailPanel({
               </li>
             ))}
           </ul>
-        )}
-
-        {/* 나무위키 자료의 출처 · 라이선스 · 고쳤다는 사실을 자료가 보이는 자리에 밝힙니다 (lib/attribution.ts) */}
-        {arcade.machines.length > 0 && (
-          <p className="hint">
-            보유 기종은 이용자 제보와, 일부는{' '}
-            <a href={NAMU_ARCADE_URL} target="_blank" rel="noopener noreferrer">
-              나무위키 「오락실」 문서
-            </a>
-            (
-            <a href={CC_BY_NC_SA_KR_URL} target="_blank" rel="noopener noreferrer">
-              CC BY-NC-SA 2.0 KR
-            </a>
-            )를 정리한 것입니다.
-          </p>
         )}
       </div>
 
@@ -722,9 +719,12 @@ function MachineRow({
   msg,
   confirmingGone,
   onToggleGone,
+  sources,
   ...form
 }: {
   machine: ArcadeMachine;
+  /** 마지막 카드에만 — 이 오락실 기종들의 출처를 한 번에 (나무위키 · CC BY-NC-SA) */
+  sources: DataSource[] | null;
   /** 대기 뱃지 시각 — 보이는 인원을 알려 준 제보의 시각 (lib/report-display.ts) */
   waitShownAt: string | null;
   /** 이 게임에서 보낸 제보의 결과 · 오류 */
@@ -873,6 +873,7 @@ function MachineRow({
       )}
 
       <RowMessage msg={msg} />
+      {sources && <SourceNote sources={sources} />}
     </div>
   );
 }

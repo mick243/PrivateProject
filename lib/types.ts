@@ -29,8 +29,20 @@ export interface ArcadeCabinet {
   conditionSummary: CabinetCondition | null;
 }
 
+/**
+ * 값을 옮겨 온 바깥 자료 (migrate-085). 나무위키처럼 출처 표시가 의무인 자료에 씁니다.
+ * `checked` 는 원문이 밝힌 확인일(YYYY-MM-DD) — 없으면 옮겨 온 날입니다.
+ */
+export interface DataSource {
+  title: string;
+  url: string;
+  checked: string | null;
+}
+
 /** 오락실이 보유한 기종 1건 */
 export interface ArcadeMachine extends Machine {
+  /** 이 기종을 옮겨 온 곳. null = 이용자 제보 · 관리자 입력 */
+  source?: DataSource | null;
   /** cabinets.length 와 같습니다. 목록에서 배열을 세지 않아도 되게 함께 내보냅니다 */
   cabinetCount: number;
   /** cabinetNo 오름차순 */
@@ -58,6 +70,13 @@ export interface Arcade {
    * 예전에는 `note` 에 이어 붙어 화면에 원본 주소가 그대로 찍혔다 — migrate-055.
    */
   homepage: string | null;
+  /**
+   * 원문 영업시간 그대로 ("월~토 07:00~24:00 / 일 08:00~24:00"). openTime · closeTime 은
+   * 하루 한 구간만 담아서 요일별 · 단서 붙은 시간은 여기에만 있습니다. 없으면 null.
+   */
+  hoursText?: string | null;
+  /** 영업시간을 옮겨 온 곳. null = 관리자 입력이거나 영업시간 없음. 화면에는 내지 않습니다 */
+  hoursSource?: DataSource | null;
   machines: ArcadeMachine[];
   /** 좌표 기준 검색일 때만 채워짐 */
   distanceKm: number | null;

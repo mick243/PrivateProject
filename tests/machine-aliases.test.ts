@@ -28,6 +28,7 @@ const SEED: [string, string][] = [
   ['DANCERUSH STARDOM', '댄스러쉬'],
   ["pop'n music", '팝픈'],
   ['ノスタルジア (노스탤지어)', '노스탤지어'],
+  ['BEAT ON (비트온)', '비트온'], // migrate-086
 ];
 const MACHINES: Machine[] = SEED.map(([name, shortName], i) => ({
   id: i + 1,
@@ -130,5 +131,13 @@ describe('문장 제약(lib/query-constraints.ts)이 같은 사전을 쓴다', (
     expect(findPlaceQuery('홍대 투덱', MACHINES)).toBe('홍대');
     expect(findPlaceQuery('강남역 근처 마이마이', MACHINES)).toBe('강남역');
     expect(findPlaceQuery('이지투 있는 곳', MACHINES)).toBeNull();
+  });
+});
+
+describe('비트온 (migrate-086)', () => {
+  it('손펌프 · 비트온은 비트온이고, 펌프는 비트온을 끌어오지 않는다', () => {
+    expect(shortNames(matchMachines('손펌프 있는 곳', MACHINES))).toEqual(['비트온']);
+    expect(shortNames(matchMachines('비트온 있는 곳', MACHINES))).toEqual(['비트온']);
+    expect(shortNames(matchMachines('펌프 있는 곳', MACHINES))).toEqual(['펌프']);
   });
 });
