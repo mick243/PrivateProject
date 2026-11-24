@@ -180,6 +180,8 @@ sudo bash install-release.sh /root/release-<새것>.tgz
 | 로그 | `journalctl -u arcade-finder -f` · Caddy: `/var/log/caddy/arcade-finder.log` |
 | 메모리 · 디스크 | `free -m` · `df -h /` |
 | 백업 (매일 04:00 자동) | `/var/backups/arcade-finder/` — **PC 로도 받아 두세요**: `scp root@$IP:/var/backups/arcade-finder/db-*.dump .` |
+| 복구 리허설 (운영은 안 건드림) | `sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/restore-rehearsal.sh` — 최근 백업을 임시 DB 에 복원해 확인하고 지움 ([deploy/README.md §4](../README.md#4-복구-리허설-포함)). 백업이 아직 없으면 먼저 `sudo systemctl start arcade-finder-backup` |
+| 부하 시험 (PC 에서) | [load-test/README.md §7](../../load-test/README.md#7-실서버에-걸기) — 반드시 `-e VIEW=0` |
 | 관리자 비밀번호 | `/root/arcade-finder-secrets.env` (바꾸려면 `.env.local` 의 `ADMIN_PASSWORD` 수정 후 재시작) |
 | 패키지 업데이트 | `apt upgrade` 는 해도 되지만 **커널은 bootstrap 이 고정**해 둡니다 — NCP 가 Ubuntu 커널 업데이트를 지원하지 않습니다. `apt-mark unhold` 하지 마세요 |
 | 감시 (Grafana Cloud) | §9-5 |

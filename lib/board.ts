@@ -18,7 +18,7 @@ import {
 import { cacheReference, clearReferenceCache } from './cache';
 import { Prisma } from './generated/prisma/client.ts';
 import { recalcPostStats } from './typed-sql';
-import { isRecordNotFound } from './pg-errors';
+import { isForeignKeyViolation, isRecordNotFound } from './pg-errors';
 import { getPrismaClient, iso, TX_OPTIONS, type PrismaTx } from './prisma';
 import { normalizeDoc, type RichDoc } from './rich-text';
 
@@ -700,17 +700,29 @@ export async function deleteCommentAsAdmin(commentId: number): Promise<number | 
  * `setClear` · `setSpecial` 이 이미 같은 모양(원하는 상태를 받음)이라 결도 맞습니다.
  * 두 번 불러도 결과가 같으므로 라우트를 PUT/DELETE 로 열 수 있습니다.
  */
+/**
+ * 추천을 켜거나 끕니다. 켤 때 글이 없으면 null (외래 키 위반).
+ *
+ * 글이 있는지 미리 읽지 않습니다(2026-11-24) — 라우트가 예전에는 getPost 로 확인했는데 그 한 번이
+ * 관계를 따라 SQL 9문장이었습니다. 끌 때는 없는 글이어도 지울 것이 없을 뿐이라, 라우트가 마지막
+ * 재조회(getPost)가 비는 것으로 404 를 냅니다.
+ */
 export async function setLike(
   postId: number,
   playerId: number,
   liked: boolean,
-): Promise<{ liked: boolean }> {
+): Promise<{ liked: boolean } | null> {
   const prisma = await getPrismaClient();
   if (liked) {
-    await prisma.post_likes.createMany({
-      data: [{ post_id: postId, player_id: playerId }],
-      skipDuplicates: true,
-    });
+    try {
+      await prisma.post_likes.createMany({
+        data: [{ post_id: postId, player_id: playerId }],
+        skipDuplicates: true,
+      });
+    } catch (err) {
+      if (isForeignKeyViolation(err)) return null;
+      throw err;
+    }
   } else {
     await prisma.post_likes.deleteMany({ where: { post_id: postId, player_id: playerId } });
   }

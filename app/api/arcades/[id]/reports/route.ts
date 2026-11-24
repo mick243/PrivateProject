@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server';
 import { json } from '@/lib/http';
 import { badId, conflict, handle, notFound, parseBody, parseId, tooMany } from '@/lib/api-errors';
-import { getArcade } from '@/lib/arcades';
-import { clientKey, sessionPlayerId } from '@/lib/auth';
+import { clientKey, getSession } from '@/lib/auth';
 import { consume, limitFromEnv, retryAfterLabel, TEN_MINUTES_MS } from '@/lib/rate-limit';
 import {
+  ArcadeNotFoundError,
   CabinetNotFoundError,
   createReport,
   listReports,
   MachineNotAtArcadeError,
+  UnknownMachineError,
 } from '@/lib/reports';
 import { reportInputSchema } from '@/lib/validation';
 
@@ -56,6 +57,10 @@ async function onGet(request: Request, ctx: Ctx) {
  * 응답에 갱신된 오락실을 함께 실어 보냅니다. 있어요/없어졌어요 제보는
  * 임계값이 차는 순간 보유 기종 목록을 바꾸므로, 클라이언트가 목록을 다시
  * 받아오지 않아도 화면과 DB 가 어긋나지 않게 하기 위해서입니다.
+ *
+ * 오락실이 있는지는 미리 보지 않습니다 — createReport 가 저장하면서 알아내고
+ * ArcadeNotFoundError 로 알려 줍니다(2026-11-24 · 왕복 줄이기, lib/reports.ts).
+ * 그래서 없는 오락실에 보낸 제보도 시도 횟수에는 셉니다.
  */
 async function onPost(request: Request, ctx: Ctx) {
   const arcadeId = parseId((await ctx.params).id);
@@ -64,9 +69,8 @@ async function onPost(request: Request, ctx: Ctx) {
   const body = await parseBody(request, reportInputSchema);
   if (!body.ok) return body.response;
 
-  if (!(await getArcade(arcadeId))) return notFound('오락실을 찾을 수 없어요. 지워졌을 수 있어요');
-
-  const playerId = await sessionPlayerId(request);
+  const session = await getSession(request);
+  const playerId = session?.playerId ?? null;
   const ip = playerId === null ? clientKey(request) : null;
   const [key, limit] =
     playerId !== null
@@ -87,12 +91,13 @@ async function onPost(request: Request, ctx: Ctx) {
       ...body.value,
       arcadeId,
       playerId,
+      nickname: session?.nickname ?? null,
     });
-    return NextResponse.json(
-      { ...result, arcade: await getArcade(arcadeId) },
-      { status: 201 },
-    );
+    return NextResponse.json(result, { status: 201 });
   } catch (err) {
+    if (err instanceof ArcadeNotFoundError || err instanceof UnknownMachineError) {
+      return notFound(err.message);
+    }
     // 둘 다 "화면이 낡았다" 는 뜻이라 409 — 입력이 틀린 게 아니라 그 사이에
     // 보유 기종/대수가 바뀐 것이다.
     if (err instanceof MachineNotAtArcadeError || err instanceof CabinetNotFoundError) {

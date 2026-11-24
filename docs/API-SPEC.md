@@ -96,8 +96,8 @@ if (!res.ok) setError(data.error ?? '기본 문구');
 
 | 상태 | 의미 |
 |---|---|
-| `201 {outcome, support: {count, threshold}, arcade}` | 성공. 갱신된 `arcade` 동봉 — 임계값 도달 시 보유 기종이 그 순간 바뀌므로 |
-| `404` | 오락실 없음 |
+| `201 {report, outcome, support: {count, threshold}, arcade}` | 성공. 갱신된 `arcade` 동봉 — 임계값 도달 시 보유 기종이 그 순간 바뀌므로 |
+| `404` | 오락실 없음 · 기종 목록에 없는 `machineId`. 오락실은 미리 확인하지 않고 저장하며 알아냅니다(2026-11-24) — 그래서 없는 오락실에 보낸 제보도 시도 횟수(429)에는 셉니다 |
 | `409` | `MachineNotAtArcadeError` / `CabinetNotFoundError` — "입력이 틀렸다"가 아니라 "화면이 낡았다"는 뜻 |
 
 ### `GET /api/arcades/[id]/reviews` → `200 {reviews}`
@@ -304,9 +304,10 @@ AI 보유 기종 추정 검수. PUT 은 보유 기종에 넣고(기체 1대, 이
 
 | 상태 | HTTP | 의미 |
 |---|---|---|
-| `healthy` | 200 | DB 응답 정상, 의도한 엔진으로 동작 (DATABASE_URL 없는 개발 기본값의 PGlite 포함) |
-| `degraded` | 200 | DB 응답은 되지만 **PostgreSQL → PGlite 폴백 중** — 지금 쓰는 내용은 PostgreSQL에 반영되지 않는다. 서비스는 되므로 200 |
+| `healthy` | 200 | DB · 첨부 저장소 모두 정상 |
+| `degraded` | 200 | DB 는 정상인데 **첨부를 받을 수 없음** — 업로드 폴더에 못 쓰거나(`checks.uploads`) 디스크 여유가 하한보다 적음(`checks.disk`). 읽기는 그대로 되므로 200 (2026-11-24 · QA H7). 503 이면 무중단 재기동이 새 인스턴스를 받지 않아 디스크를 비우는 배포도 막힙니다 |
 | `unhealthy` | 503 | DB 조회 실패 |
 
-응답 `{status, checks: {db, db_primary}, db: {driver, fallback, fallbackAt?}, version, uptime_s, latency_ms}`.
-`checks.*` 는 `'ok' | 'fail'` 만 쓴다. Pulse 프로브가 항목마다 `check.<이름>` 지표(1/0)로 받아 룰(`check.db_primary < 1` = 폴백 알림)을 걸 수 있게 정한 규약이다. 폴백 사유 문자열은 DB 호스트가 섞여 있어 응답에 싣지 않는다(서버 로그).
+응답 `{status, checks: {db, db_primary, uploads, disk}, db: {driver, client, fallback}, version, uptime_s, latency_ms}`.
+`checks.*` 는 `'ok' | 'fail'` 만 쓴다. Pulse 프로브가 항목마다 `check.<이름>` 지표(1/0)로 받아 룰을 걸 수 있게 정한 규약이다. `db_primary` 는 옛 PGlite 폴백 시절 이름이라 남겨 두었고 지금은 `db` 와 같은 값이다(폴백은 Prisma 이관으로 없어짐).
+`disk` 의 하한은 `HEALTH_MIN_FREE_MB`(기본: 가장 큰 첨부 50MB × 4 = 200MB). 여유를 읽지 못해도 `fail` 이다. 실패 사유(경로 · DB 호스트)는 응답에 싣지 않는다(서버 로그).

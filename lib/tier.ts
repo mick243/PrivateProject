@@ -26,7 +26,13 @@ export const DEFAULT_MACHINE_ID = 1;
 // 화면(ChartDetailPanel)도 같은 규칙을 써야 하고, 그 파일은 DB 를 물지 않습니다.
 export { SPECIAL_CODE, UNDECIDED_CODE, UNIQUE_CODE } from './tier-types';
 
-export async function getSettings(machineId = DEFAULT_MACHINE_ID): Promise<TierSettings> {
+/*
+ * 설정 · 등급표는 마이그레이션만 넣고 고치는 기준 데이터라(lib/data-release.ts) 게임 목록과 같은
+ * 5분 캐시에 둡니다(2026-11-24). 그 전에는 서열표 한 번에 이 둘이 매번 DB 로 나가
+ * GET /api/tier 가 문장 3개(로그인 4개)였습니다 — 이제 채보 조회 1개(로그인은 세션 확인 +1).
+ * 기본값은 캐시 바깥에서 채웁니다 — listLevels 와 같은 이유(인자가 캐시 키).
+ */
+async function getSettingsUncached(machineId: number): Promise<TierSettings> {
   const prisma = await getPrismaClient();
   const r = await prisma.tier_settings.findUnique({ where: { machine_id: machineId } });
   if (!r) throw new Error(`tier_settings 에 machine_id=${machineId} 설정이 없습니다`);
@@ -44,7 +50,13 @@ export async function getSettings(machineId = DEFAULT_MACHINE_ID): Promise<TierS
   };
 }
 
-export async function getGrades(machineId = DEFAULT_MACHINE_ID): Promise<TierGrade[]> {
+const getSettingsCached = cacheReference(getSettingsUncached, 'tier-settings');
+
+export function getSettings(machineId = DEFAULT_MACHINE_ID): Promise<TierSettings> {
+  return getSettingsCached(machineId);
+}
+
+async function getGradesUncached(machineId: number): Promise<TierGrade[]> {
   const prisma = await getPrismaClient();
   const rows = await prisma.tier_grades.findMany({
     where: { machine_id: machineId },
@@ -57,6 +69,12 @@ export async function getGrades(machineId = DEFAULT_MACHINE_ID): Promise<TierGra
     anchor: num(r.anchor)!,
     sortOrder: r.sort_order,
   }));
+}
+
+const getGradesCached = cacheReference(getGradesUncached, 'tier-grades');
+
+export function getGrades(machineId = DEFAULT_MACHINE_ID): Promise<TierGrade[]> {
+  return getGradesCached(machineId);
 }
 
 /**

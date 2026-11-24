@@ -211,7 +211,7 @@
 
 **H6. 세션 만료를 클라이언트가 감지하지 않는다** — `lib/use-session.ts:70-72` 는 마운트·로그인·로그아웃 때만 갱신. 7일 뒤 네비엔 닉네임이 남고 글쓰기 버튼도 활성인데 모든 쓰기가 401. 즐겨찾기는 401 을 **아무 말 없이 되돌립니다**(`use-favorites.ts:140-146`). 글 작성 중 401 → 로그인 이동 시 본문·첨부 전부 소실. 수정: 공용 `apiFetch` 에서 401 → 세션 null + 토스트 + `next` 링크, PostForm 본문 `sessionStorage` 자동 저장.
 
-**H7. 헬스체크가 `SELECT 1` 만** — 업로드 디렉터리 쓰기 가능 · 디스크 여유 미검사(`health/route.ts:27-30`). degraded 가 200(B2). `version` 은 `APP_VERSION` 없으면 `'dev'`. 수정: `checks.uploads_writable`, `checks.disk`, degraded → 503.
+**H7. 헬스체크가 `SELECT 1` 만** — ✅ **2026-11-24 해결**: `checks.uploads`(업로드 폴더 쓰기 권한) · `checks.disk`(여유 ≥ `HEALTH_MIN_FREE_MB`, 기본 200MB) 추가, 둘 중 하나가 `fail` 이면 `degraded`. 단 **degraded 는 200 으로 둡니다** — 여기서 말한 degraded 는 가짜 DB 로 응답하던 PGlite 폴백이었고 그 상태는 Prisma 이관으로 없어졌습니다. 첨부만 못 받는 상태를 503 으로 내면 무중단 재기동(start-cluster)이 새 인스턴스를 받지 않아 디스크를 비우는 배포도 막힙니다. `version` 은 11-20 부터 묶음의 VERSION 파일(0ee77b0). — 이하 원래 기록: 업로드 디렉터리 쓰기 가능 · 디스크 여유 미검사(`health/route.ts:27-30`). degraded 가 200(B2). `version` 은 `APP_VERSION` 없으면 `'dev'`. 수정: `checks.uploads_writable`, `checks.disk`, degraded → 503.
 
 **H8. 데이터 준비도 — 기종 데이터가 사실상 없다** (SSOT §4.1: `arcade_machines` 4행, 영업시간 1/939, 전화 0, 제보·리뷰·즐겨찾기 0). 기종 필터를 고르면 사이드바가 **아무 말 없이 빈 자리**(`ArcadeFinder.tsx:1200-1204` 의도적 `emptyMessage=null`). 챗봇 추천도 기종 기반이라 결과 0. 처음 온 사람에게는 "필터가 고장났다" 로 읽힙니다. 수정: 출시 전 주요 오락실 수십 곳 기종 입력(관리자 화면) **또는** 결과 0 일 때 "아직 기종 정보가 모이지 않았습니다 — 제보해 주세요" 안내.
 
