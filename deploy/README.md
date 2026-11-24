@@ -170,6 +170,21 @@ journalctl -u arcade-finder -f             # "교체 끝" 줄이 나오면 끝
 
 **출시 전에 한 번 실제로 해 보세요.** 되는지 모르는 백업은 없는 것과 같습니다.
 
+**리허설은 스크립트 하나로 합니다** (2026-11-24) — 아래 1~3 단계를 임시 DB · 임시 폴더에서 돌리고 지웁니다.
+운영 DB · 첨부 · 서비스는 건드리지 않습니다(운영 DB 에는 행 수를 세는 SELECT 만).
+
+```bash
+sudo bash /srv/arcade-finder/app/arcade-finder/deploy/ncp/restore-rehearsal.sh     # 가장 최근 백업으로
+```
+
+덤프를 새 DB 에 복원(시간 측정) → 표마다 행 수를 운영과 나란히 · 마이그레이션 이력 비교 → 첨부 묶음을 풀어
+DB 가 가리키는 첨부가 다 있는지 → 그 DB 로 앱을 3900 번에 하나 더 띄워 health · 오락실 · 글 · 서열표 · 첫 화면 →
+지우기. 결과는 `/var/backups/arcade-finder/restore-rehearsal-<시각>.log`. 남은 메모리+스왑이 600MB 보다 적으면
+앱 띄우기는 건너뜁니다(`NO_APP=1` 로 직접 끌 수도). 실제 복구로 이어가려면 `KEEP=1` 로 돌려 임시 DB 를 남긴 뒤
+아래 4단계의 이름 교체를 그 DB 로 하세요.
+
+손으로 할 때는:
+
 ```bash
 # 1. 새 DB 로 복원 (운영 DB 는 건드리지 않고)
 sudo -u postgres createdb -O arcade arcade_finder_restore
@@ -205,7 +220,7 @@ RPO 는 하루(백업 주기)입니다. 더 줄이려면 timer 를 `*:00/6` 같�
 - [ ] 첨부 청소 — 가끔 `sudo -u arcade -H bash -c "cd <앱 폴더> && npm run uploads:purge"` 로 미리 보고 `-- --write`. 쓰다 만 글의 첨부 · 지운 글의 파일을 치웁니다(업로드 라우트도 덤으로 조금씩 치움)
 - [ ] `npm run data:release -- verify <폴더>` — 외부 원천 데이터가 다 들어갔는지 (종료 코드 0)
 - [ ] `npm run arcades:dedupe` — 중복 오락실 확인 후 `-- --apply`
-- [ ] 복구 리허설 1회 (§4)
+- [ ] 복구 리허설 1회 (§4 — `deploy/ncp/restore-rehearsal.sh` · 1GB 리허설 서버에서는 2026-11-24 통과)
 - [ ] CI 초록 (`.github/workflows/ci.yml`)
 - [ ] `curl -I https://<도메인>/robots.txt` · `/sitemap.xml` · `/opengraph-image` 200
 - [ ] **지도 키를 넣은 뒤 브라우저 콘솔에 CSP 위반이 없는지** — 네이버 지도 SDK 는 로컬에 키가 없어 검증하지 못했습니다. 막히면 `next.config.mjs` 의 `script-src`·`connect-src`·`img-src` 에 그 도메인을 더하세요

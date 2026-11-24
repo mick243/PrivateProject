@@ -161,6 +161,36 @@ function resolveKey(storageKey: string): string {
   return abs;
 }
 
+/**
+ * 첨부를 받을 수 있는 상태인가 — `/api/health` 가 부릅니다 (QA-LAUNCH-READINESS H7).
+ *
+ * - `writable`: 저장 폴더를 만들 수 있고 쓰기 권한이 있다. 읽기 전용으로 붙은 디스크(EROFS)나
+ *   소유자가 바뀐 폴더(배포 때 root 로 풀린 묶음)를 여기서 잡습니다. 파일을 실제로 쓰지는
+ *   않습니다 — 헬스체크는 자주 불리고, 쓰는 것까지 시험하면 디스크에 흔적이 남습니다.
+ * - `freeBytes`: 그 폴더가 있는 디스크의 남은 자리(일반 사용자 몫). 알 수 없으면 null.
+ *
+ * 던지지 않습니다. 무엇이 왜 실패했는지는 서버 로그에만 남깁니다(경로가 섞여 있어 공개 응답에는 싣지 않음).
+ */
+export async function probeStorage(): Promise<{ writable: boolean; freeBytes: number | null }> {
+  let writable = false;
+  try {
+    await fs.mkdir(ROOT, { recursive: true });
+    await fs.access(ROOT, fs.constants.W_OK);
+    writable = true;
+  } catch (err) {
+    console.error('[uploads] 저장 폴더에 쓸 수 없습니다 —', err instanceof Error ? err.message : err);
+  }
+
+  let freeBytes: number | null = null;
+  try {
+    const s = await fs.statfs(writable ? ROOT : process.cwd());
+    freeBytes = Number(s.bavail) * Number(s.bsize);
+  } catch (err) {
+    console.error('[uploads] 디스크 여유를 읽지 못했습니다 —', err instanceof Error ? err.message : err);
+  }
+  return { writable, freeBytes };
+}
+
 /** 파일이 없으면 null (DB 행은 있는데 파일이 사라진 경우) */
 export async function read(storageKey: string): Promise<Buffer | null> {
   try {

@@ -101,6 +101,28 @@ k6 run -q -e BASE_URL=http://localhost:3000 -e SCENARIO=hotspot -e VUS=20 load-t
 보유 기종 임계값이 `COUNT(DISTINCT player_id) >= 2` 라 **서로 다른 사람**이어야
 가장 무거운 경로가 돕니다. 그래서 스케일 DB 에는 VU 수만큼 계정이 늘어납니다(정상).
 
+## 7. 실서버에 걸기
+
+PC 에서 운영 주소로 겁니다. **`k6-dau.js` 만** 씁니다 — GET 만 보내고, `-e VIEW=0` 이면 조회수도 안 올립니다.
+`k6-write.js` 는 진짜로 쓰므로 운영에 걸지 마세요.
+
+```bash
+k6 run -q -e BASE_URL=https://<운영 주소> -e VIEW=0 -e SCENARIO=peak  load-test/k6-dau.js   # 5분
+k6 run -q -e BASE_URL=https://<운영 주소> -e VIEW=0 -e SCENARIO=burst load-test/k6-dau.js   # 3분
+```
+
+- **growth · ceiling 은 사용자가 적은 시간에만**, 하나씩. ceiling 은 서버를 일부러 무너뜨리는 시나리오라 그동안
+  진짜 사용자도 느려집니다. 1GB 리허설 서버에서 잰 한계(PERFORMANCE.md 6부)를 먼저 보고 필요할 때만.
+- k6 가 재는 시간에는 **PC ↔ 서버 왕복**이 들어갑니다(리허설 서버에선 0). 서버 안의 시간은 Grafana 의
+  `arcade_http_request_duration_seconds` p95(§9 대시보드)로 함께 보세요. 둘의 차이가 망 몫입니다.
+- 이 PC 의 망은 sslip.io 를 막을 때가 있습니다(FortiGuard). `curl -I https://<주소>/api/health` 가 먼저 200 인지.
+- 끝나면 `/api/health` 가 healthy 인지, Grafana 에 알림이 떴는지 봅니다.
+
+**1GB 리허설 서버** — 실서버와 같은 순서로 만든 컨테이너(Ubuntu 24.04 · systemd · 메모리 1GB · CPU 1개)입니다.
+`docker run -d --privileged --cgroupns=host --memory=1g --cpus=1 -p 18443:443 ncp-sim:24.04` → `bootstrap.sh`
+(`SITE_DOMAIN=localhost MEM_MB=957`) → 개발 DB 덤프 복원 → `install-release.sh <묶음> <ENV_CHECK=off 한 줄 파일>`
+→ `k6 … --insecure-skip-tls-verify -e BASE_URL=https://localhost:18443`. Caddy 를 거치므로 실서버와 같은 길입니다.
+
 ## 6. A/B 로 비교할 때
 
 처리량을 **순차로** 재면 배경 프로세스 드리프트가 효과를 덮습니다. 같은 코드가

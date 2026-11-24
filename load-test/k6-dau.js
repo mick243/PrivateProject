@@ -20,6 +20,9 @@
  *   k6 run -e SCENARIO=ceiling load-test/k6-dau.js  # 어디서 무너지나
  *
  * 옵션(-e): BASE_URL · SUMMARY(요약 JSON 파일) · THINK(0 이면 think time 제거)
+ *          VIEW(0 이면 글 상세에 view=1 을 안 붙임 — **실서버에 걸 때**. 안 그러면 진짜 글의 조회수가 오릅니다)
+ *
+ * 이 시나리오는 GET 만 보냅니다 — view=1 의 조회수 +1 이 유일한 쓰기입니다.
  */
 import http from 'k6/http';
 import { check, sleep, group } from 'k6';
@@ -27,6 +30,7 @@ import { Counter } from 'k6/metrics';
 
 const BASE = __ENV.BASE_URL || 'http://localhost:3000';
 const THINK = __ENV.THINK === '0' ? 0 : 1;
+const VIEW = __ENV.VIEW === '0' ? '' : '&view=1';
 
 /**
  * capacity-model.mjs 의 도출값. k6 는 import 를 못 하므로 손으로 옮겨 적되,
@@ -196,7 +200,7 @@ export default function (data) {
     // 목록을 본 사람의 일부만 글을 엽니다 (1.5회/세션 ≈ 75%)
     if (Math.random() < 0.75) {
       const id = pick(data.postIds);
-      tally([get(`${BASE}/api/posts/${id}?commentOffset=0&view=1`, 'post-detail')]);
+      tally([get(`${BASE}/api/posts/${id}?commentOffset=0${VIEW}`, 'post-detail')]);
       think(4);
     }
   });

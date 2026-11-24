@@ -66,13 +66,11 @@ async function apply(request: Request, ctx: Ctx, liked: boolean): Promise<NextRe
     ? await offsetFromBody(request)
     : offsetOf(new URL(request.url).searchParams.get('commentOffset'));
 
-  if (!(await getPost(postId, null))) return notFound('글을 찾을 수 없어요. 지워졌을 수 있어요');
-
+  // 글이 있는지 미리 읽지 않습니다 — 켤 때는 저장이, 끌 때는 아래 재조회가 알려 줍니다 (lib/board.ts setLike)
   const result = await setLike(postId, playerId, liked);
-  return NextResponse.json({
-    ...result,
-    post: await getPost(postId, playerId, commentOffset),
-  });
+  const post = result && (await getPost(postId, playerId, commentOffset));
+  if (!result || !post) return notFound('글을 찾을 수 없어요. 지워졌을 수 있어요');
+  return NextResponse.json({ ...result, post });
 }
 
 /** PUT /api/posts/:id/like — 추천을 켭니다 (본문 `{commentOffset?}` 은 생략 가능) */

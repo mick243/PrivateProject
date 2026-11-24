@@ -1,8 +1,12 @@
 import { MIN_ACCOUNT_AGE_HOURS } from './account-age';
+import { getArcade, listMachines } from './arcades';
+import { cacheReference } from './cache';
 import type { MachineReport, PresenceOutcome, ReportKind } from './community-types';
 import type { Prisma } from './generated/prisma/client.ts';
+import { isForeignKeyViolation } from './pg-errors';
 import { purgeExpiredQueueReports as purgeExpiredQueueReportsSql } from './typed-sql';
 import { getPrismaClient, iso, TX_OPTIONS, type PrismaTx } from './prisma';
+import type { Arcade } from './types';
 
 /**
  * 기종 제보 — "이 게임 있어요" / "없어졌어요" / "지금 대기 N명" / "컨디션".
@@ -28,6 +32,11 @@ export interface ReportInput {
   cabinetId: number | null;
   /** null = 익명 제보 */
   playerId: number | null;
+  /**
+   * 세션 주인의 닉네임(lib/auth.ts getSession). 응답의 report.nickname 으로 그대로 나갑니다 —
+   * 저장한 뒤 players 를 다시 읽지 않으려고 받습니다. 익명이면 무시합니다.
+   */
+  nickname?: string | null;
   kind: ReportKind;
   waitCount: number | null;
   condition: number | null;
@@ -40,12 +49,31 @@ export interface CreateReportResult {
   outcome: PresenceOutcome;
   /** presence/absence 제보일 때 "몇 명 중 몇 명" — UI 에 진행도를 보여주기 위해 */
   support: { count: number; threshold: number } | null;
+  /**
+   * 제보를 반영한 뒤의 오락실 (응답에 그대로 싣습니다 — 있어요/없어졌어요가 목록을 바꿀 수 있어서).
+   * report 의 오락실 이름 · 기체 수도 여기서 꺼냅니다. 그 사이 오락실이 지워졌으면 null.
+   */
+  arcade: Arcade | null;
 }
 
 /** 등록되지 않은 기종에 대기/컨디션 제보가 들어온 경우 */
 export class MachineNotAtArcadeError extends Error {
   constructor() {
     super('이 오락실에 아직 없는 게임이에요. 먼저 "이 게임 있어요"로 알려 주세요');
+  }
+}
+
+/** 제보를 받을 오락실이 없는 경우 (지워졌거나 잘못된 번호) */
+export class ArcadeNotFoundError extends Error {
+  constructor() {
+    super('오락실을 찾을 수 없어요. 지워졌을 수 있어요');
+  }
+}
+
+/** 기종 목록에 없는 기종 번호 */
+export class UnknownMachineError extends Error {
+  constructor() {
+    super('그 게임을 찾을 수 없어요. 새로고침한 뒤 다시 알려 주세요');
   }
 }
 
@@ -69,9 +97,10 @@ export class CabinetNotFoundError extends Error {
  * 방금 올라온 제보를 밀어낸다. 컨디션·있어요/없어졌어요는 누적이 근거가 되므로
  * 그대로 둔다 — 지우는 건 queue 뿐이다.
  *
- * 별도 스케줄러가 없으므로 **제보를 쓸 때와 피드를 읽을 때** 함께 돈다. 서버가
- * 놀고 있는 동안에는 남아 있다가 다음 요청에 정리된다. 그 사이에도 화면에는
- * 안 보인다 — machine_live 뷰가 같은 설정값으로 한 번 더 거른다.
+ * 별도 스케줄러가 없으므로 **피드를 읽을 때** 함께 돈다. 서버가 놀고 있는 동안에는
+ * 남아 있다가 다음 요청에 정리된다. 그 사이에도 화면에는 안 보인다 — machine_live 뷰가
+ * 같은 설정값으로 한 번 더 거른다. (2026-11-24 까지는 제보를 쓸 때도 돌았다 — 쓰기 한 건의
+ * 문장을 줄이려고 뺐다. 지우는 시점이 피드 조회로 늦어질 뿐 보이는 것은 같다.)
  *
  * 기준 시각은 앱이 아니라 DB 의 now() 다. 두 곳에서 시간을 재면 서버 시계가
  * 조금만 어긋나도 뷰에는 보이는데 이미 지워진 행이 생긴다 — 그래서 이 문장은
@@ -83,7 +112,15 @@ export async function purgeExpiredQueueReports(): Promise<number> {
   return rows.length;
 }
 
-export async function getReportSettings(): Promise<ReportSettings> {
+/*
+ * 설정은 마이그레이션이 넣는 기준 데이터라(lib/data-release.ts) 5분 캐시에 둡니다(2026-11-24).
+ * DB 에서 값을 직접 고치면 최대 5분 뒤에 반영됩니다. 대기 제보를 지우는 SQL 과 machine_live 뷰는
+ * 표를 직접 읽으므로 수명(queue_ttl_minutes)은 바로 반영되고, 늦는 것은 있어요/없어졌어요
+ * 임계값과 피드 화면의 표시값뿐입니다.
+ */
+export const getReportSettings = cacheReference(getReportSettingsUncached, 'report-settings');
+
+async function getReportSettingsUncached(): Promise<ReportSettings> {
   const prisma = await getPrismaClient();
   const r = await prisma.report_settings.findUnique({ where: { id: 1 } });
   return {
@@ -335,76 +372,141 @@ async function applyPresence(
   return { count, outcome: removed.count > 0 ? 'removed' : null };
 }
 
+/** 저장 직후 응답에 쓰는 열 — 관계는 읽지 않는다 (createReport 주석) */
+const createdSelect = {
+  id: true,
+  arcade_id: true,
+  machine_id: true,
+  cabinet_id: true,
+  player_id: true,
+  kind: true,
+  wait_count: true,
+  condition: true,
+  comment: true,
+  created_at: true,
+} satisfies Prisma.machine_reportsSelect;
+
+/**
+ * 확인 쿼리가 비었을 때 **왜** 비었는지 가린다. 오류 경로에서만 불러 정상 경로의 왕복을 늘리지 않는다.
+ * 오락실이 없으면 404, 기종이 없으면 "먼저 있어요로", 기종은 있는데 기체가 없으면 "새로고침".
+ */
+async function explainMissing(
+  prisma: Awaited<ReturnType<typeof getPrismaClient>>,
+  input: ReportInput,
+): Promise<never> {
+  const arcade = await prisma.arcades.findUnique({
+    where: { id: input.arcadeId },
+    select: {
+      id: true,
+      arcade_machines: { where: { machine_id: input.machineId }, select: { machine_id: true } },
+    },
+  });
+  if (!arcade) throw new ArcadeNotFoundError();
+  if (arcade.arcade_machines.length === 0) throw new MachineNotAtArcadeError();
+  throw new CabinetNotFoundError();
+}
+
+/**
+ * 제보 한 건을 저장하고, 반영된 오락실과 함께 돌려준다.
+ *
+ * **DB 왕복을 세어 가며 짠 경로입니다 (2026-11-24).** 그 전에는 대기 제보 한 건이 SQL 16문장,
+ * 있어요가 18문장이었습니다 — 라우트의 오락실 확인(getArcade) · 설정 조회 · 낡은 대기 제보 정리 ·
+ * 저장한 행을 관계 4개와 함께 다시 읽기(5문장) · 기체 수 집계 · 응답용 getArcade. 지금은:
+ *   - 오락실이 있는지 미리 보지 않습니다. 대기 · 컨디션은 아래 확인 쿼리가 비면, 있어요/없어졌어요는
+ *     외래 키 위반이 나면 그때 한 번 더 보고 404 로 가립니다(explainMissing).
+ *   - 기종 이름은 기종 목록 캐시(listMachines)에서, 기체 번호는 컨디션 확인 쿼리에서, 닉네임은
+ *     세션에서(input.nickname), 오락실 이름 · 기체 수는 어차피 응답에 싣는 getArcade 에서 꺼냅니다.
+ *   - 트랜잭션은 있어요/없어졌어요만 엽니다 — 저장과 임계값 반영(applyPresence)이 함께여야 해서입니다.
+ *     대기 · 컨디션은 INSERT 한 문장이라 트랜잭션이 필요 없습니다.
+ *   - 낡은 대기 제보 정리는 피드를 읽을 때만 합니다(purgeExpiredQueueReports).
+ * 측정은 PERFORMANCE.md 6부 「쓰기 경로와 서열표의 문장 수 줄이기」.
+ */
 export async function createReport(input: ReportInput): Promise<CreateReportResult> {
   const prisma = await getPrismaClient();
-  const { presenceThreshold } = await getReportSettings();
 
-  // 새 제보가 들어오는 김에 낡은 대기 제보를 치운다 (읽기 경로는 listReports).
-  await purgeExpiredQueueReports();
+  const machine = (await listMachines()).find((m) => m.id === input.machineId);
+  if (!machine) throw new UnknownMachineError();
 
   // 대기/컨디션은 "그 오락실에 그 기종이 있다"는 전제 위에서만 의미가 있다.
   // 없는 기종의 대기 제보를 받아두면 machine_live 에 아무도 볼 수 없는 행이 쌓인다.
-  if (input.kind === 'queue' || input.kind === 'condition') {
-    const registered = await prisma.arcade_machines.findUnique({
-      where: { arcade_id_machine_id: { arcade_id: input.arcadeId, machine_id: input.machineId } },
-      select: { arcade_id: true },
-    });
-    if (!registered) throw new MachineNotAtArcadeError();
-  }
-
+  //
   // 컨디션은 기체 1대에 대한 제보다. id 만 믿지 않고 그 기체가 정말 이 오락실의
   // 이 기종인지 확인한다 — 남의 오락실 기체 id 를 보내면 화면에 뜨지도 않을
-  // 제보가 그쪽 집계에 섞인다.
+  // 제보가 그쪽 집계에 섞인다. 기체는 (오락실, 기종)을 외래 키로 물고 있으므로
+  // 기체가 있으면 기종도 있다 — 컨디션은 이 한 번으로 둘 다 확인한다.
+  let cabinetNo: number | null = null;
   if (input.kind === 'condition') {
     const cabinet =
       input.cabinetId === null
         ? null
         : await prisma.arcade_cabinets.findFirst({
             where: { id: input.cabinetId, arcade_id: input.arcadeId, machine_id: input.machineId },
-            select: { id: true },
+            select: { cabinet_no: true },
           });
-    if (!cabinet) throw new CabinetNotFoundError();
+    if (!cabinet) return explainMissing(prisma, input);
+    cabinetNo = cabinet.cabinet_no;
+  } else if (input.kind === 'queue') {
+    const registered = await prisma.arcade_machines.findUnique({
+      where: { arcade_id_machine_id: { arcade_id: input.arcadeId, machine_id: input.machineId } },
+      select: { arcade_id: true },
+    });
+    if (!registered) return explainMissing(prisma, input);
   }
 
-  return prisma.$transaction(async (tx) => {
-    const created = await tx.machine_reports.create({
-      data: {
-        arcade_id: input.arcadeId,
-        machine_id: input.machineId,
-        cabinet_id: input.cabinetId,
-        player_id: input.playerId,
-        kind: input.kind,
-        wait_count: input.waitCount,
-        condition: input.condition,
-        comment: input.comment,
-      },
-      select: { id: true },
-    });
+  const data = {
+    arcade_id: input.arcadeId,
+    machine_id: input.machineId,
+    cabinet_id: input.cabinetId,
+    player_id: input.playerId,
+    kind: input.kind,
+    wait_count: input.waitCount,
+    condition: input.condition,
+    comment: input.comment,
+  };
 
-    let outcome: PresenceOutcome = null;
-    let support: CreateReportResult['support'] = null;
-
+  let saved: Prisma.machine_reportsGetPayload<{ select: typeof createdSelect }>;
+  let outcome: PresenceOutcome = null;
+  let support: CreateReportResult['support'] = null;
+  try {
     if (input.kind === 'presence' || input.kind === 'absence') {
-      const applied = await applyPresence(
-        tx,
-        input.arcadeId,
-        input.machineId,
-        input.kind,
-        presenceThreshold,
-      );
-      outcome = applied.outcome;
-      support = { count: applied.count, threshold: presenceThreshold };
+      const kind = input.kind;
+      const { presenceThreshold } = await getReportSettings();
+      saved = await prisma.$transaction(async (tx) => {
+        const row = await tx.machine_reports.create({ data, select: createdSelect });
+        const applied = await applyPresence(tx, input.arcadeId, input.machineId, kind, presenceThreshold);
+        outcome = applied.outcome;
+        support = { count: applied.count, threshold: presenceThreshold };
+        return row;
+      }, TX_OPTIONS);
+    } else {
+      saved = await prisma.machine_reports.create({ data, select: createdSelect });
     }
+  } catch (err) {
+    // 확인 뒤 저장 사이에 오락실이 지워졌거나(대기 · 컨디션), 처음부터 없는 오락실(있어요/없어졌어요)
+    if (isForeignKeyViolation(err)) return explainMissing(prisma, input);
+    throw err;
+  }
 
-    const full = await tx.machine_reports.findUniqueOrThrow({
-      where: { id: created.id },
-      include: reportInclude,
-    });
-    const counts = await cabinetCounts(tx, [full]);
-    return {
-      report: toReport(full, counts.get(pairKey(full.arcade_id, full.machine_id)) ?? 0),
-      outcome,
-      support,
-    };
-  }, TX_OPTIONS);
+  const arcade = await getArcade(input.arcadeId);
+  const owned = arcade?.machines.find((m) => m.id === input.machineId);
+  const report: MachineReport = {
+    id: saved.id,
+    arcadeId: saved.arcade_id,
+    arcadeName: arcade?.name ?? '',
+    machineId: saved.machine_id,
+    machineName: machine.name,
+    machineShortName: machine.shortName,
+    cabinetId: saved.cabinet_id,
+    cabinetNo,
+    // 피드(listReports)와 같은 뜻 — 지금 그 기종의 대수. 없어졌어요로 빠졌으면 0
+    cabinetCount: owned?.cabinets.length ?? 0,
+    playerId: saved.player_id,
+    nickname: saved.player_id === null ? null : (input.nickname ?? null),
+    kind: saved.kind as ReportKind,
+    waitCount: saved.wait_count,
+    condition: saved.condition,
+    comment: saved.comment ?? null,
+    createdAt: iso(saved.created_at),
+  };
+  return { report, outcome, support, arcade };
 }
