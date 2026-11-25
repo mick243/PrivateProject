@@ -114,6 +114,7 @@ model arcades {
   hours_source_url        String?
   hours_checked           DateTime?                @db.Date
   arcade_favorites        arcade_favorites[]
+  arcade_info_reports     arcade_info_reports[]
   arcade_machine_guesses  arcade_machine_guesses[]
   arcade_machines         arcade_machines[]
   arcade_review_summaries arcade_review_summaries?
@@ -422,6 +423,8 @@ model players {
   content_reports_filed    content_reports[]        @relation("content_reports_reporter")
   content_reports_received content_reports[]        @relation("content_reports_target")
   content_reports_resolved content_reports[]        @relation("content_reports_resolver")
+  arcade_info_reports_filed    arcade_info_reports[] @relation("arcade_info_reports_reporter")
+  arcade_info_reports_resolved arcade_info_reports[] @relation("arcade_info_reports_resolver")
   player_blocks_made       player_blocks[]          @relation("player_blocks_blocker")
   player_blocks_received   player_blocks[]          @relation("player_blocks_blocked")
 }
@@ -609,6 +612,28 @@ model content_reports {
   @@index([created_at(sort: Desc)], map: "content_reports_open_idx", where: raw("(status = 'open'::text)"))
   @@index([target_type, target_id], map: "content_reports_target_idx")
   @@index([target_player_id], map: "content_reports_target_player_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// 오락실 정보 고침 제보 (db/migrate-087-arcade-info-reports.sql) — 영업시간 · 문 닫음 · 옮김 · 그 밖. 관리자가 승인합니다.
+model arcade_info_reports {
+  id          Int       @id @default(autoincrement())
+  arcade_id   Int
+  player_id   Int
+  kind        String
+  hours_text  String?
+  detail      String?
+  status      String    @default("open")
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  resolved_at DateTime? @db.Timestamptz(6)
+  resolved_by Int?
+  arcades     arcades   @relation(fields: [arcade_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  reporter    players   @relation("arcade_info_reports_reporter", fields: [player_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  resolver    players?  @relation("arcade_info_reports_resolver", fields: [resolved_by], references: [id], onUpdate: NoAction)
+
+  @@index([created_at(sort: Desc)], map: "arcade_info_reports_open_idx", where: raw("(status = 'open'::text)"))
+  @@unique([player_id, arcade_id, kind], map: "arcade_info_reports_open_once", where: raw("(status = 'open'::text)"))
+  @@index([arcade_id], map: "arcade_info_reports_arcade_idx")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.

@@ -201,6 +201,30 @@ export function isPostSort(v: string): v is PostSort {
 /** 목록 한 페이지에 담는 글 수 */
 export const POSTS_PAGE_SIZE = 20;
 
+/** 검색어를 몇 낱말까지 나눌지. 낱말마다 조건이 하나씩 붙으므로 상한을 둡니다 */
+export const SEARCH_WORDS_MAX = 5;
+
+/**
+ * 게시판 검색어 → 낱말 목록 (2026-11-25).
+ *
+ * 전에는 검색어 전체를 한 덩어리로 찾아서 "펌프 판정 느림" 은 세 낱말이 그 순서로
+ * 붙어 있는 글만 걸렸습니다 — 사실상 0건이었습니다. 이제 띄어쓰기로 나눈 **낱말이
+ * 모두** 제목이나 본문 어딘가에 있으면 찾습니다(lib/board.ts postsWhere).
+ * 같은 낱말은 한 번만 세고(대소문자 무시), 앞에서부터 SEARCH_WORDS_MAX 개까지만 씁니다.
+ */
+export function searchWords(term: string): string[] {
+  const seen = new Set<string>();
+  const words: string[] = [];
+  for (const w of term.split(/\s+/)) {
+    const key = w.toLowerCase();
+    if (!w || seen.has(key)) continue;
+    seen.add(key);
+    words.push(w);
+    if (words.length === SEARCH_WORDS_MAX) break;
+  }
+  return words;
+}
+
 /** 상세에서 한 페이지에 담는 댓글 수 */
 export const COMMENTS_PAGE_SIZE = 10;
 

@@ -52,10 +52,12 @@ vi.mock('@/lib/chat-tools', () => ({
   searchArcades: vi.fn(async () => ({ rows: [] })),
   searchReports: vi.fn(async () => ({ rows: [] })),
   searchPosts: vi.fn(async (args: unknown) => ({ echo: args, rows: [{ title: '펌프 후기' }] })),
+  searchCharts: vi.fn(async (args: unknown) => ({ echo: args, songs: [] })),
 }));
 
 /** 스텁이 받은 요청 본문 — 테스트마다 비웁니다 */
 let received: any[] = [];
+let receivedUrls: string[] = [];
 /** 다음 응답으로 내보낼 candidate 들 (요청당 하나씩 꺼내 씁니다) */
 let queue: unknown[] = [];
 
@@ -76,8 +78,17 @@ beforeAll(async () => {
     req.on('data', (c) => (raw += c));
     req.on('end', () => {
       received.push(JSON.parse(raw || '{}'));
+      receivedUrls.push(req.url ?? '');
+      const next = queue.shift() ?? textCandidate('빈 응답');
+      // { __status } 를 넣으면 그 상태로 거절합니다 — 실패 원인별 응답을 보기 위해서
+      if (next && typeof next === 'object' && '__status' in next) {
+        const status = (next as { __status: number }).__status;
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { code: status, message: `stub ${status}`, status: 'STUB' } }));
+        return;
+      }
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ candidates: [queue.shift() ?? textCandidate('빈 응답')] }));
+      res.end(JSON.stringify({ candidates: [next] }));
     });
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -157,7 +168,57 @@ describe('POST /api/chat', () => {
     process.env.GEMINI_API_KEY = saved;
   });
 
+  it('모델은 공통 계층의 기본값(3.5-flash-lite)이고 GEMINI_MODEL 로 바꿀 수 있다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    receivedUrls = [];
+    queue = [textCandidate('답')];
+    await post([{ role: 'user', text: '안녕' }]);
+    expect(receivedUrls[0]).toContain('/models/gemini-3.5-flash-lite:generateContent');
 
+    process.env.GEMINI_MODEL = 'gemini-3.8-flash';
+    try {
+      receivedUrls = [];
+      queue = [textCandidate('답')];
+      await post([{ role: 'user', text: '안녕' }]);
+      expect(receivedUrls[0]).toContain('/models/gemini-3.8-flash:generateContent');
+    } finally {
+      delete process.env.GEMINI_MODEL;
+    }
+  });
+
+  it('크레딧이 바닥나면(402) 500 이 아니라 502 와 다시 시도 안내 (R32)', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    queue = [{ __status: 402 }];
+    const { status, json } = await post([{ role: 'user', text: '안녕' }]);
+    expect(status).toBe(502);
+    expect(json.error).toContain('다시 시도');
+    // 키 · 모델 이름 같은 내부 사정은 화면에 내지 않습니다
+    expect(json.error).not.toMatch(/크레딧|GEMINI|gemini/);
+  });
+
+  it('모델 한도(429)는 429 로 돌려준다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    queue = [{ __status: 429 }];
+    const { status } = await post([{ role: 'user', text: '안녕' }]);
+    expect(status).toBe(429);
+  });
+
+  it('모델 요청마다 시간 제한을 건다 (R29) — 걸리면 504', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    const gemini = await import('@/lib/gemini');
+    const spy = vi.spyOn(gemini, 'geminiTimeout').mockImplementation(() => AbortSignal.abort(new DOMException('t', 'TimeoutError')));
+    try {
+      queue = [textCandidate('답')];
+      const { status, json } = await post([{ role: 'user', text: '안녕' }]);
+      expect(spy).toHaveBeenCalled();
+      expect(spy.mock.calls[0][0]).toBeLessThanOrEqual(gemini.GEMINI_TIMEOUT_MS.chatStep);
+      expect(status).toBe(504);
+      expect(json.error).toContain('오래');
+    } finally {
+      spy.mockRestore();
+      queue = [];
+    }
+  });
 
   /**
    * 시스템 프롬프트에 실린 **규칙**을 봅니다.
@@ -225,6 +286,7 @@ describe('POST /api/chat', () => {
       'search_arcades',
       'search_reports',
       'search_posts',
+      'search_charts',
     ]);
   });
 
@@ -373,12 +435,27 @@ describe('POST /api/chat', () => {
     }
   });
 
-  it('도구 선언은 셋 다 쪽 번호(page)를 받는다', async () => {
+  it('도구 선언은 넷 모두 쪽 번호(page)를 받고, 채보 도구가 있다', async () => {
     process.env.GEMINI_API_KEY = 'stub-key';
     queue = [textCandidate('답')];
     await post([{ role: 'user', text: '안녕' }]);
     const decls = received[0].tools.flatMap((t: any) => t.functionDeclarations ?? []);
     for (const d of decls) expect(d.parametersJsonSchema.properties.page.type).toBe('integer');
+    expect(decls.map((d: any) => d.name).sort()).toEqual(['search_arcades', 'search_charts', 'search_posts', 'search_reports']);
+    // 레벨은 기억이 아니라 앱 값으로 — 이 규칙이 프롬프트에서 사라지면 화면과 다른 레벨을 말합니다
+    expect(received[0].systemInstruction.parts[0].text).toContain('먼저 search_charts');
+    const reports = decls.find((d: any) => d.name === 'search_reports');
+    expect(reports.parametersJsonSchema.properties.arcade.type).toBe('string');
+  });
+
+  it('채보 도구를 부르면 실행해서 돌려준다', async () => {
+    process.env.GEMINI_API_KEY = 'stub-key';
+    queue = [callCandidate('search_charts', { machine: '사볼', query: '冥' }), textCandidate('冥 은 EXH 18 이에요')];
+    const { status } = await post([{ role: 'user', text: '사볼 冥 레벨' }]);
+    expect(status).toBe(200);
+    const parts = received[1].contents.at(-1).parts;
+    expect(parts[0].functionResponse.name).toBe('search_charts');
+    expect(parts[0].functionResponse.response.output.echo).toEqual({ machine: '사볼', query: '冥' });
   });
 
   /**

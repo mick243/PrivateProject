@@ -24,9 +24,25 @@ vi.mock('@/lib/arcades', () => ({
   pageArcades: (...args: unknown[]) => pageArcades(...args),
 }));
 vi.mock('@/lib/board', () => ({ listPosts: vi.fn() }));
-vi.mock('@/lib/reports', () => ({ listReports: vi.fn() }));
+const listReports = vi.fn();
+vi.mock('@/lib/reports', () => ({ listReports: (...args: unknown[]) => listReports(...args) }));
+const searchChartSongs = vi.fn();
+vi.mock('@/lib/chart-search', () => ({ searchChartSongs: (...args: unknown[]) => searchChartSongs(...args) }));
+vi.mock('@/lib/tier', () => ({
+  listGames: vi.fn(async () => [
+    {
+      machineId: 3,
+      name: 'SOUND VOLTEX',
+      shortName: '사볼',
+      modes: [],
+      versions: [],
+      difficulties: [{ code: 'EXH', label: 'EXHAUST' }, { code: 'MXM', label: 'MAXIMUM' }],
+      chartCount: 10,
+    },
+  ]),
+}));
 
-const { searchArcades, radiusOf, MAX_RADIUS_KM } = await import('@/lib/chat-tools');
+const { searchArcades, searchCharts, searchReports, radiusOf, MAX_RADIUS_KM } = await import('@/lib/chat-tools');
 
 const arcade = (id: number, name: string, distanceKm: number | null): Arcade => ({
   id,
@@ -195,5 +211,56 @@ describe('placesInAnswer — 답변에 나온 곳만 단다', () => {
     const many = Array.from({ length: 8 }, (_, i) => place(`오락실${i}호`));
     const text = many.map((p) => p.name).join(', ');
     expect(placesInAnswer(text, many)).toHaveLength(5);
+  });
+});
+
+describe('searchCharts — 채보 레벨은 앱 서열표 값으로 (2026-11-25)', () => {
+  beforeEach(() => searchChartSongs.mockReset());
+
+  it('별칭으로 게임을 찾고, 화면과 같은 곡 검색 함수를 부른다', async () => {
+    searchChartSongs.mockResolvedValue([
+      { songId: 1, title: '冥', artist: 'Ryu*', charts: [{ id: 9, mode: null, difficulty: 'EXH', level: 18, versionId: null }] },
+    ]);
+    const out = (await searchCharts({ machine: '사볼', query: '  冥 ' })) as any;
+    expect(searchChartSongs).toHaveBeenCalledWith({ machineId: 3, versionId: null, q: '冥' });
+    expect(out.game).toBe('SOUND VOLTEX');
+    expect(out.songs[0]).toEqual({ title: '冥', artist: 'Ryu*', charts: [{ difficulty: 'EXHAUST', level: 18 }] });
+  });
+
+  it('레벨을 모르는 채보는 미상으로 — 모델이 숫자를 지어낼 빈칸을 남기지 않는다', async () => {
+    searchChartSongs.mockResolvedValue([
+      { songId: 1, title: 'X', artist: null, charts: [{ id: 9, mode: null, difficulty: 'MXM', level: null, versionId: null }] },
+    ]);
+    const out = (await searchCharts({ machine: '사볼', query: 'X' })) as any;
+    expect(out.songs[0].charts[0].level).toBe('미상');
+  });
+
+  it('서열표가 없는 게임 · 빈 검색어는 오류와 함께 빈 목록 (DB 를 부르지 않는다)', async () => {
+    expect(((await searchCharts({ machine: '펌프', query: 'a' })) as any).songs).toEqual([]);
+    expect(((await searchCharts({ machine: '사볼', query: '   ' })) as any).error).toContain('곡 이름');
+    expect(searchChartSongs).not.toHaveBeenCalled();
+  });
+
+  it('결과는 쪽으로 나눈다', async () => {
+    searchChartSongs.mockResolvedValue(
+      Array.from({ length: 7 }, (_, i) => ({ songId: i, title: `s${i}`, artist: null, charts: [] })),
+    );
+    const first = (await searchCharts({ machine: '사볼', query: 's' })) as any;
+    expect(first.songs).toHaveLength(5);
+    expect(first.hasMore).toBe(true);
+    const second = (await searchCharts({ machine: '사볼', query: 's', page: 2 })) as any;
+    expect(second.songs.map((s: any) => s.title)).toEqual(['s5', 's6']);
+    expect(second.hasMore).toBe(false);
+  });
+});
+
+describe('searchReports — 오락실로 좁히기 (2026-11-25)', () => {
+  it('arcade 를 주면 피드 검색어(q)로 넘긴다', async () => {
+    listReports.mockReset();
+    listReports.mockResolvedValue([]);
+    await searchReports({ arcade: ' 홍대 게임존 ' });
+    expect(listReports.mock.calls[0][0].q).toBe('홍대 게임존');
+    await searchReports({});
+    expect(listReports.mock.calls[1][0].q).toBeNull();
   });
 });

@@ -14,6 +14,7 @@ import {
   NOTICE_PIN_LIMIT,
   POPULAR_MIN_LIKES,
   POSTS_PAGE_SIZE,
+  searchWords,
 } from './board-types';
 import { cacheReference, clearReferenceCache } from './cache';
 import { Prisma } from './generated/prisma/client.ts';
@@ -189,12 +190,15 @@ function postsWhere(
   return {
     ...(tab !== null ? { machine_id: tab } : {}),
     ...(category !== null ? { category } : {}),
+    // 낱말마다 "제목 또는 본문에 있다" 를 걸고 전부 만족해야 합니다 (lib/board-types.ts searchWords).
     ...(term !== null
       ? {
-          OR: [
-            { title: { contains: term, mode: 'insensitive' } },
-            { body: { contains: term, mode: 'insensitive' } },
-          ],
+          AND: searchWords(term).map((word) => ({
+            OR: [
+              { title: { contains: word, mode: 'insensitive' as const } },
+              { body: { contains: word, mode: 'insensitive' as const } },
+            ],
+          })),
         }
       : {}),
     ...(minLikes !== null ? { like_count: { gte: minLikes } } : {}),

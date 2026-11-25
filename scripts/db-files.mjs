@@ -109,6 +109,7 @@ export const MIGRATION_FILES = [
   'migrate-084-password-resets.sql',
   'migrate-085-machine-hours-source.sql',
   'migrate-086-beat-on.sql',
+  'migrate-087-arcade-info-reports.sql',
 ];
 
 // 파생 객체(뷰). 테이블이 다 만들어진 뒤 마지막에.

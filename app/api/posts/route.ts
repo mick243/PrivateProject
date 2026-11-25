@@ -5,6 +5,7 @@ import { fail, handle, parseBody } from '@/lib/api-errors';
 import { createPost, getPost, listPosts } from '@/lib/board';
 import { isForeignKeyViolation } from '@/lib/pg-errors';
 import { parsePostQuery, postInputSchema } from '@/lib/validation';
+import { checkWriteLimit } from '@/lib/write-limits';
 import { noticeGuard } from './notice-guard';
 
 export const runtime = 'nodejs';
@@ -44,6 +45,10 @@ async function onPost(request: Request) {
   // 공지 말머리는 관리자만 (세션 쿠키로 판정 — ./notice-guard.ts)
   const denied = await noticeGuard(request, body.value);
   if (denied) return denied;
+
+  // 한 사람이 한 시간에 쓸 수 있는 글 수 (lib/write-limits.ts) — 입력 검사 · 권한 확인 뒤에 셉니다.
+  const limited = await checkWriteLimit('post', guard.playerId);
+  if (limited) return limited;
 
   try {
     const id = await createPost({ ...body.value, playerId: guard.playerId });

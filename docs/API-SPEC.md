@@ -259,7 +259,7 @@ multipart: `file`(레거시 별칭 `image` 허용). 로그인 필요 — **본�
 
 **시스템 프롬프트**는 요청 시점에 현재 리듬 기종 목록(`listMachines()` → rhythm 필터)으로 조립 — 답변 범위가 하드코딩이 아니라 DB를 따라 움직임. 범위 밖 질문 고정 거절문, 인메시지 탈옥 저항, **"최신/현재/신곡" 질문엔 Google 검색 필수**(모델의 "최신 펌프 버전" 기억은 낡았고 틀렸다는 신호가 없으므로) + 답변에 기준 버전 명시.
 
-**도구**: `search_arcades{query?, machine?}` · `search_reports{machine?, kind?, sinceHours?}` · `search_posts{query?, machine?}` (lib/chat-tools 디스패치, 도구별 결과 상한) + 내장 `googleSearch`. 모델 `gemini-3.7-flash`, 최대 8회 왕복(마지막 회는 `functionCallingConfig.mode = NONE`으로 언어 답변 강제), 모델 턴은 **원문 그대로** 되돌려 `thoughtSignature` 보존. 도구 실패는 대화 중단이 아니라 `{error}`로 모델에 회신.
+**도구**: `search_arcades{query?, machine?}` · `search_reports{machine?, kind?, sinceHours?}` · `search_posts{query?, machine?}` (lib/chat-tools 디스패치, 도구별 결과 상한) + 내장 `googleSearch`. 모델 `GEMINI_MODEL`(기본 `gemini-3.5-flash-lite`, lib/gemini.ts), 왕복당 30초 · 전체 90초 시간 제한, 최대 8회 왕복(마지막 회는 `functionCallingConfig.mode = NONE`으로 언어 답변 강제), 모델 턴은 **원문 그대로** 되돌려 `thoughtSignature` 보존. 도구 실패는 대화 중단이 아니라 `{error}`로 모델에 회신.
 
 **출처**: `groundingMetadata.groundingChunks[].web`에서만 수집 — 답변 텍스트 정규식 스크래핑 금지(환각 URL 귀속 방지).
 

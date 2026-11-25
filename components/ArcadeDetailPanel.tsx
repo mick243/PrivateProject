@@ -25,6 +25,7 @@ import type {
 import { useFavorites } from '@/lib/use-favorites';
 import { usePlayerId } from '@/lib/use-player';
 import { useIsAdmin } from '@/lib/use-session';
+import ArcadeInfoReport from './ArcadeInfoReport';
 import ArcadeReviews from './ArcadeReviews';
 import SourceNote, { machineSources } from './SourceNote';
 import { ConditionBadge, WaitBadge } from './LiveBadge';
@@ -468,6 +469,15 @@ function ArcadeDetailPanel({
               </span>
             )}
           </p>
+          {/*
+            정보가 다르면 이용자가 알려 준다 (migrate-087). 지도 앱 단추보다 위에 둔다 — 빈칸을
+            채우는 길이 앱 안에 먼저 보여야 앱이 지도 앱으로 가는 중간 페이지가 되지 않는다.
+          */}
+          <ArcadeInfoReport
+            key={arcade.id}
+            arcadeId={arcade.id}
+            hoursUnknown={!arcade.is24h && !arcade.hoursText && !(arcade.openTime && arcade.closeTime)}
+          />
           {/*
             영업시간 · 전화 · 길찾기는 지도 앱으로 넘긴다 (lib/place-links.ts). 우리 데이터에는
             그 칸이 거의 비어 있는데(926곳 중 영업시간 1곳 · 전화 0곳), 상세에 바깥으로 나가는
