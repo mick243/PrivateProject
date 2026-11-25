@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { classifyGeminiError, describeGeminiFailure } from '@/lib/gemini';
 import { badId, fail, handle, notFound, parseId } from '@/lib/api-errors';
 import { consume, DAY_MS, limitFromEnv, retryAfterLabel } from '@/lib/rate-limit';
 import {
@@ -70,7 +71,7 @@ async function onGet(_request: Request, ctx: Ctx) {
     // 리뷰 본문은 로그에 남기지 않습니다 — 사용자가 쓴 글입니다. 무엇이 실패했는지만.
     // undici 의 'fetch failed' 는 진짜 이유를 cause 에 숨기므로 그것까지 적습니다.
     const cause = err instanceof Error && err.cause instanceof Error ? ` (cause: ${err.cause.message})` : '';
-    console.error(`[review-summary] arcade ${arcadeId}:`, err instanceof Error ? err.name + ': ' + err.message + cause : err);
+    console.error(`[review-summary] arcade ${arcadeId}: ${describeGeminiFailure(classifyGeminiError(err))} —`, err instanceof Error ? err.name + ': ' + err.message + cause : err);
     return fail(502, '요약을 만들지 못했어요. 조금 뒤에 다시 열어 주세요.', {
       extra: { summary: null, reason: 'failed' },
     });

@@ -1,4 +1,13 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { ThinkingLevel, Type } from '@google/genai';
+import {
+  classifyGeminiError,
+  describeGeminiFailure,
+  geminiClient,
+  geminiModel,
+  geminiTimeout,
+  GEMINI_TIMEOUT_MS,
+  isTransportError,
+} from './gemini';
 import { buildAlertPrompt, tidyAi } from './ops-alert-input';
 import { countRecentFirings, getAlertInput, saveAlertSummary } from './ops-alerts';
 import { consume, DAY_MS, limitFromEnv } from './rate-limit';
@@ -24,11 +33,8 @@ import { consume, DAY_MS, limitFromEnv } from './rate-limit';
  * 입력은 알림 하나에 최대 12,000자(PROMPT_MAX_CHARS)입니다 (GUIDELINES.md §4-7).
  */
 
-/** 리뷰 요약 · 기종 추정과 같은 모델 — 상수를 가져오지 않는 이유는 lib/review-summary.ts 머리말 */
-const MODEL = 'gemini-3.7-flash';
-
-/** 모델 한 번을 기다리는 최대 시간. after() 안이라 사용자를 붙잡지는 않지만, 끝없이 기다리지 않게 */
-const CALL_TIMEOUT_MS = 30_000;
+/* 모델 · 시간 제한은 lib/gemini.ts — 리뷰 요약 · 기종 추정 · 챗봇과 같습니다. after() 안이라 사용자를
+   붙잡지는 않지만, 끝없이 기다리지 않게 시간 제한을 겁니다. */
 
 const schema = {
   type: Type.OBJECT,
@@ -93,11 +99,6 @@ journalctl -u caddy -n 50 --no-pager
 systemctl status arcade-prometheus-agent arcade-node-exporter arcade-postgres-exporter --no-pager
 journalctl -u arcade-prometheus-agent -n 50 --no-pager`;
 
-/** 전송 단계 실패(연결이 안 됨)만 한 번 더 — lib/review-summary.ts isTransportError 와 같은 판단 */
-function isTransportError(err: unknown): boolean {
-  return err instanceof TypeError && /fetch failed/i.test(err.message);
-}
-
 /**
  * 요약을 만들어 저장합니다. 만들지 못하면 그 까닭을 ai_error 에 적고 조용히 끝냅니다 —
  * 요약이 없어도 알림 자체(규칙 설명 · 푸시)는 가야 합니다. 이미 요약이 있으면 아무것도 안 합니다.
@@ -106,8 +107,8 @@ export async function summarizeAlert(id: number): Promise<void> {
   const alert = await getAlertInput(id);
   if (!alert || alert.hasSummary) return;
 
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
+  const ai = geminiClient();
+  if (!ai) {
     await saveAlertSummary(id, null, '요약 기능이 꺼져 있어요 (GEMINI_API_KEY 없음)');
     return;
   }
@@ -118,20 +119,21 @@ export async function summarizeAlert(id: number): Promise<void> {
   }
 
   const prompt = buildAlertPrompt(alert, { recentCount: await countRecentFirings(alert.alertname) });
+  const model = geminiModel();
   // 본문은 남기지 않습니다 — 얼마나 큰 요청이었는지만 (lib/review-summary.ts 와 같은 이유)
-  console.info(`[ops-alerts] #${id} ${alert.alertname} 요약 — 입력 ${prompt.length}자 → ${MODEL}`);
+  console.info(`[ops-alerts] #${id} ${alert.alertname} 요약 — 입력 ${prompt.length}자 → ${model}`);
 
-  const ai = new GoogleGenAI({ apiKey });
   const call = () =>
     ai.models.generateContent({
-      model: MODEL,
+      model,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config: {
         systemInstruction: SYSTEM,
         responseMimeType: 'application/json',
         responseSchema: schema,
         maxOutputTokens: 1200,
-        abortSignal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+        abortSignal: geminiTimeout(GEMINI_TIMEOUT_MS.opsAlert),
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       },
     });
 
@@ -147,7 +149,10 @@ export async function summarizeAlert(id: number): Promise<void> {
     const summary = tidyAi(JSON.parse(res.text ?? '{}'));
     await saveAlertSummary(id, summary, summary ? null : '모델이 쓸 수 있는 요약을 주지 않았어요');
   } catch (err) {
-    console.error(`[ops-alerts] #${id} 요약 실패 —`, err instanceof Error ? err.message : err);
+    console.error(
+      `[ops-alerts] #${id} 요약 실패 — ${describeGeminiFailure(classifyGeminiError(err), model)} —`,
+      err instanceof Error ? err.message : err,
+    );
     await saveAlertSummary(id, null, '요약을 만들지 못했어요');
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { badId, fail, forbidden, handle, needLogin, notFound, parseBody, parseId } from '@/lib/api-errors';
 import { isAdminRequest, requirePlayer, sessionPlayerId } from '@/lib/auth';
+import { checkWriteLimit } from '@/lib/write-limits';
 import {
   createComment,
   deleteComment,
@@ -37,6 +38,10 @@ async function onPost(request: Request, ctx: Ctx) {
 
   const existing = await getPost(postId, null);
   if (!existing) return notFound('글을 찾을 수 없어요. 지워졌을 수 있어요');
+
+  // 한 사람이 한 시간에 쓸 수 있는 댓글 수 (lib/write-limits.ts)
+  const limited = await checkWriteLimit('comment', guard.playerId);
+  if (limited) return limited;
 
   await createComment({ ...body.value, postId, playerId: guard.playerId });
   return NextResponse.json(

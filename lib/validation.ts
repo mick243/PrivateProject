@@ -7,7 +7,8 @@ import {
   MAX_ATTACHMENTS_PER_POST,
   POSTS_PAGE_SIZE,
 } from './board-types';
-import { CHART_TAGS, REPORT_COMMENT_MAX } from './community-types';
+import { CHART_TAGS, REPORT_COMMENT_MAX, WAIT_OVER } from './community-types';
+import { ARCADE_INFO_KINDS, INFO_DETAIL_MAX, INFO_HOURS_MAX, infoFieldsOf } from './arcade-info-report-types';
 import { REPORT_DETAIL_MAX, REPORT_REASONS, REPORT_TARGETS } from './moderation-types';
 import { isKnownPushEndpoint } from './ops-alert-input';
 import { MAX_QUERY_RADIUS_KM } from './geo';
@@ -265,7 +266,9 @@ export const reportInputSchema = z
     // 익명 여부(playerId = null)는 세션이 있는지로 정해집니다 — 제보만은
     // 로그인 없이도 되므로 라우트가 401 대신 null 을 넣습니다.
     kind: z.enum(['presence', 'absence', 'queue', 'condition']),
-    waitCount: z.number().int().min(0).max(99).nullable().default(null),
+    // 화면이 보낼 수 있는 가장 큰 값은 WAIT_OVER("12명+") 입니다. 전에는 DB 상한(99)까지 받아서
+    // 장난 값 하나가 machine_live 의 MAX 로 그대로 떴습니다 (2026-11-25).
+    waitCount: z.number().int().min(0).max(WAIT_OVER).nullable().default(null),
     condition: z.number().int().min(1).max(5).nullable().default(null),
     // 화면에 한 줄로 보이는 메모입니다. 상한이 없으면 TEXT 컬럼에 무제한으로
     // 들어가고, 그 문장이 /live 피드와 챗봇 프롬프트(lib/chat-tools.ts)에 실립니다.
@@ -622,3 +625,34 @@ export const suspendInputSchema = z.object({
 
 /** PUT /api/admin/guesses — 승인할 AI 추정 */
 export const guessKeySchema = z.object({ arcadeId: positiveInt, machineId: positiveInt });
+
+// ─── 오락실 정보 고침 제보 (migrate-087) ─────────────────────
+// arcadeId 는 경로(/api/arcades/:id/info-reports)에서 오므로 본문에 받지 않습니다.
+export const arcadeInfoReportInputSchema = z
+  .object({
+    kind: z.enum(ARCADE_INFO_KINDS, { message: '무엇이 다른지 골라 주세요' }),
+    hoursText: boundedOptionalText(INFO_HOURS_MAX, '영업시간은'),
+    detail: boundedOptionalText(INFO_DETAIL_MAX, '설명은'),
+  })
+  // 종류에 맞지 않는 칸은 버리고, 꼭 필요한 칸이 비면 할 일을 알려 줍니다 (DB CHECK 에 닿기 전에)
+  .superRefine((v, ctx) => {
+    const need = infoFieldsOf(v.kind);
+    if (need.hours && v.hoursText === null) {
+      ctx.addIssue({ code: 'custom', path: ['hoursText'], message: '영업시간을 적어 주세요. 예: 매일 12:00~24:00' });
+    }
+    if (need.detail === 'required' && v.detail === null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['detail'],
+        message: v.kind === 'moved' ? '옮긴 곳을 적어 주세요. 예: 같은 건물 2층' : '무엇이 다른지 적어 주세요',
+      });
+    }
+  })
+  .transform((v) => ({ ...v, hoursText: infoFieldsOf(v.kind).hours ? v.hoursText : null }));
+
+/** 관리자 검수 — 승인할 때 영업시간 문장을 다듬어 넣을 수 있습니다 */
+export const arcadeInfoResolveSchema = z.object({
+  id: positiveInt,
+  action: z.enum(['apply', 'dismiss']),
+  hoursText: boundedOptionalText(INFO_HOURS_MAX, '영업시간은'),
+});

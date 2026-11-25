@@ -98,8 +98,13 @@ if (!process.env.GEMINI_API_KEY) {
   process.exit(1);
 }
 
-/** 챗봇과 같은 모델 — 두 곳이 다른 답을 내면 사용자가 먼저 알아챕니다. */
-const MODEL = 'gemini-3.7-flash';
+/**
+ * 챗봇과 같은 모델 — 두 곳이 다른 답을 내면 사용자가 먼저 알아챕니다.
+ * .mjs 라 lib/gemini.ts 를 불러올 수 없어 기본값을 따로 적습니다. 그쪽 DEFAULT_GEMINI_MODEL 과 맞추세요.
+ */
+const MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite';
+/** 한 오락실을 기다리는 최대 시간 — 응답이 멈춰도 일괄 실행 전체가 서지 않게 (lib/gemini.ts GEMINI_TIMEOUT_MS.guessSearch) */
+const CALL_TIMEOUT_MS = 60_000;
 
 const { default: pg } = await import('pg');
 const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
@@ -270,6 +275,7 @@ for (const a of targets) {
         responseMimeType: 'application/json',
         responseSchema: schema,
         maxOutputTokens: 2000,
+        abortSignal: AbortSignal.timeout(CALL_TIMEOUT_MS),
       },
     });
     parsed = JSON.parse(res.text ?? '{}');

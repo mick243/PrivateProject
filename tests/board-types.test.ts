@@ -4,6 +4,8 @@ import {
   isNotice,
   isPostSort,
   pageNumbers,
+  searchWords,
+  SEARCH_WORDS_MAX,
   totalPagesOf,
 } from '@/lib/board-types';
 
@@ -90,5 +92,26 @@ describe('isNotice', () => {
     expect(isNotice('notice')).toBe(true);
     expect(isNotice('free')).toBe(false);
     expect(isNotice('')).toBe(false);
+  });
+});
+
+describe('searchWords — 여러 낱말 검색 (2026-11-25)', () => {
+  it('띄어쓰기로 나눈다 — "펌프 판정 느림" 이 한 덩어리로 0건이 되지 않게', () => {
+    expect(searchWords('펌프 판정 느림')).toEqual(['펌프', '판정', '느림']);
+  });
+
+  it('여러 칸 띄어쓰기 · 탭 · 앞뒤 공백은 무시한다', () => {
+    expect(searchWords('  사볼	  노브   ')).toEqual(['사볼', '노브']);
+    expect(searchWords('   ')).toEqual([]);
+  });
+
+  it('같은 낱말은 대소문자 무시하고 한 번만', () => {
+    expect(searchWords('DDR ddr 발판')).toEqual(['DDR', '발판']);
+  });
+
+  it('낱말 수에 상한이 있다', () => {
+    const words = searchWords('a b c d e f g');
+    expect(words).toHaveLength(SEARCH_WORDS_MAX);
+    expect(words[0]).toBe('a');
   });
 });

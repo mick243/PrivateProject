@@ -1,4 +1,5 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
+import { geminiClient, geminiModel, geminiTimeout, GEMINI_TIMEOUT_MS } from './gemini';
 import { listMachineGuesses, listMachines } from './arcades';
 import { getPrismaClient } from './prisma';
 import type { MachineGuess } from './types';
@@ -23,8 +24,7 @@ import type { MachineGuess } from './types';
  * arcade_machines 에 쓰지 않고 임계값에도 세지 않습니다 (migrate-061 머리말).
  */
 
-/** 챗봇(app/api/chat)과 같은 모델 — 두 곳이 다른 답을 내면 사용자가 먼저 알아챕니다. */
-const MODEL = 'gemini-3.7-flash';
+/* 모델은 챗봇과 같은 lib/gemini.ts geminiModel() — 두 곳이 다른 답을 내면 사용자가 먼저 알아챕니다. */
 
 export class MachineGuessUnavailable extends Error {}
 
@@ -64,8 +64,8 @@ const schema = {
 };
 
 export async function guessMachines(arcadeId: number): Promise<GuessOutcome> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
+  const ai = geminiClient();
+  if (!ai) {
     // 원인은 로그에, 화면에는 사람이 읽을 말만 (docs/DESIGN-GUIDE.md §6 — 설정 키 이름을 내지 않는다)
     console.warn('[guess] GEMINI_API_KEY 가 없어 검색하지 않습니다');
     throw new MachineGuessUnavailable('지금은 AI로 게임을 찾을 수 없어요. 조금 뒤에 다시 시도해 주세요');
@@ -108,13 +108,18 @@ export async function guessMachines(arcadeId: number): Promise<GuessOutcome> {
 
 기종 목록: ${machines.map((m) => m.name + (m.shortName ? `(${m.shortName})` : '')).join(', ')}`;
 
-  const ai = new GoogleGenAI({ apiKey });
+  const model = geminiModel();
 
   // 1차 — 검색. 스키마를 주면 검색이 돌지 않으므로 자유 문장으로 받습니다.
   const searched = await ai.models.generateContent({
-    model: MODEL,
+    model,
     contents: `오락실: ${where}\n\n이 오락실에 있는 리듬게임 기종을 찾아 주세요. 각 기종마다 출처(주소나 인용)를 함께 적어 주세요.`,
-    config: { systemInstruction: system, tools: [{ googleSearch: {} }], maxOutputTokens: 2000 },
+    config: {
+      abortSignal: geminiTimeout(GEMINI_TIMEOUT_MS.guessSearch),
+      systemInstruction: system,
+      tools: [{ googleSearch: {} }],
+      maxOutputTokens: 2000,
+    },
   });
   const queries = searched.candidates?.[0]?.groundingMetadata?.webSearchQueries ?? [];
   const prose = searched.text ?? '';
@@ -125,9 +130,10 @@ export async function guessMachines(arcadeId: number): Promise<GuessOutcome> {
 
   // 2차 — 그 문장에서 구조를 뽑습니다. 여기서는 도구를 주지 않습니다.
   const shaped = await ai.models.generateContent({
-    model: MODEL,
+    model,
     contents: `아래 글에서 기종과 근거만 뽑으세요. 글에 없는 것을 지어내지 마세요.\n\n${prose}`,
     config: {
+      abortSignal: geminiTimeout(GEMINI_TIMEOUT_MS.guessShape),
       systemInstruction: `주어진 글에서만 뽑습니다. 기종 이름은 이 목록의 표기로 적으세요: ${machines.map((m) => m.name).join(', ')}`,
       responseMimeType: 'application/json',
       responseSchema: schema,
@@ -149,8 +155,8 @@ export async function guessMachines(arcadeId: number): Promise<GuessOutcome> {
     // 같은 (오락실, 기종) 은 근거·모델·시각을 새 것으로 덮습니다 — 옛 ON CONFLICT DO UPDATE 와 같습니다.
     await prisma.arcade_machine_guesses.upsert({
       where: { arcade_id_machine_id: { arcade_id: arcadeId, machine_id: machineId } },
-      create: { arcade_id: arcadeId, machine_id: machineId, evidence, model: MODEL },
-      update: { evidence, model: MODEL, created_at: new Date() },
+      create: { arcade_id: arcadeId, machine_id: machineId, evidence, model },
+      update: { evidence, model, created_at: new Date() },
     });
   }
 

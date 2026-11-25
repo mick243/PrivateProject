@@ -5,8 +5,8 @@
  * 돌려준 오락실의 길찾기 링크를 따로 모읍니다(places). 둘 다 모델을 거치지 않습니다.
  *
  * 모델에게 이 앱의 DB 를 통째로 열어 주는 대신, 화면이 이미 쓰고 있는 조회
- * 함수(lib/arcades.ts · lib/reports.ts · lib/board.ts)를 그대로 감싸 세 개만
- * 내줍니다. 같은 함수를 쓰므로 **챗봇이 말하는 값과 화면에 뜨는 값이 어긋날
+ * 함수(lib/arcades.ts · lib/reports.ts · lib/board.ts · lib/chart-search.ts)를 그대로 감싸
+ * 네 개만 내줍니다 (채보 도구는 2026-11-25 추가). 같은 함수를 쓰므로 **챗봇이 말하는 값과 화면에 뜨는 값이 어긋날
  * 수 없습니다** — 챗봇 전용 SQL 을 따로 쓰면 집계 규칙이 두 벌이 됩니다.
  *
  * 반환값은 모델이 읽을 요약 JSON 입니다. 전체 레코드를 그대로 실으면 한 번
@@ -25,12 +25,15 @@
 
 import { listMachines, pageArcades } from './arcades';
 import { listPosts } from './board';
+import { normalizeChartQuery } from './chart-search-types';
+import { searchChartSongs } from './chart-search';
 import type { ChatPlace } from './chat-types';
 import { formatDistance, MAX_RADIUS_KM, type Coord } from './geo';
 import { resolveMachines } from './machine-aliases';
 import { placeLinks } from './place-links';
 import { listReports } from './reports';
 import type { ReportKind } from './community-types';
+import { listGames } from './tier';
 import type { Arcade } from './types';
 
 /** 도구 한 번이 돌려주는 건수 — 모델이 읽을 분량을 묶는 단위 */
@@ -189,6 +192,8 @@ export async function searchArcades(
 }
 
 export interface ReportSearchArgs {
+  /** 오락실 이름(일부)으로 좁히기 — 2026-11-25. "A 랑 B 중 어디가 나아" 류 비교 질문용 */
+  arcade?: string | null;
   machine?: string | null;
   kind?: ReportKind | null;
   sinceHours?: number | null;
@@ -208,6 +213,8 @@ export async function searchReports(args: ReportSearchArgs): Promise<unknown> {
   // 하나 더 읽어 다음 쪽이 있는지 압니다 — 피드는 전체 수를 세지 않습니다(최신순 · 계속 바뀜).
   const rows = await listReports({
     machineId: machineIds[0] ?? null,
+    // listReports 의 q 는 오락실 이름 · 기종 이름 · 메모를 함께 봅니다 — 화면 /live 검색창과 같은 규칙
+    q: args.arcade?.trim() || null,
     kinds: args.kind ? [args.kind] : null,
     sinceHours: args.sinceHours ?? 24,
     limit: PAGE_SIZE + 1,
@@ -264,6 +271,67 @@ export async function searchPosts(args: PostSearchArgs): Promise<unknown> {
       likes: p.likeCount,
       comments: p.commentCount,
       at: p.createdAt,
+    })),
+  };
+}
+
+export interface ChartSearchArgs {
+  machine?: string | null;
+  query?: string | null;
+  /** 버전을 구분하는 게임(EZ2DJ)의 버전 이름. 없으면 첫 버전 */
+  version?: string | null;
+  page?: number | null;
+}
+
+/**
+ * 서열표의 곡 · 채보 레벨 (/tier 곡 검색과 같은 소스 · 2026-11-25).
+ *
+ * 이 도구가 생기기 전에는 시스템 프롬프트가 "곡 · 채보 · 난이도까지 답한다" 고 하면서도
+ * 앱의 채보 표(29,178개)를 볼 길이 없어, 레벨을 물으면 모델 기억이나 구글 검색으로
+ * 답했습니다 — 화면과 다른 레벨을 말해도 알아챌 수 없었습니다. 이제 화면의 곡 검색
+ * 함수(searchChartSongs)를 그대로 감싸 같은 값을 돌려줍니다.
+ */
+export async function searchCharts(args: ChartSearchArgs): Promise<unknown> {
+  const q = normalizeChartQuery(args.query);
+  if (!q) return { error: '곡 이름(query)이 필요합니다', songs: [] };
+  const machineIds = await resolveMachineIds(args.machine);
+  const games = await listGames();
+  const game = games.find((g) => machineIds.includes(g.machineId));
+  if (!game) {
+    return {
+      error: args.machine
+        ? `'${args.machine}' 은 서열표가 있는 게임이 아니거나 찾지 못했습니다`
+        : '게임(machine)이 필요합니다',
+      games: games.map((g) => g.shortName || g.name),
+      songs: [],
+    };
+  }
+  const wanted = args.version?.trim().toLowerCase();
+  const version = wanted
+    ? game.versions.find((v) => v.label.toLowerCase().includes(wanted) || v.code.toLowerCase() === wanted)
+    : undefined;
+
+  const page = pageOf(args.page);
+  const all = await searchChartSongs({ machineId: game.machineId, versionId: version?.id ?? null, q });
+  const songs = all.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const label = (list: { code: string; label: string }[], code: string | null) =>
+    code === null ? undefined : (list.find((x) => x.code === code)?.label ?? code);
+  const versionLabel = (id: number | null) =>
+    id === null ? undefined : game.versions.find((v) => v.id === id)?.label;
+
+  return {
+    game: game.name,
+    note: '레벨은 이 앱 서열표의 값입니다. 체감 난이도 순위는 서열표 화면에서 볼 수 있다고 안내하세요.',
+    ...pageInfo(page, all.length > page * PAGE_SIZE, all.length),
+    songs: songs.map((s) => ({
+      title: s.title,
+      artist: s.artist ?? undefined,
+      charts: s.charts.map((c) => ({
+        mode: label(game.modes, c.mode),
+        difficulty: label(game.difficulties, c.difficulty),
+        level: c.level ?? '미상',
+        version: versionLabel(c.versionId),
+      })),
     })),
   };
 }

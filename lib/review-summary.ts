@@ -1,6 +1,9 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { ThinkingLevel, Type } from '@google/genai';
 import { EMOTICON_TOKEN_RE } from './community-types';
 import { getEmoticonsByIds } from './emoticons';
+// 모델 · 연결 실패 판단은 네 기능이 함께 씁니다. isTransportError: undici 는 TLS·DNS·연결 끊김을
+// 전부 `TypeError: fetch failed` 로 던지고, 재시작 직후 첫 호출이 이걸로 한 번 떨어지는 것을 봤습니다 (2026-09-17).
+import { geminiClient, geminiModel, geminiTimeout, GEMINI_TIMEOUT_MS, isTransportError } from './gemini';
 import type { Prisma } from './generated/prisma/client.ts';
 import { getPrismaClient, iso, num } from './prisma';
 import { listReviews } from './reviews';
@@ -40,12 +43,6 @@ import { read } from './uploads';
  * 별점 평균은 arcades.rating_avg(SQL)에서 읽습니다. 모델이 "평균 4.2" 라고 적으면
  * 그 값이 맞는지 아무도 모릅니다. 프롬프트에서도 숫자를 적지 말라고 합니다.
  */
-
-/**
- * 기종 추정(lib/machine-guess.ts)과 같은 모델입니다. 그쪽 상수를 가져오지 않는 이유는
- * 그 모듈이 검색 도구까지 끌고 오기 때문입니다 — 요약은 검색이 필요 없습니다.
- */
-const MODEL = 'gemini-3.7-flash';
 
 /**
  * inlineData 로 보낼 수 있는 그림 형식.
@@ -94,18 +91,6 @@ type Part =
 /** 그림 조각을 전부 이름 한 줄로 바꾼 사본 — 본문이 수 KB 로 줄어듭니다 */
 function withoutImages(parts: Part[]): { text: string }[] {
   return parts.map((p) => ('inlineData' in p ? { text: p.fallback } : p));
-}
-
-/**
- * 전송 단계 실패인가 — 모델이 거절한 것이 아니라 연결이 안 된 것.
- *
- * undici 는 TLS·DNS·연결 끊김을 전부 `TypeError: fetch failed` 로 던집니다. 재시작
- * 직후 첫 호출이 이걸로 한 번 떨어지고 바로 다음 호출은 되는 것을 봤습니다
- * (2026-09-17). 이런 것만 한 번 더 시도합니다 — 400·429 같은 API 응답은 다시 보내도
- * 같은 답이 오므로 재시도하지 않습니다.
- */
-function isTransportError(err: unknown): boolean {
-  return err instanceof TypeError && /fetch failed/i.test(err.message);
 }
 
 /** 모델이 준 값을 화면에 그대로 내보낼 수 있게 다듬습니다 — 빈 문자열은 null, 길면 자름 */
@@ -162,13 +147,25 @@ export async function lookupReviewSummary(arcadeId: number): Promise<SummaryLook
 /**
  * 리뷰를 읽어 모델에 보내고, 받은 세 칸을 저장한 뒤 돌려줍니다.
  *
- * 동시에 두 사람이 열어 두 번 만들어질 수 있습니다. 막지 않습니다 — UPSERT 라 결과는
- * 같고, 그 비용은 모델 호출 한 번입니다. 잠금을 두면 첫 사람이 느릴 때 두 번째
- * 사람이 기다려야 하는데, 그쪽이 더 나쁜 경험입니다.
+ * 같은 오락실을 여럿이 동시에 열면 **진행 중인 한 번을 같이 기다립니다** (2026-11-25).
+ * 전에는 연 사람 수만큼 모델을 불렀습니다 — 결과는 UPSERT 라 같았지만 호출 값과 전체
+ * 하루 상한(200회)이 사람 수만큼 나갔습니다. 같이 기다리는 쪽은 자기 것을 새로 만드는
+ * 것보다 늦지 않으므로 잃는 것이 없습니다. 프로세스 하나 안에서만 묶입니다
+ * (운영은 INSTANCES=1).
  */
-export async function buildReviewSummary(arcadeId: number): Promise<ReviewSummaryView> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
+const building = new Map<number, Promise<ReviewSummaryView>>();
+
+export function buildReviewSummary(arcadeId: number): Promise<ReviewSummaryView> {
+  const running = building.get(arcadeId);
+  if (running) return running;
+  const job = buildReviewSummaryOnce(arcadeId).finally(() => building.delete(arcadeId));
+  building.set(arcadeId, job);
+  return job;
+}
+
+async function buildReviewSummaryOnce(arcadeId: number): Promise<ReviewSummaryView> {
+  const ai = geminiClient();
+  if (!ai) {
     // 원인은 로그에, 화면에는 사람이 읽을 말만 (docs/DESIGN-GUIDE.md §6)
     console.warn('[review-summary] GEMINI_API_KEY 가 없어 요약하지 않습니다');
     throw new ReviewSummaryUnavailable('지금은 AI 요약을 만들 수 없어요');
@@ -223,15 +220,19 @@ export async function buildReviewSummary(arcadeId: number): Promise<ReviewSummar
 
   const images = parts.filter((p) => 'inlineData' in p).length;
   // 본문은 남기지 않습니다 — 얼마나 큰 요청이었는지만 (운영에서 비용·실패를 볼 때 씁니다).
-  console.info(`[review-summary] arcade ${arcadeId}: 리뷰 ${reviews.length}/${total}개 · 그림 ${images}장 → ${MODEL}`);
+  const model = geminiModel();
+  console.info(`[review-summary] arcade ${arcadeId}: 리뷰 ${reviews.length}/${total}개 · 그림 ${images}장 → ${model}`);
 
-  const ai = new GoogleGenAI({ apiKey });
   const call = (body: Part[]) =>
     ai.models.generateContent({
-      model: MODEL,
+      model,
       // SDK 에는 우리 fallback 필드를 넘기지 않습니다 — 모르는 키를 거절할 수 있습니다.
       contents: [{ role: 'user', parts: body.map((p) => ('inlineData' in p ? { inlineData: p.inlineData } : p)) }],
       config: {
+        // 시도마다 새 신호 — 끊긴 연결을 다시 보낼 때 앞 시도의 남은 시간을 물려받지 않게 (R29)
+        abortSignal: geminiTimeout(GEMINI_TIMEOUT_MS.summary),
+        // 세 줄 요약이라 깊게 생각할 일이 아닙니다. 생각 토큰은 출력 값으로 매겨집니다.
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         systemInstruction: SYSTEM,
         responseMimeType: 'application/json',
         responseSchema: schema,
@@ -279,8 +280,8 @@ export async function buildReviewSummary(arcadeId: number): Promise<ReviewSummar
   const [saved, arcade] = await prisma.$transaction([
     prisma.arcade_review_summaries.upsert({
       where: { arcade_id: arcadeId },
-      create: { arcade_id: arcadeId, review_count: total, summary: summaryJson, model: MODEL },
-      update: { review_count: total, summary: summaryJson, model: MODEL, created_at: new Date() },
+      create: { arcade_id: arcadeId, review_count: total, summary: summaryJson, model },
+      update: { review_count: total, summary: summaryJson, model, created_at: new Date() },
       select: { created_at: true },
     }),
     prisma.arcades.findUnique({ where: { id: arcadeId }, select: { rating_avg: true } }),

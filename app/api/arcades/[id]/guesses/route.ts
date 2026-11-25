@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { classifyGeminiError, describeGeminiFailure } from '@/lib/gemini';
 import { badId, fail, handle, parseId, tooMany, unavailable } from '@/lib/api-errors';
 import { countMachineGuesses, listMachineGuesses } from '@/lib/arcades';
 import { clientKey, isAdminRequest, sessionPlayerId } from '@/lib/auth';
@@ -107,7 +108,7 @@ async function onPost(request: Request, ctx: Ctx) {
     if (err instanceof MachineGuessUnavailable) {
       return unavailable(err.message);
     }
-    console.error('[guess] 실패 —', err);
+    console.error(`[guess] 실패 — ${describeGeminiFailure(classifyGeminiError(err))} —`, err);
     return fail(502, '검색하지 못했어요. 조금 뒤에 다시 시도해 주세요');
   }
 }

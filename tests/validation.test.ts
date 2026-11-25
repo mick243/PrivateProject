@@ -16,6 +16,13 @@ const report = (over: Record<string, unknown>) =>
   reportInputSchema.safeParse({ machineId: 1, kind: 'queue', waitCount: 3, ...over });
 
 describe('reportInputSchema — 종류마다 필수 칸이 다르다', () => {
+  it('대기 인원은 화면이 보낼 수 있는 값("12명+" = 13)까지만 받는다 — 장난 값 99 가 그대로 뜨지 않게', () => {
+    expect(report({ waitCount: 0 }).success).toBe(true);
+    expect(report({ waitCount: 13 }).success).toBe(true);
+    expect(report({ waitCount: 14 }).success).toBe(false);
+    expect(report({ waitCount: 99 }).success).toBe(false);
+  });
+
   it('대기 제보는 인원이 있어야 한다', () => {
     const r = report({ kind: 'queue', waitCount: null });
     expect(r.success).toBe(false);

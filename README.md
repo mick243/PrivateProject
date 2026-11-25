@@ -622,7 +622,7 @@ APP_URL=                 # 운영 도메인. 비우면 요청 헤더로 콜백 �
 
 ### 그 밖의 질문 — 앱 안쪽 먼저, 그다음 웹
 
-[`app/api/chat/route.ts`](app/api/chat/route.ts) 가 Gemini(`gemini-3.7-flash`)에
+[`app/api/chat/route.ts`](app/api/chat/route.ts) 가 Gemini(기본 `gemini-3.5-flash-lite` · `GEMINI_MODEL` 로 바꿈 · lib/gemini.ts)에
 도구 넷을 쥐여 줍니다.
 
 | 도구 | 무엇을 보나 |

@@ -1,8 +1,6 @@
 import {
-  ApiError,
   FinishReason,
   FunctionCallingConfigMode,
-  GoogleGenAI,
   ThinkingLevel,
   type Content,
   type FunctionCall,
@@ -18,14 +16,24 @@ import { addUsage, emptyUsage, TOOL_OUTPUT_CHAR_BUDGET, trimTurns } from '@/lib/
 import { consume, DAY_MS, limitFromEnv, retryAfterLabel } from '@/lib/rate-limit';
 import {
   searchArcades,
+  searchCharts,
   searchPosts,
   searchReports,
   type ArcadeSearchArgs,
+  type ChartSearchArgs,
   type ChatToolContext,
   type PostSearchArgs,
   type ReportSearchArgs,
 } from '@/lib/chat-tools';
 import { UNCLEAR_TEXT } from '@/lib/chat-failure';
+import {
+  classifyGeminiError,
+  describeGeminiFailure,
+  geminiClient,
+  geminiModel,
+  geminiTimeout,
+  GEMINI_TIMEOUT_MS,
+} from '@/lib/gemini';
 import { placesInAnswer, type ChatPlace, type ChatSource } from '@/lib/chat-types';
 import { chatInputSchema } from '@/lib/validation';
 
@@ -34,14 +42,20 @@ export const dynamic = 'force-dynamic';
 /** 웹 검색 + 도구 몇 번이면 30초를 넘길 수 있습니다 (Next 기본값은 그보다 짧습니다) */
 export const maxDuration = 120;
 
-/**
- * Gemini 3 계열이어야 합니다.
+/*
+ * 모델은 lib/gemini.ts geminiModel() — Gemini 3 계열이어야 합니다.
  *
  * 이 경로는 **앱 안쪽 도구(함수 호출)와 구글 검색을 한 요청에 같이** 물립니다.
  * 내장 도구와 함수 선언을 섞는 건 Gemini 3 부터 되는 일이라, 2.5 계열로
- * 내리면 둘 중 하나를 포기해야 합니다.
+ * 내리면 둘 중 하나를 포기해야 합니다. 3.5-flash-lite 에서 되는 것은
+ * 2026-11-25 실호출로 확인했습니다 (lib/gemini.ts DEFAULT_GEMINI_MODEL).
+ *
+ * ─── 구글 검색을 질문마다 끄고 켜지 않는 이유 ───────────────────
+ * 검색 그라운딩은 "도구를 켠 요청" 이 아니라 **실제로 돈 검색 질의마다** 값을 받습니다.
+ * 같은 날 시험에서 앱 안 질문(오락실 · 대기 · 범위 밖 거절)은 검색 질의가 0건이었습니다 —
+ * 켜 둔 것만으로는 돈이 들지 않습니다. 앱이 질문을 보고 끄고 켜면, 그 판단이 틀린 날
+ * "최신 버전" 을 기억으로 답하는 더 나쁜 실패가 납니다 (아래 시스템 프롬프트 주석).
  */
-const MODEL = 'gemini-3.7-flash';
 
 /**
  * 도구 호출 왕복 상한.
@@ -97,7 +111,9 @@ const buildSystem = (
 - 한국어로, 짧고 구체적으로 답합니다. 서론 없이 바로 답부터 씁니다.
 - 사용자에게 답할 때는 친근한 해요체로, 짧게 씁니다 (예: "~있어요", "~할까요?"). "~합니다" 체는 쓰지 않습니다.
 - 화면과 같은 쉬운 말을 씁니다: '기종' 대신 '게임', '기체'·'컨디션' 대신 '기계'·'상태', '반경' 대신 '거리'. 도구가 돌려주는 필드 이름(condition 등)을 답에 그대로 쓰지 않습니다.
-- 이 앱 안의 데이터를 먼저 봅니다: search_arcades(등록된 오락실·보유 기종·컨디션·기준점에서의 거리), search_reports(실시간 제보 피드), search_posts(커뮤니티 게시판).
+- 이 앱 안의 데이터를 먼저 봅니다: search_arcades(등록된 오락실·보유 기종·컨디션·기준점에서의 거리), search_reports(실시간 제보 피드), search_posts(커뮤니티 게시판), search_charts(서열표의 곡·채보 레벨).
+- 곡의 레벨·채보를 물으면 **먼저 search_charts 로 이 앱의 값을 봅니다.** 앱에 있는 레벨과 다른 레벨을 기억으로 말하지 마세요. 앱에 그 곡이 없을 때만 구글 검색으로 찾고, 그때는 앱 서열표에는 없다고 밝힙니다.
+- 두 오락실을 비교해 달라고 하면 search_arcades 로 각각 찾고, search_reports 에 arcade 를 주어 그곳의 최근 제보를 봅니다. 근거(평점 건수·제보)가 적으면 적다고 말합니다.
 - "내 근처 · 가까운 · 주변" 을 물으면 search_arcades 에 radiusKm 을 줍니다. 결과의 order 가 '가까운 순' 일 때만 가깝다고 말하고, distance 가 없으면 거리를 지어내지 마세요.
 - 가는 길을 물으면 search_arcades 로 그 오락실을 찾고, **이름을 도구가 준 그대로** 적습니다. 그러면 앱이 답변 아래에 그 오락실의 길찾기 링크를 붙입니다. 지도 주소(URL)를 직접 쓰지 말고, 소요 시간·노선을 지어내지 마세요 — "아래 길찾기 링크를 누르면 지도 앱에서 경로를 볼 수 있다"고 안내합니다.
 - 앱 밖의 정보(신곡, 버전, 대회, 기기 출시, 뉴스, 공략, 주차)는 구글 검색으로 찾되, 위 답변 범위 안의 것만 찾습니다.
@@ -147,6 +163,7 @@ const functionDeclarations: FunctionDeclaration[] = [
     parametersJsonSchema: {
       type: 'object',
       properties: {
+        arcade: { type: 'string', description: '오락실 이름(일부)으로 좁히기 (예: 홍대 게임존)' },
         machine: { type: 'string', description: '기종 이름으로 좁히기' },
         kind: {
           type: 'string',
@@ -172,13 +189,32 @@ const functionDeclarations: FunctionDeclaration[] = [
     parametersJsonSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: '제목·본문에서 찾을 말' },
+        query: { type: 'string', description: '제목·본문에서 찾을 말. 띄어 쓴 낱말이 모두 들어 있는 글을 찾습니다' },
         machine: { type: 'string', description: '게임 탭으로 좁히기 (예: 펌프)' },
         page: {
           type: 'integer',
           description: '쪽 번호(1부터). hasMore 일 때만 올림',
         },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'search_charts',
+    description:
+      '이 앱 서열표의 곡을 이름으로 찾아, 곡마다 채보(모드·난이도·레벨)를 돌려줍니다. "사볼 冥 레벨 몇이야" · "펌프 Phoenix 채보 레벨" 같은 질문에 씁니다. 게임(machine)과 곡 이름(query)이 필요합니다.',
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        machine: { type: 'string', description: '게임 이름. 별칭 가능 (예: 펌프, 사볼, EZ2)' },
+        query: { type: 'string', description: '곡 이름의 일부 (최대 50자)' },
+        version: { type: 'string', description: '버전을 나누는 게임(EZ2DJ)의 버전 이름. 없으면 첫 버전' },
+        page: {
+          type: 'integer',
+          description: '쪽 번호(1부터). hasMore 일 때만 올림',
+        },
+      },
+      required: ['machine', 'query'],
       additionalProperties: false,
     },
   },
@@ -197,6 +233,7 @@ const RUNNERS: Record<
   search_arcades: (args, ctx) => searchArcades(args as ArcadeSearchArgs, ctx),
   search_reports: (args) => searchReports(args as ReportSearchArgs),
   search_posts: (args) => searchPosts(args as PostSearchArgs),
+  search_charts: (args) => searchCharts(args as ChartSearchArgs),
 };
 
 /** 안전 필터에 걸려 답이 나오지 않은 경우 */
@@ -280,7 +317,8 @@ async function onPost(request: Request) {
 
   // 키가 없으면 이 경로만 죽습니다. 우선순위 탐색은 클라이언트에서 끝나므로
   // 키 없이도 앱의 본체는 그대로 돌아갑니다.
-  if (!process.env.GEMINI_API_KEY) {
+  const ai = geminiClient();
+  if (!ai) {
     if (!isDev) console.error('[chat] GEMINI_API_KEY 가 설정되지 않았습니다');
     return unavailable(
       isDev
@@ -309,7 +347,7 @@ async function onPost(request: Request) {
     );
   }
 
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const model = geminiModel();
   const sources = new Map<string, ChatSource>();
 
   // 허용 범위 = 지금 등록돼 있는 리듬 기종. DB 가 죽어 있으면 어차피 도구도
@@ -342,6 +380,9 @@ async function onPost(request: Request) {
     places: new Map<string, ChatPlace>(),
   };
 
+  // 요청 하나 전체의 마감 — 왕복마다 "남은 시간" 과 "한 왕복 상한" 중 짧은 쪽을 겁니다 (R29).
+  const deadline = Date.now() + GEMINI_TIMEOUT_MS.chatTotal;
+
   try {
     let response: GenerateContentResponse | undefined;
 
@@ -351,10 +392,13 @@ async function onPost(request: Request) {
       // 상한을 넘은 뒤도 마찬가지입니다 — 쪽을 계속 넘기며 대화를 불리지 않게.
       const lastStep = step === MAX_ITERATIONS - 1 || toolChars >= TOOL_OUTPUT_CHAR_BUDGET;
 
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw Object.assign(new Error('챗봇 요청 전체 마감을 넘겼습니다'), { name: 'TimeoutError' });
       response = await ai.models.generateContent({
-        model: MODEL,
+        model,
         contents,
         config: {
+          abortSignal: geminiTimeout(Math.min(GEMINI_TIMEOUT_MS.chatStep, remaining)),
           systemInstruction: system,
           maxOutputTokens: 8000,
           // 오락실 정보를 찾아 요약하는 일이라 최고 강도는 필요 없습니다.
@@ -395,7 +439,7 @@ async function onPost(request: Request) {
     // 요청 하나가 쓴 토큰 — 비용과 상한이 맞는지 운영에서 보는 값입니다 (본문은 남기지 않습니다).
     console.info(
       `[chat] 토큰 입력 ${usage.prompt} · 출력 ${usage.output} · 생각 ${usage.thoughts} · 도구 ${usage.toolUse}` +
-        ` · 합 ${usage.total} (모델 ${usage.calls}번 · 도구 결과 ${toolChars}자 · 대화 ${history.turns.length}턴` +
+        ` · 합 ${usage.total} (${response?.modelVersion ?? model} ${usage.calls}번 · 도구 결과 ${toolChars}자 · 대화 ${history.turns.length}턴` +
         `${history.dropped ? ` · 앞 ${history.dropped}턴 생략` : ''})`,
     );
 
@@ -422,26 +466,27 @@ async function onPost(request: Request) {
     // 키가 틀렸는지, 한도를 넘겼는지, 그냥 느린 건지를 구분해 둬야 다음에
     // 뭘 해야 할지 알 수 있습니다. 그 구분은 상태 코드와 서버 로그에 남기고,
     // 사용자에게는 할 일만 말합니다 (키 · 모델 이름은 화면에 내지 않습니다).
-    if (e instanceof ApiError) {
-      if (e.status === 401 || e.status === 403) {
-        console.error(`[chat] Gemini 가 키를 거절했습니다 (${e.status}) — GEMINI_API_KEY 를 확인하세요`, e.message);
+    const kind = classifyGeminiError(e);
+    const detail = e instanceof Error ? e.message : String(e);
+    switch (kind) {
+      case 'key':
+      case 'credit':
+      case 'model':
+        // 사용자가 고칠 수 없는 원인입니다 — 무엇을 고칠지는 로그에만 남깁니다.
+        console.error(`[chat] ${describeGeminiFailure(kind, model)}`, detail);
         return fail(502, CANNOT_ANSWER);
-      }
-      if (e.status === 429) {
+      case 'rate':
         return tooMany('지금 질문이 몰려 있어요. 조금 뒤에 다시 시도해 주세요');
-      }
-      if (e.status === 404) {
-        console.error(`[chat] 이 키로는 ${MODEL} 을 쓸 수 없습니다 (404)`, e.message);
-        return fail(502, CANNOT_ANSWER);
-      }
+      case 'timeout':
+        console.error(`[chat] ${describeGeminiFailure(kind, model)}`, detail);
+        return fail(504, '답이 너무 오래 걸려서 멈췄어요. 질문을 짧게 줄여 다시 물어봐 주세요');
+      case 'network':
+        console.error(`[chat] ${describeGeminiFailure(kind, model)}`, detail);
+        return fail(504, '연결이 잠깐 끊겼어요. 다시 시도해 주세요');
+      default:
+        console.error('[chat]', e);
+        return fail(500, ANSWER_FAILED);
     }
-    // SDK 는 네트워크 실패를 전용 오류로 감싸지 않고 fetch 의 것을 그대로 던집니다.
-    if (e instanceof TypeError) {
-      console.error('[chat] Gemini 에 연결하지 못했습니다', e.message);
-      return fail(504, '연결이 잠깐 끊겼어요. 다시 시도해 주세요');
-    }
-    console.error('[chat]', e);
-    return fail(500, ANSWER_FAILED);
   }
 }
 

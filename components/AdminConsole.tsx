@@ -19,9 +19,11 @@ import {
   type ReportStatus,
 } from '@/lib/moderation-types';
 import { useSession } from '@/lib/use-session';
+import { ARCADE_INFO_KIND_SHORT, INFO_HOURS_MAX, type ArcadeInfoReportRow } from '@/lib/arcade-info-report-types';
 
 /**
- * 관리 화면 (`/admin`). **관리자만.** — 신고함 · 계정 · AI 기종 추정 세 칸.
+ * 관리 화면 (`/admin`). **관리자만.** — 신고함 · 정보 고침 · 계정 · AI 기종 추정 네 칸.
+ * 정보 고침(2026-11-25 · migrate-087)은 이용자가 상세의 "정보가 달라요" 로 보낸 영업시간 · 문 닫음 · 옮김입니다.
  *
  * 2026-11-20 전에는 관리자 화면이 이모티콘 관리 하나뿐이라, 신고는 메일로 받고 계정 정지 · AI 추정
  * 승인은 DB 를 직접 고쳐야 했습니다. 이 화면이 부르는 API 는 전부 requireAdmin 을 지납니다
@@ -33,8 +35,13 @@ import { useSession } from '@/lib/use-session';
  * 기각 · 추정 버리기는 다시 할 수 있어 묻지 않습니다.
  */
 
-type Tab = 'reports' | 'players' | 'guesses';
-const TAB_LABEL: Record<Tab, string> = { reports: '신고함', players: '계정', guesses: 'AI 기종 추정' };
+type Tab = 'reports' | 'info' | 'players' | 'guesses';
+const TAB_LABEL: Record<Tab, string> = {
+  reports: '신고함',
+  info: '정보 고침',
+  players: '계정',
+  guesses: 'AI 기종 추정',
+};
 
 type Load<T> = { kind: 'loading' } | { kind: 'failed'; message: string } | { kind: 'ready'; data: T };
 
@@ -522,6 +529,114 @@ function GuessesPanel() {
   );
 }
 
+/**
+ * 오락실 정보 고침 제보 (migrate-087).
+ *
+ * 영업시간은 칸을 다듬은 뒤 "영업시간에 반영" 하면 오락실에 들어갑니다(출처: 이용자 제보).
+ * 문 닫음 · 옮김 · 그 밖은 오락실을 지우거나 옮기는 일이라 여기서 자동으로 하지 않습니다 —
+ * 오락실을 열어 고친 뒤 "확인했어요" 로 목록에서 치웁니다.
+ */
+function InfoReportsPanel() {
+  const [list, setList] = useState<Load<{ reports: ArcadeInfoReportRow[] }>>({ kind: 'loading' });
+  const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setList({ kind: 'loading' });
+    setList(await getJson('/api/admin/info-reports'));
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const act = async (r: ArcadeInfoReportRow, action: 'apply' | 'dismiss') => {
+    setBusyId(r.id);
+    setError(null);
+    const err = await send('/api/admin/info-reports', {
+      method: 'PUT',
+      body: JSON.stringify({
+        id: r.id,
+        action,
+        hoursText: r.kind === 'hours' ? (drafts[r.id] ?? r.hoursText) : null,
+      }),
+    });
+    setBusyId(null);
+    if (err) {
+      setError(err);
+      return;
+    }
+    setList((prev) =>
+      prev.kind === 'ready'
+        ? { kind: 'ready', data: { reports: prev.data.reports.filter((x) => x.id !== r.id) } }
+        : prev,
+    );
+  };
+
+  return (
+    <section aria-label="정보 고침">
+      <p className="muted small">
+        이용자가 상세의 &quot;정보가 달라요&quot; 로 보낸 내용이에요. 영업시간은 다듬어서 바로 반영할 수 있어요. 문 닫음 ·
+        옮김은 오락실을 열어 직접 고친 뒤 &quot;확인했어요&quot; 를 눌러 주세요.
+      </p>
+      {error && <p className="warn small" role="alert">{error}</p>}
+      {list.kind === 'loading' && <p className="muted small">불러오는 중…</p>}
+      {list.kind === 'failed' && <p className="warn small">{list.message}</p>}
+      {list.kind === 'ready' &&
+        (list.data.reports.length === 0 ? (
+          <p className="muted small">새로 온 정보 고침 제보가 없어요.</p>
+        ) : (
+          <ul className="mod-list">
+            {list.data.reports.map((r) => (
+              <li key={r.id} className="mod-card">
+                <div className="mod-card-head">
+                  <strong>{r.arcadeName}</strong>
+                  <span className="admin-badge">{ARCADE_INFO_KIND_SHORT[r.kind]}</span>
+                  <span className="muted small">
+                    {r.nickname} · {timeAgo(r.createdAt)}
+                  </span>
+                </div>
+                <p className="muted small">{r.address}</p>
+                {r.kind === 'hours' && (
+                  <>
+                    <p className="muted small">지금 보이는 영업시간: {r.currentHours ?? '없음'}</p>
+                    <label className="small" htmlFor={`info-hours-${r.id}`}>
+                      반영할 영업시간
+                    </label>
+                    <input
+                      id={`info-hours-${r.id}`}
+                      type="text"
+                      maxLength={INFO_HOURS_MAX}
+                      value={drafts[r.id] ?? r.hoursText ?? ''}
+                      onChange={(e) => setDrafts((d) => ({ ...d, [r.id]: e.target.value }))}
+                    />
+                  </>
+                )}
+                {r.detail && <p className="mod-card-excerpt small">{r.detail}</p>}
+                <div className="form-actions">
+                  <a className="btn btn-sm" href={`/finder?arcade=${r.arcadeId}`} target="_blank" rel="noopener noreferrer">
+                    오락실 보기
+                  </a>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    disabled={busyId === r.id || (r.kind === 'hours' && !(drafts[r.id] ?? r.hoursText ?? '').trim())}
+                    onClick={() => void act(r, 'apply')}
+                  >
+                    {r.kind === 'hours' ? '영업시간에 반영' : '확인했어요'}
+                  </button>
+                  <button type="button" className="btn btn-sm" disabled={busyId === r.id} onClick={() => void act(r, 'dismiss')}>
+                    버리기
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ))}
+    </section>
+  );
+}
+
 export default function AdminConsole() {
   const user = useSession();
   const [tab, setTab] = useState<Tab>('reports');
@@ -534,7 +649,7 @@ export default function AdminConsole() {
         <div>
           <p className="eyebrow muted small">관리자</p>
           <h1>관리</h1>
-          <p className="muted small">사용자가 낸 신고, 계정 정지, AI 가 찾은 보유 기종을 처리합니다.</p>
+          <p className="muted small">사용자가 낸 신고 · 정보 고침 제보, 계정 정지, AI 가 찾은 보유 기종을 처리해요.</p>
         </div>
         <div className="form-actions">
           <Link className="btn btn-sm" href="/admin/emoticons">
@@ -563,6 +678,7 @@ export default function AdminConsole() {
 
       <div className="admin-card">
         {tab === 'reports' && <ReportsPanel />}
+        {tab === 'info' && <InfoReportsPanel />}
         {tab === 'players' && <PlayersPanel />}
         {tab === 'guesses' && <GuessesPanel />}
       </div>
